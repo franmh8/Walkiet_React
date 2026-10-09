@@ -1,10 +1,9 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Channel, VoiceMessage, Contact } from '../types';
 import { AudioService } from '../services/audioService';
 import { useAuth } from './AuthContext';
 
-interface RadioContextType {
+export interface RadioContextType {
   channels: Channel[];
   selectedChannel: Channel | null;
   setSelectedChannel: (channel: Channel | null) => void;
@@ -33,7 +32,104 @@ interface RadioContextType {
   stopTransmitting: () => Promise<void>;
   selectedContact: Contact | null;
   setSelectedContact: (c: Contact | null) => void;
+  playVoiceMessage: (msg: VoiceMessage) => void;
 }
+
+const DEFAULT_TACTICAL_CHANNELS: Channel[] = [
+  {
+    id: 'chan-tactico-01',
+    name: 'OPERACIONES ESPECIALES TÁCTICAS',
+    is_private: true,
+    access_code: '1090',
+    category: 'tactico',
+    member_count: 8,
+    active_transmitters_count: 0,
+    is_encrypted: true,
+    created_by: 'admin',
+    admin_name: 'Mando Táctico C5i',
+    role: 'admin',
+    created_at: new Date(Date.now() - 86400000 * 5).toISOString(),
+  },
+  {
+    id: 'chan-emergencia-02',
+    name: 'DESPACHO EMERGENCIAS 911',
+    is_private: false,
+    access_code: '9110',
+    category: 'emergencia',
+    member_count: 14,
+    active_transmitters_count: 0,
+    is_encrypted: true,
+    created_by: 'admin',
+    admin_name: 'Despacho Central 911',
+    role: 'usuario',
+    created_at: new Date(Date.now() - 86400000 * 4).toISOString(),
+  },
+  {
+    id: 'chan-monitoreo-03',
+    name: 'CENTRAL DE MONITOREO C5I',
+    is_private: true,
+    access_code: '5001',
+    category: 'inteligencia',
+    member_count: 6,
+    active_transmitters_count: 0,
+    is_encrypted: true,
+    created_by: 'admin',
+    admin_name: 'Inteligencia Operativa',
+    role: 'usuario',
+    created_at: new Date(Date.now() - 86400000 * 3).toISOString(),
+  },
+  {
+    id: 'chan-vialidad-04',
+    name: 'VIALIDAD Y TRÁNSITO PACHUCA',
+    is_private: false,
+    access_code: '4400',
+    category: 'vialidad',
+    member_count: 5,
+    active_transmitters_count: 0,
+    is_encrypted: true,
+    created_by: 'admin',
+    admin_name: 'Tránsito Estatal',
+    role: 'usuario',
+    created_at: new Date(Date.now() - 86400000 * 2).toISOString(),
+  },
+  {
+    id: 'chan-general-05',
+    name: 'FRECUENCIA GENERAL ESTATAL',
+    is_private: false,
+    access_code: '1234',
+    category: 'general',
+    member_count: 22,
+    active_transmitters_count: 0,
+    is_encrypted: true,
+    created_by: 'admin',
+    admin_name: 'Coordinación C5i',
+    role: 'usuario',
+    created_at: new Date(Date.now() - 86400000 * 6).toISOString(),
+  },
+];
+
+const INITIAL_VOICE_HISTORY: VoiceMessage[] = [
+  {
+    id: 'burst-init-1',
+    sender_id: 'usr-default-02',
+    sender_name: 'Oficial Karla Mendoza',
+    sender_callsign: 'PATRULLA-04',
+    channel_id: 'chan-tactico-01',
+    audio_url: 'simulated-burst-1',
+    duration_seconds: 3,
+    created_at: new Date(Date.now() - 1000 * 60 * 12).toISOString(),
+  },
+  {
+    id: 'burst-init-2',
+    sender_id: 'usr-default-03',
+    sender_name: 'Mando Alfa',
+    sender_callsign: 'MANDO-ALFA',
+    channel_id: 'chan-tactico-01',
+    audio_url: 'simulated-burst-2',
+    duration_seconds: 2,
+    created_at: new Date(Date.now() - 1000 * 60 * 5).toISOString(),
+  },
+];
 
 const RadioContext = createContext<RadioContextType>({} as any);
 
@@ -47,55 +143,50 @@ export const RadioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [transmittingUser, setTransmittingUser] = useState<string | null>(null);
   const [selectedContact, setSelectedContact] = useState<Contact | null>(null);
 
-  const loadNetworkChannels = async (): Promise<Channel[]> => {
+  const loadNetworkChannels = (): Channel[] => {
     try {
-      const stored = await AsyncStorage.getItem('c5i_network_channels');
+      const stored = localStorage.getItem('c5i_network_channels');
       if (stored) {
         const parsed = JSON.parse(stored);
         setAvailableNetworkChannels(parsed);
         return parsed;
-      } else {
-        setAvailableNetworkChannels([]);
-        return [];
       }
-    } catch {
-      setAvailableNetworkChannels([]);
-      return [];
-    }
+    } catch (_) {}
+    setAvailableNetworkChannels(DEFAULT_TACTICAL_CHANNELS);
+    localStorage.setItem('c5i_network_channels', JSON.stringify(DEFAULT_TACTICAL_CHANNELS));
+    return DEFAULT_TACTICAL_CHANNELS;
   };
 
   const refreshNetworkChannels = async () => {
-    await loadNetworkChannels();
+    loadNetworkChannels();
   };
 
-  // Cargar canales e historial sincronizados desde AsyncStorage
   useEffect(() => {
-    (async () => {
-      try {
-        await AudioService.init();
-        await loadNetworkChannels();
+    try {
+      const netChannels = loadNetworkChannels();
 
-        const storedChannels = await AsyncStorage.getItem('c5i_channels');
-        if (storedChannels) {
-          const parsed = JSON.parse(storedChannels);
-          setChannels(parsed);
-          if (parsed.length > 0) setSelectedChannel(parsed[0]);
-        } else {
-          // Inicializa limpio y vacío
-          setChannels([]);
-          setSelectedChannel(null);
-        }
-
-        const storedHistory = await AsyncStorage.getItem('c5i_voice_history');
-        if (storedHistory) {
-          setVoiceHistory(JSON.parse(storedHistory));
-        } else {
-          setVoiceHistory([]);
-        }
-      } catch (err) {
-        console.warn('Error cargando datos de radio:', err);
+      const storedChannels = localStorage.getItem('c5i_channels');
+      if (storedChannels) {
+        const parsed: Channel[] = JSON.parse(storedChannels);
+        setChannels(parsed);
+        if (parsed.length > 0) setSelectedChannel(parsed[0]);
+      } else {
+        // Default enrolled channels
+        setChannels(netChannels);
+        setSelectedChannel(netChannels[0]);
+        localStorage.setItem('c5i_channels', JSON.stringify(netChannels));
       }
-    })();
+
+      const storedHistory = localStorage.getItem('c5i_voice_history');
+      if (storedHistory) {
+        setVoiceHistory(JSON.parse(storedHistory));
+      } else {
+        setVoiceHistory(INITIAL_VOICE_HISTORY);
+        localStorage.setItem('c5i_voice_history', JSON.stringify(INITIAL_VOICE_HISTORY));
+      }
+    } catch (err) {
+      console.warn('Error loading radio data:', err);
+    }
   }, [user]);
 
   const createChannel = async (
@@ -124,16 +215,16 @@ export const RadioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     const updated = [...channels, newChan];
     setChannels(updated);
     setSelectedChannel(newChan);
-    await AsyncStorage.setItem('c5i_channels', JSON.stringify(updated));
+    localStorage.setItem('c5i_channels', JSON.stringify(updated));
 
-    // Also register in available network channels
+    // Update network channels
     try {
-      const netChannels = await loadNetworkChannels();
+      const netChannels = loadNetworkChannels();
       const updatedNet = [newChan, ...netChannels.filter((c) => c.id !== newChan.id)];
       setAvailableNetworkChannels(updatedNet);
-      await AsyncStorage.setItem('c5i_network_channels', JSON.stringify(updatedNet));
+      localStorage.setItem('c5i_network_channels', JSON.stringify(updatedNet));
     } catch (e) {
-      console.warn('Error actualizando canales de red:', e);
+      console.warn('Error updating network channels:', e);
     }
 
     return newChan;
@@ -145,11 +236,11 @@ export const RadioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   ): Promise<{ success: boolean; message?: string; channel?: Channel }> => {
     const netChannels = availableNetworkChannels.length > 0
       ? availableNetworkChannels
-      : await loadNetworkChannels();
+      : loadNetworkChannels();
 
     const target = netChannels.find((c) => c.id === channelId);
     if (!target) {
-      return { success: false, message: 'Canal no encontrado en la red táctica.' };
+      return { success: false, message: 'Canal no encontrado en la red táctica C5i.' };
     }
 
     if (target.is_private && target.access_code) {
@@ -164,7 +255,6 @@ export const RadioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       (user?.id && target.admin_id === user.id)
     );
 
-    // Check if already in channels
     if (!channels.some((c) => c.id === target.id)) {
       const updatedTarget: Channel = {
         ...target,
@@ -174,7 +264,7 @@ export const RadioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       const updatedChannels = [...channels, updatedTarget];
       setChannels(updatedChannels);
       setSelectedChannel(updatedTarget);
-      await AsyncStorage.setItem('c5i_channels', JSON.stringify(updatedChannels));
+      localStorage.setItem('c5i_channels', JSON.stringify(updatedChannels));
       return { success: true, channel: updatedTarget };
     }
 
@@ -192,9 +282,8 @@ export const RadioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
     const netChannels = availableNetworkChannels.length > 0
       ? availableNetworkChannels
-      : await loadNetworkChannels();
+      : loadNetworkChannels();
 
-    // Match by access_code or id
     const found = netChannels.find(
       (c) =>
         (c.access_code && c.access_code.trim() === clean) ||
@@ -218,7 +307,7 @@ export const RadioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     if (selectedChannel?.id === channelId) {
       setSelectedChannel(updated.length > 0 ? updated[0] : null);
     }
-    await AsyncStorage.setItem('c5i_channels', JSON.stringify(updated));
+    localStorage.setItem('c5i_channels', JSON.stringify(updated));
   };
 
   const leaveChannel = async (channelId: string): Promise<void> => {
@@ -227,21 +316,23 @@ export const RadioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     if (selectedChannel?.id === channelId) {
       setSelectedChannel(updated.length > 0 ? updated[0] : null);
     }
-    await AsyncStorage.setItem('c5i_channels', JSON.stringify(updated));
+    localStorage.setItem('c5i_channels', JSON.stringify(updated));
   };
 
   const clearHistory = async () => {
     setVoiceHistory([]);
-    await AsyncStorage.removeItem('c5i_voice_history');
+    localStorage.removeItem('c5i_voice_history');
   };
 
   const startTransmitting = async () => {
+    if (isTransmitting) return;
     setIsTransmitting(true);
-    setTransmittingUser(user?.callsign || 'Tú (Transmitiendo)');
+    setTransmittingUser(user?.callsign || 'TÚ (TRANSMITIENDO)');
     await AudioService.startRecording();
   };
 
   const stopTransmitting = async () => {
+    if (!isTransmitting) return;
     setIsTransmitting(false);
     setTransmittingUser(null);
     const audioUri = await AudioService.stopRecording();
@@ -259,8 +350,12 @@ export const RadioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       };
       const updatedHistory = [newBurst, ...voiceHistory].slice(0, 30);
       setVoiceHistory(updatedHistory);
-      await AsyncStorage.setItem('c5i_voice_history', JSON.stringify(updatedHistory));
+      localStorage.setItem('c5i_voice_history', JSON.stringify(updatedHistory));
     }
+  };
+
+  const playVoiceMessage = (msg: VoiceMessage) => {
+    AudioService.playAudio(msg.audio_url);
   };
 
   return (
@@ -284,6 +379,7 @@ export const RadioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         stopTransmitting,
         selectedContact,
         setSelectedContact,
+        playVoiceMessage,
       }}
     >
       {children}

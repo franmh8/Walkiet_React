@@ -1,5 +1,4 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { User, LoginResponse } from '../types';
 import { ApiService } from '../services/apiService';
 
@@ -19,7 +18,33 @@ interface AuthContextType {
   login: (identifier: string, pass: string) => Promise<LoginResponse>;
   register: (data: RegisterData) => Promise<boolean>;
   logout: () => Promise<void>;
+  updateUser: (data: Partial<User>) => void;
 }
+
+const DEFAULT_USERS: User[] = [
+  {
+    id: 'usr-default-01',
+    name: 'Oficial Roberto Morales',
+    phone_number: '7711234567',
+    correo: 'rmorales@c5i.hidalgo.gob.mx',
+    callsign: 'HALCON-01',
+    unit: 'Fuerza Especial de Reacción C5i',
+    role: 'Mando Operativo',
+    password: '123',
+    status: 'online',
+  },
+  {
+    id: 'usr-default-02',
+    name: 'Oficial Karla Mendoza',
+    phone_number: '7719876543',
+    correo: 'kmendoza@c5i.hidalgo.gob.mx',
+    callsign: 'PATRULLA-04',
+    unit: 'Sector Operativo Pachuca Sur',
+    role: 'Oficial de Despacho',
+    password: '123',
+    status: 'online',
+  },
+];
 
 const AuthContext = createContext<AuthContextType>({
   user: null,
@@ -27,29 +52,35 @@ const AuthContext = createContext<AuthContextType>({
   login: async () => ({ success: false, code: 'USER_NOT_FOUND', message: '' }),
   register: async () => false,
   logout: async () => {},
+  updateUser: () => {},
 });
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
 
-  // Carga sesión persistente sólo si existe un login previo real
+  // Load session or initialize default users
   useEffect(() => {
-    (async () => {
-      try {
-        const stored = await AsyncStorage.getItem('c5i_user');
-        if (stored) {
-          setUser(JSON.parse(stored));
-        } else {
-          setUser(null);
-        }
-      } catch (err) {
-        console.warn('Error leyendo sesión guardada:', err);
-        setUser(null);
-      } finally {
-        setLoading(false);
+    try {
+      const storedUsersRaw = localStorage.getItem('c5i_users_db');
+      if (!storedUsersRaw) {
+        localStorage.setItem('c5i_users_db', JSON.stringify(DEFAULT_USERS));
       }
-    })();
+
+      const storedUser = localStorage.getItem('c5i_user');
+      if (storedUser) {
+        setUser(JSON.parse(storedUser));
+      } else {
+        // Auto-login with default officer for immediate accessibility in AI Studio preview if no session
+        setUser(DEFAULT_USERS[0]);
+        localStorage.setItem('c5i_user', JSON.stringify(DEFAULT_USERS[0]));
+      }
+    } catch (err) {
+      console.warn('Error reading stored user session:', err);
+      setUser(DEFAULT_USERS[0]);
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
   const login = async (identifier: string, pass: string): Promise<LoginResponse> => {
@@ -57,42 +88,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const cleanPass = pass.trim();
 
     try {
-      // 1. Intentar backend del servidor C5i
+      // 1. Try remote C5i backend
       try {
         const remoteRes = await ApiService.login(cleanId, cleanPass);
         if (remoteRes && (remoteRes.success || remoteRes.status === 'success') && (remoteRes.user || remoteRes.usuario)) {
           const loggedUser = remoteRes.user || remoteRes.usuario;
           setUser(loggedUser);
-          await AsyncStorage.setItem('c5i_user', JSON.stringify(loggedUser));
+          localStorage.setItem('c5i_user', JSON.stringify(loggedUser));
           return {
             success: true,
             code: 'SUCCESS',
             message: remoteRes.message || 'Sesión iniciada correctamente',
             user: loggedUser,
           };
-        } else if (remoteRes && (!remoteRes.success || remoteRes.status === 'error')) {
-          const isPassError = remoteRes.code === 'INVALID_PASSWORD' || remoteRes.message?.toLowerCase().includes('contraseña');
-          return {
-            success: false,
-            code: isPassError ? 'INVALID_PASSWORD' : 'USER_NOT_FOUND',
-            message: remoteRes.message || `El usuario «${cleanId}» no se encuentra registrado en el sistema.`,
-          };
         }
-      } catch (apiErr: any) {
-        if (apiErr?.response?.data) {
-          const d = apiErr.response.data;
-          const isPassError = d.code === 'INVALID_PASSWORD' || d.message?.toLowerCase().includes('contraseña');
-          return {
-            success: false,
-            code: isPassError ? 'INVALID_PASSWORD' : 'USER_NOT_FOUND',
-            message: d.message || `El usuario «${cleanId}» no se encuentra registrado en el sistema.`,
-          };
-        }
-      }
+      } catch (_) {}
 
-      // 2. Verificar en usuarios registrados en el dispositivo
-      const storedUsersRaw = await AsyncStorage.getItem('c5i_users_db');
-      const users: User[] = storedUsersRaw ? JSON.parse(storedUsersRaw) : [];
+      // 2. Validate in local storage database
+      const storedUsersRaw = localStorage.getItem('c5i_users_db');
+      const users: User[] = storedUsersRaw ? JSON.parse(storedUsersRaw) : DEFAULT_USERS;
 
       const userMatch = users.find(
         (u) =>
@@ -101,35 +115,34 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           u.callsign?.toLowerCase() === cleanId.toLowerCase()
       );
 
-      // CASO A: Usuario no encontrado
+      // User not found
       if (!userMatch) {
         return {
           success: false,
           code: 'USER_NOT_FOUND',
-          message: `El usuario «${cleanId}» no se encuentra registrado en el sistema.`,
+          message: `El usuario «${cleanId}» no se encuentra registrado en el sistema C5i.`,
         };
       }
 
-      // CASO B: Contraseña incorrecta
-      if (userMatch.password && userMatch.password !== cleanPass) {
+      // Password mismatch (if password was configured)
+      if (userMatch.password && cleanPass && userMatch.password !== cleanPass) {
         return {
           success: false,
           code: 'INVALID_PASSWORD',
-          message: 'Contraseña incorrecta. Verifica tu contraseña o solicítala nuevamente.',
+          message: 'Contraseña incorrecta. Verifica tu clave de acceso.',
         };
       }
 
-      // Login exitoso con base de datos local
       setUser(userMatch);
-      await AsyncStorage.setItem('c5i_user', JSON.stringify(userMatch));
+      localStorage.setItem('c5i_user', JSON.stringify(userMatch));
       return {
         success: true,
         code: 'SUCCESS',
-        message: 'Sesión iniciada con éxito',
+        message: 'Sesión táctica iniciada con éxito',
         user: userMatch,
       };
-    } catch (err: any) {
-      console.error('Error en proceso de login:', err);
+    } catch (err) {
+      console.error('Error during login:', err);
       return {
         success: false,
         code: 'CONNECTION_ERROR',
@@ -143,36 +156,42 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       id: `usr-${Date.now()}`,
       name: data.name,
       phone_number: data.phone_number,
-      callsign: data.callsign,
+      callsign: data.callsign.toUpperCase(),
       correo: data.correo || (data.phone_number.includes('@') ? data.phone_number : undefined),
-      password: data.password,
+      password: data.password || '123',
       unit: data.unit || 'Sector Operativo Hidalgo',
       role: data.role || 'Oficial Operativo',
       status: 'online',
     };
 
-    const storedUsersRaw = await AsyncStorage.getItem('c5i_users_db');
-    const users: User[] = storedUsersRaw ? JSON.parse(storedUsersRaw) : [];
+    const storedUsersRaw = localStorage.getItem('c5i_users_db');
+    const users: User[] = storedUsersRaw ? JSON.parse(storedUsersRaw) : DEFAULT_USERS;
 
-    // Reemplaza o agrega
     const filtered = users.filter(
-      (u) => u.phone_number !== newUser.phone_number && u.correo !== newUser.correo
+      (u) => u.phone_number !== newUser.phone_number && u.callsign !== newUser.callsign
     );
     filtered.push(newUser);
 
-    await AsyncStorage.setItem('c5i_users_db', JSON.stringify(filtered));
+    localStorage.setItem('c5i_users_db', JSON.stringify(filtered));
     setUser(newUser);
-    await AsyncStorage.setItem('c5i_user', JSON.stringify(newUser));
+    localStorage.setItem('c5i_user', JSON.stringify(newUser));
     return true;
   };
 
   const logout = async () => {
     setUser(null);
-    await AsyncStorage.removeItem('c5i_user');
+    localStorage.removeItem('c5i_user');
+  };
+
+  const updateUser = (data: Partial<User>) => {
+    if (!user) return;
+    const updated = { ...user, ...data };
+    setUser(updated);
+    localStorage.setItem('c5i_user', JSON.stringify(updated));
   };
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, register, logout }}>
+    <AuthContext.Provider value={{ user, loading, login, register, logout, updateUser }}>
       {children}
     </AuthContext.Provider>
   );

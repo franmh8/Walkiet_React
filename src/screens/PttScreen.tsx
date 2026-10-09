@@ -1,33 +1,29 @@
-import React, { useState, useEffect, useRef } from 'react';
-import {
-  View,
-  Text,
-  StyleSheet,
-  Pressable,
-  SafeAreaView,
-  Alert,
-  Platform,
-  Modal,
-  ScrollView,
-  Animated,
-  Easing,
-} from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useRadio } from '../context/RadioContext';
-import { useAuth } from '../context/AuthContext';
-import { useTheme } from '../context/ThemeContext';
-import { Contact } from '../types';
+import React, { useState, useEffect } from 'react';
 import {
   Mic,
   AlertTriangle,
   Users,
+  Radio,
+  Play,
+  Volume2,
+  Clock,
+  Shield,
   Wifi,
   X,
-  Plus,
-} from 'lucide-react-native';
+  User,
+  RadioTower,
+} from 'lucide-react';
+import { useRadio } from '../context/RadioContext';
+import { useAuth } from '../context/AuthContext';
+import { useTheme } from '../context/ThemeContext';
 import { SosAlertModal } from '../components/SosAlertModal';
+import { Contact, VoiceMessage } from '../types';
 
-export function PttScreen({ navigation }: any) {
+interface PttScreenProps {
+  onNavigateTab: (tab: string) => void;
+}
+
+export function PttScreen({ onNavigateTab }: PttScreenProps) {
   const { user } = useAuth();
   const { colors, isDark } = useTheme();
   const {
@@ -36,38 +32,15 @@ export function PttScreen({ navigation }: any) {
     startTransmitting,
     stopTransmitting,
     channels,
+    voiceHistory,
+    playVoiceMessage,
   } = useRadio();
 
-  // Modal de usuarios / miembros del canal (Imagen 3)
-  const [membersModalVisible, setMembersModalVisible] = useState(false);
-  const [contactsList, setContactsList] = useState<Contact[]>([]);
-
-  // Modal de Alerta de Emergencia SOS (idéntico a la versión web)
   const [sosModalVisible, setSosModalVisible] = useState(false);
-
-  // Contador de transmisión en segundos (Timer PTT)
+  const [membersModalVisible, setMembersModalVisible] = useState(false);
   const [txSeconds, setTxSeconds] = useState(0);
 
-  // Animaciones para PTT
-  const pingAnim1 = useRef(new Animated.Value(0)).current;
-  const pingAnim2 = useRef(new Animated.Value(0)).current;
-  const pulseDotAnim = useRef(new Animated.Value(1)).current;
-
-  // Cargar contactos para la lista de miembros del canal
-  useEffect(() => {
-    (async () => {
-      try {
-        const stored = await AsyncStorage.getItem('c5i_contacts');
-        if (stored) {
-          setContactsList(JSON.parse(stored));
-        }
-      } catch (e) {
-        console.warn('Error cargando contactos:', e);
-      }
-    })();
-  }, [membersModalVisible]);
-
-  // Manejar el timer de transmisión
+  // Transmission timer
   useEffect(() => {
     let timer: any;
     if (isTransmitting) {
@@ -83,892 +56,321 @@ export function PttScreen({ navigation }: any) {
     };
   }, [isTransmitting]);
 
-  // Animaciones de radar/ping continuo cuando se transmite
+  // Keyboard shortcut: Spacebar hold for PTT
   useEffect(() => {
-    let animLoop: Animated.CompositeAnimation | null = null;
-    let dotLoop: Animated.CompositeAnimation | null = null;
-
-    if (isTransmitting) {
-      pingAnim1.setValue(0);
-      pingAnim2.setValue(0);
-
-      animLoop = Animated.loop(
-        Animated.parallel([
-          Animated.timing(pingAnim1, {
-            toValue: 1,
-            duration: 1500,
-            easing: Easing.out(Easing.ease),
-            useNativeDriver: true,
-          }),
-          Animated.sequence([
-            Animated.delay(400),
-            Animated.timing(pingAnim2, {
-              toValue: 1,
-              duration: 1500,
-              easing: Easing.out(Easing.ease),
-              useNativeDriver: true,
-            }),
-          ]),
-        ])
-      );
-
-      dotLoop = Animated.loop(
-        Animated.sequence([
-          Animated.timing(pulseDotAnim, {
-            toValue: 0.25,
-            duration: 500,
-            useNativeDriver: true,
-          }),
-          Animated.timing(pulseDotAnim, {
-            toValue: 1,
-            duration: 500,
-            useNativeDriver: true,
-          }),
-        ])
-      );
-
-      animLoop.start();
-      dotLoop.start();
-    } else {
-      pingAnim1.setValue(0);
-      pingAnim2.setValue(0);
-      pulseDotAnim.setValue(1);
-    }
-
-    return () => {
-      if (animLoop) animLoop.stop();
-      if (dotLoop) dotLoop.stop();
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.code === 'Space' && !e.repeat && !(e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement)) {
+        e.preventDefault();
+        startTransmitting();
+      }
     };
-  }, [isTransmitting, pingAnim1, pingAnim2, pulseDotAnim]);
 
-  const handleSosTrigger = () => {
-    setSosModalVisible(true);
-  };
+    const handleKeyUp = (e: KeyboardEvent) => {
+      if (e.code === 'Space' && !(e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement)) {
+        e.preventDefault();
+        stopTransmitting();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keyup', handleKeyUp);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keyup', handleKeyUp);
+    };
+  }, [startTransmitting, stopTransmitting]);
 
   const channelTitle = selectedChannel
     ? selectedChannel.name
     : channels.length === 0
-    ? 'Sin canales (Toca para ...'
+    ? 'Sin canales (Toca para agregar)'
     : 'Selecciona un canal';
 
   const memberCount = selectedChannel?.member_count || (channels.length === 0 ? 0 : 1);
 
-  // Escalas y opacidades para los aros expansivos de animación
-  const ringScale1 = pingAnim1.interpolate({
-    inputRange: [0, 1],
-    outputRange: [1, 1.45],
-  });
-  const ringOpacity1 = pingAnim1.interpolate({
-    inputRange: [0, 0.7, 1],
-    outputRange: [0.7, 0.25, 0],
-  });
-
-  const ringScale2 = pingAnim2.interpolate({
-    inputRange: [0, 1],
-    outputRange: [1, 1.6],
-  });
-  const ringOpacity2 = pingAnim2.interpolate({
-    inputRange: [0, 0.7, 1],
-    outputRange: [0.55, 0.15, 0],
-  });
+  // Simulated members for the selected channel
+  const channelMembers = [
+    { id: '1', name: user?.name || 'Tú', callsign: user?.callsign || 'OPERATIVO', status: 'online' as const, isMe: true },
+    { id: '2', name: 'Oficial Karla Mendoza', callsign: 'PATRULLA-04', status: 'online' as const, isMe: false },
+    { id: '3', name: 'Comandante R. Morales', callsign: 'HALCON-01', status: 'online' as const, isMe: false },
+    { id: '4', name: 'Despacho Central 911', callsign: 'CENTRAL-C5I', status: 'online' as const, isMe: false },
+  ];
 
   return (
-    <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
-      {/* TOP BAR: CANAL ACTUAL, BOTÓN SOS (SÓLO ÍCONO) & BOTÓN MIEMBROS */}
-      <View style={styles.topBar}>
-        <Pressable
-          onPress={() => navigation.navigate('Grupos')}
-          style={styles.channelTitleWrapper}
+    <div className="flex flex-col h-full overflow-hidden select-none">
+      {/* TOP BAR */}
+      <div
+        className="flex items-center justify-between px-5 py-3.5 border-b backdrop-blur-md sticky top-0 z-20"
+        style={{
+          backgroundColor: colors.headerBackground,
+          borderColor: colors.border,
+        }}
+      >
+        <button
+          onClick={() => onNavigateTab('Grupos')}
+          className="flex flex-col text-left group transition max-w-[65%]"
         >
-          <Text style={[styles.channelLabel, { color: colors.textMuted }]}>
+          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 group-hover:text-rose-400">
             CANAL ACTUAL
-          </Text>
-          <Text
-            style={[styles.channelTitle, { color: colors.text }]}
-            numberOfLines={1}
-            ellipsizeMode="tail"
+          </span>
+          <span
+            className="text-sm md:text-base font-bold truncate transition group-hover:text-rose-400"
+            style={{ color: colors.text }}
           >
             {channelTitle}
-          </Text>
-        </Pressable>
+          </span>
+        </button>
 
-        {/* Acciones superiores: SOS (solo icono) y Píldora de miembros */}
-        <View style={styles.topActions}>
-          {/* Botón SOS: Idéntico a la versión móvil web (sólo icono de alerta) */}
-          <Pressable
-            onPress={handleSosTrigger}
-            style={styles.sosIconButton}
-            android_ripple={{ color: 'rgba(255,255,255,0.2)', borderless: true }}
+        <div className="flex items-center gap-2">
+          {/* SOS button */}
+          <button
+            onClick={() => setSosModalVisible(true)}
+            title="Emitir Alerta Táctica SOS"
+            className="p-2.5 rounded-xl bg-gradient-to-r from-rose-700 to-rose-600 hover:from-rose-600 hover:to-rose-500 text-white shadow-md shadow-rose-950/40 transition active:scale-95 animate-pulse"
           >
-            <AlertTriangle
-              color="#ffffff"
-              size={18}
-              fill="rgba(255,255,255,0.25)"
-            />
-          </Pressable>
+            <AlertTriangle className="w-4 h-4 fill-white/20" />
+          </button>
 
-          {/* Botón Contador de Miembros: Abre modal de usuarios del canal */}
-          <Pressable
-            onPress={() => setMembersModalVisible(true)}
-            style={[
-              styles.membersPill,
-              {
-                backgroundColor: colors.card,
-                borderColor: colors.cardBorder,
-              },
-            ]}
+          {/* Members count pill */}
+          <button
+            onClick={() => setMembersModalVisible(true)}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-xl border text-xs font-semibold transition hover:bg-slate-800/40"
+            style={{
+              backgroundColor: colors.card,
+              borderColor: colors.cardBorder,
+              color: colors.text,
+            }}
           >
-            <Users color={colors.textSecondary} size={15} />
-            <Text style={[styles.membersText, { color: colors.text }]}>
-              {memberCount}
-            </Text>
-          </Pressable>
-        </View>
-      </View>
+            <Users className="w-3.5 h-3.5 text-slate-400" />
+            <span>{memberCount}</span>
+          </button>
+        </div>
+      </div>
 
-      {/* ÁREA CENTRAL: PROMPT CON TIMER, BOTÓN PTT CON ANIMACIÓN & PÍLDORA WI-FI */}
-      <View style={styles.centerArea}>
-        {/* Indicador de estado y Timer */}
-        <View style={styles.promptWrapper}>
+      {/* CENTER PTT AREA */}
+      <div className="flex-1 flex flex-col items-center justify-center p-6 relative">
+        {/* Status Prompt & Timer */}
+        <div className="mb-8 text-center min-h-[3rem] flex flex-col items-center justify-center">
           {isTransmitting ? (
-            <View style={styles.promptRow}>
-              <Animated.View
-                style={[
-                  styles.transmittingDot,
-                  { opacity: pulseDotAnim },
-                ]}
-              />
-              <Text style={styles.transmittingText}>
-                Transmitiendo ({txSeconds.toString().padStart(2, '0')}s)...
-              </Text>
-            </View>
+            <div className="flex items-center gap-2 px-4 py-1.5 rounded-full bg-rose-950/60 border border-rose-800/80 animate-pulse">
+              <span className="w-2.5 h-2.5 rounded-full bg-rose-500 shadow-sm shadow-rose-500" />
+              <span className="text-sm font-mono font-bold text-rose-300">
+                TRANSMITIENDO ({txSeconds.toString().padStart(2, '0')}s)...
+              </span>
+            </div>
           ) : (
-            <View style={styles.promptRow}>
-              <View style={styles.idleDot} />
-              <Text style={[styles.idleText, { color: colors.textSecondary }]}>
-                Mantén presionado para hablar
-              </Text>
-            </View>
+            <div className="flex flex-col items-center gap-1">
+              <div className="flex items-center gap-2 px-3 py-1 rounded-full bg-slate-800/40 border border-slate-700/60 text-xs text-slate-400">
+                <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                <span>Listo para transmitir</span>
+              </div>
+              <p className="text-xs text-slate-400 mt-1">
+                Mantén presionado el botón o la barra <kbd className="px-1.5 py-0.5 rounded bg-slate-800 text-[10px] font-mono border border-slate-700 text-slate-300">Espacio</kbd>
+              </p>
+            </div>
           )}
-        </View>
+        </div>
 
-        {/* Botón PTT con aros concéntricos y animación reactiva */}
-        <View style={styles.pttCircleWrapper}>
-          {/* Aros de animación de radar (ondas expansivas durante la transmisión) */}
+        {/* Big PTT Circle Button with Radar concentric waves */}
+        <div className="relative flex items-center justify-center my-2">
+          {/* Animated radar rings when transmitting */}
           {isTransmitting && (
             <>
-              <Animated.View
-                style={[
-                  styles.pingRing,
-                  {
-                    transform: [{ scale: ringScale1 }],
-                    opacity: ringOpacity1,
-                  },
-                ]}
-              />
-              <Animated.View
-                style={[
-                  styles.pingRing,
-                  {
-                    transform: [{ scale: ringScale2 }],
-                    opacity: ringOpacity2,
-                  },
-                ]}
-              />
+              <div className="absolute w-64 h-64 md:w-72 md:h-72 rounded-full border border-rose-500/60 animate-radar-1 pointer-events-none" />
+              <div className="absolute w-80 h-80 md:w-96 md:h-96 rounded-full border border-rose-400/40 animate-radar-2 pointer-events-none" />
             </>
           )}
 
-          {/* Aro Exterior */}
-          <View
-            style={[
-              styles.pttOuterRing,
-              {
-                backgroundColor: isTransmitting
-                  ? isDark
-                    ? '#1e1017'
-                    : '#fff1f2'
-                  : colors.pttOuterBg,
-                borderColor: isTransmitting
-                  ? '#f43f5e'
-                  : colors.pttOuterBorder,
-                shadowColor: isDark ? '#000000' : '#64748b',
-              },
-              isTransmitting && styles.pttOuterRingTransmitting,
-            ]}
+          {/* Outer ring */}
+          <div
+            className={`w-56 h-56 md:w-64 md:h-64 rounded-full p-3.5 flex items-center justify-center border transition-all duration-300 ${
+              isTransmitting
+                ? 'bg-rose-950/40 border-rose-500 shadow-2xl shadow-rose-900/50 scale-105'
+                : 'shadow-xl'
+            }`}
+            style={{
+              backgroundColor: isTransmitting
+                ? isDark ? '#1e1017' : '#fff1f2'
+                : colors.pttOuterBg,
+              borderColor: isTransmitting ? '#f43f5e' : colors.pttOuterBorder,
+            }}
           >
-            {/* Botón Interior PTT */}
-            <Pressable
-              onPressIn={startTransmitting}
-              onPressOut={stopTransmitting}
-              style={({ pressed }) => [
-                styles.pttInnerButton,
-                {
-                  backgroundColor: isTransmitting || pressed
-                    ? '#be123c'
-                    : colors.pttInnerBg,
-                  borderColor: isTransmitting || pressed
-                    ? '#f43f5e'
-                    : colors.pttInnerBorder,
-                },
-                (isTransmitting || pressed) && styles.pttInnerActive,
-              ]}
+            {/* Main Interactive Button */}
+            <button
+              onMouseDown={startTransmitting}
+              onMouseUp={stopTransmitting}
+              onMouseLeave={stopTransmitting}
+              onTouchStart={(e) => {
+                e.preventDefault();
+                startTransmitting();
+              }}
+              onTouchEnd={(e) => {
+                e.preventDefault();
+                stopTransmitting();
+              }}
+              className={`w-full h-full rounded-full flex flex-col items-center justify-center transition-all duration-150 cursor-pointer outline-none border-2 active:scale-95 ${
+                isTransmitting
+                  ? 'bg-gradient-to-b from-rose-700 to-rose-900 border-rose-400 text-white shadow-inner'
+                  : 'hover:brightness-105 text-slate-300'
+              }`}
+              style={{
+                backgroundColor: isTransmitting ? '#be123c' : colors.pttInnerBg,
+                borderColor: isTransmitting ? '#f43f5e' : colors.pttInnerBorder,
+              }}
             >
               <Mic
-                color={
-                  isTransmitting
-                    ? '#ffffff'
-                    : isDark
-                    ? '#cbd5e1'
-                    : '#334155'
-                }
-                size={54}
-                strokeWidth={1.8}
+                className={`w-14 h-14 md:w-16 md:h-16 transition-transform duration-200 ${
+                  isTransmitting ? 'scale-110 text-white' : 'text-slate-300'
+                }`}
               />
-            </Pressable>
-          </View>
-        </View>
+              <span className={`text-xs font-bold tracking-widest uppercase mt-2 ${
+                isTransmitting ? 'text-white' : 'text-slate-400'
+              }`}>
+                {isTransmitting ? 'PTT ACTIVO' : 'PRESIONA PTT'}
+              </span>
+            </button>
+          </div>
+        </div>
 
-        {/* Píldora de Conectividad Wi-Fi */}
-        <View
-          style={[
-            styles.networkPill,
-            {
-              backgroundColor: colors.pillBg,
-              borderColor: colors.pillBorder,
-            },
-          ]}
-        >
-          <Wifi color={colors.pillText} size={14} />
-          <Text style={[styles.networkPillText, { color: colors.pillText }]}>
-            Conectado (Wi-Fi)
-          </Text>
-        </View>
-      </View>
+        {/* Network & Encryption status pill */}
+        <div className="mt-8 flex items-center gap-3">
+          <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-950/40 border border-emerald-800/50 text-[11px] font-medium text-emerald-400">
+            <Shield className="w-3 h-3 text-emerald-400" />
+            <span>MALLA CIFRADA AES-256</span>
+          </div>
+          <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-slate-800/40 border border-slate-700/60 text-[11px] text-slate-400">
+            <Wifi className="w-3 h-3 text-emerald-400" />
+            <span>RED C5I OPERATIVA</span>
+          </div>
+        </div>
+      </div>
 
-      {/* MODAL DE MIEMBROS / USUARIOS DEL CANAL (EXACTO A IMAGEN 3) */}
-      <Modal
-        visible={membersModalVisible}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setMembersModalVisible(false)}
+      {/* RECENT VOICE BURSTS LOG */}
+      <div
+        className="px-5 py-3 border-t max-h-48 overflow-y-auto"
+        style={{
+          backgroundColor: colors.surface,
+          borderColor: colors.border,
+        }}
       >
-        <View style={styles.modalOverlay}>
-          <View
-            style={[
-              styles.modalCard,
-              {
-                backgroundColor: colors.card,
-                borderColor: colors.cardBorder,
-              },
-            ]}
-          >
-            {/* Header del Modal */}
-            <View
-              style={[
-                styles.modalHeader,
-                {
-                  borderBottomColor: colors.border,
-                  backgroundColor: isDark ? '#0c121e' : '#f8fafc',
-                },
-              ]}
-            >
-              <View style={styles.modalHeaderLeft}>
-                <View
-                  style={[
-                    styles.modalIconWrap,
-                    {
-                      backgroundColor: isDark
-                        ? 'rgba(235, 82, 124, 0.15)'
-                        : '#fff1f2',
-                      borderColor: isDark
-                        ? 'rgba(235, 82, 124, 0.3)'
-                        : '#fecdd3',
-                    },
-                  ]}
-                >
-                  <Users
-                    color={isDark ? '#eb527c' : '#8a1a36'}
-                    size={20}
-                  />
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text
-                    style={[styles.modalTitle, { color: colors.text }]}
-                    numberOfLines={1}
-                  >
-                    {selectedChannel ? selectedChannel.name : 'Canal Táctico'}
-                  </Text>
-                  <Text style={[styles.modalSubtitle, { color: colors.textMuted }]}>
-                    {memberCount} {memberCount === 1 ? 'usuario activo' : 'usuarios activos'} •{' '}
-                    <Text style={{ textTransform: 'capitalize' }}>
-                      {selectedChannel?.category || 'General'}
-                    </Text>
-                  </Text>
-                </View>
-              </View>
+        <div className="flex items-center justify-between mb-2">
+          <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
+            ÚLTIMAS TRANSMISIONES DE VOZ ({voiceHistory.length})
+          </span>
+          <span className="text-[10px] text-slate-400">Canal: {channelTitle}</span>
+        </div>
 
-              <Pressable
-                onPress={() => setMembersModalVisible(false)}
-                style={styles.modalCloseIconBtn}
+        {voiceHistory.length === 0 ? (
+          <div className="text-center py-3 text-xs text-slate-400">
+            No hay transmisiones grabadas. Presiona el botón PTT para hablar.
+          </div>
+        ) : (
+          <div className="space-y-1.5">
+            {voiceHistory.slice(0, 4).map((burst) => (
+              <div
+                key={burst.id}
+                className="flex items-center justify-between px-3 py-2 rounded-xl bg-slate-900/50 border border-slate-800/80 text-xs hover:border-slate-700 transition"
               >
-                <X color={colors.textMuted} size={20} />
-              </Pressable>
-            </View>
+                <div className="flex items-center gap-2 truncate">
+                  <div className="p-1 rounded bg-rose-600/20 text-rose-400">
+                    <RadioTower className="w-3.5 h-3.5" />
+                  </div>
+                  <div className="truncate">
+                    <span className="font-bold text-white font-mono">
+                      {burst.sender_callsign || burst.sender_name || 'OFICIAL'}
+                    </span>
+                    <span className="text-slate-400 ml-2 text-[11px]">
+                      {new Date(burst.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                    </span>
+                  </div>
+                </div>
 
-            {/* Lista de Miembros */}
-            <ScrollView style={styles.modalBody} showsVerticalScrollIndicator={false}>
-              {/* Tarjeta del Usuario Actual (Tú) */}
-              <View
-                style={[
-                  styles.memberCard,
-                  {
-                    backgroundColor: isDark
-                      ? 'rgba(138, 26, 54, 0.15)'
-                      : '#fff1f2',
-                    borderColor: isDark
-                      ? 'rgba(235, 82, 124, 0.35)'
-                      : '#fecdd3',
-                  },
-                ]}
-              >
-                <View style={styles.memberCardLeft}>
-                  {/* Avatar con punto de estado verde */}
-                  <View style={styles.avatarWrapper}>
-                    <View
-                      style={[
-                        styles.avatarBox,
-                        {
-                          backgroundColor: isDark ? '#1e293b' : '#e2e8f0',
-                          borderColor: isDark ? '#334155' : '#cbd5e1',
-                        },
-                      ]}
-                    >
-                      <Text
-                        style={[
-                          styles.avatarText,
-                          { color: isDark ? '#f8fafc' : '#334155' },
-                        ]}
-                      >
-                        {(user?.name || 'F').charAt(0).toUpperCase()}
-                      </Text>
-                    </View>
-                    <View style={styles.onlineDot} />
-                  </View>
-
-                  <View style={{ flex: 1, minWidth: 0 }}>
-                    <View style={styles.memberNameRow}>
-                      <Text
-                        style={[styles.memberName, { color: colors.text }]}
-                        numberOfLines={1}
-                      >
-                        {user?.name || 'Francisco'} (Tú)
-                      </Text>
-                      <View style={styles.meBadge}>
-                        <Text style={styles.meBadgeText}>TÚ</Text>
-                      </View>
-                    </View>
-                    <Text
-                      style={[styles.memberMeta, { color: colors.textMuted }]}
-                      numberOfLines={1}
-                    >
-                      <Text
-                        style={{
-                          color: isDark ? '#eb527c' : '#8a1a36',
-                          fontWeight: '700',
-                        }}
-                      >
-                        {user?.callsign || 'RADIO-8448'}
-                      </Text>{' '}
-                      • {user?.unit || 'Sector Operativo'}
-                    </Text>
-                  </View>
-                </View>
-
-                <View
-                  style={[
-                    styles.roleBadge,
-                    {
-                      backgroundColor: isDark ? '#1e293b' : '#ffffff',
-                      borderColor: colors.cardBorder,
-                    },
-                  ]}
+                <button
+                  onClick={() => playVoiceMessage(burst)}
+                  className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-rose-950/60 hover:bg-rose-900/80 text-rose-300 border border-rose-800/60 font-semibold text-[11px] transition active:scale-95"
                 >
-                  <Text style={[styles.roleText, { color: colors.textSecondary }]}>
-                    Operador
-                  </Text>
-                </View>
-              </View>
+                  <Play className="w-3 h-3 fill-rose-300" />
+                  <span>Escuchar</span>
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
 
-              {/* Otros Contactos Guardados */}
-              {contactsList.map((contact) => (
-                <View
-                  key={contact.id}
-                  style={[
-                    styles.memberCard,
-                    {
-                      backgroundColor: colors.card,
-                      borderColor: colors.cardBorder,
-                    },
-                  ]}
-                >
-                  <View style={styles.memberCardLeft}>
-                    <View style={styles.avatarWrapper}>
-                      <View
-                        style={[
-                          styles.avatarBox,
-                          {
-                            backgroundColor: isDark ? '#1e293b' : '#e2e8f0',
-                            borderColor: isDark ? '#334155' : '#cbd5e1',
-                          },
-                        ]}
-                      >
-                        <Text
-                          style={[
-                            styles.avatarText,
-                            { color: isDark ? '#f8fafc' : '#334155' },
-                          ]}
-                        >
-                          {contact.name.charAt(0).toUpperCase()}
-                        </Text>
-                      </View>
-                      <View style={styles.onlineDot} />
-                    </View>
-
-                    <View style={{ flex: 1, minWidth: 0 }}>
-                      <Text
-                        style={[styles.memberName, { color: colors.text }]}
-                        numberOfLines={1}
-                      >
-                        {contact.name}
-                      </Text>
-                      <Text
-                        style={[styles.memberMeta, { color: colors.textMuted }]}
-                        numberOfLines={1}
-                      >
-                        <Text
-                          style={{
-                            color: isDark ? '#eb527c' : '#8a1a36',
-                            fontWeight: '600',
-                          }}
-                        >
-                          {contact.callsign || 'PATRULLA'}
-                        </Text>{' '}
-                        • {contact.unit || 'Oficial Conectado'}
-                      </Text>
-                    </View>
-                  </View>
-
-                  <View
-                    style={[
-                      styles.roleBadge,
-                      {
-                        backgroundColor: isDark ? '#1e293b' : '#ffffff',
-                        borderColor: colors.cardBorder,
-                      },
-                    ]}
-                  >
-                    <Text style={[styles.roleText, { color: colors.textSecondary }]}>
-                      Oficial
-                    </Text>
-                  </View>
-                </View>
-              ))}
-            </ScrollView>
-
-            {/* Footer del Modal */}
-            <View
-              style={[
-                styles.modalFooter,
-                {
-                  borderTopColor: colors.border,
-                  backgroundColor: isDark ? '#0c121e' : '#f8fafc',
-                },
-              ]}
-            >
-              <Pressable
-                onPress={() => {
-                  setMembersModalVisible(false);
-                  navigation.navigate('Contactos');
-                }}
-                style={styles.manageContactsBtn}
-              >
-                <Plus color={isDark ? '#eb527c' : '#8a1a36'} size={15} />
-                <Text
-                  style={[
-                    styles.manageContactsText,
-                    { color: isDark ? '#eb527c' : '#8a1a36' },
-                  ]}
-                >
-                  Gestionar Contactos
-                </Text>
-              </Pressable>
-
-              <Pressable
-                onPress={() => setMembersModalVisible(false)}
-                style={[
-                  styles.closeModalBtn,
-                  {
-                    backgroundColor: isDark ? '#1e293b' : '#e2e8f0',
-                  },
-                ]}
-              >
-                <Text
-                  style={[
-                    styles.closeModalBtnText,
-                    { color: isDark ? '#f8fafc' : '#334155' },
-                  ]}
-                >
-                  Cerrar
-                </Text>
-              </Pressable>
-            </View>
-          </View>
-        </View>
-      </Modal>
-
-      {/* MODAL DE ALERTA DE EMERGENCIA SOS (IDÉNTICO A LA VERSIÓN WEB) */}
+      {/* SOS Modal */}
       <SosAlertModal
         visible={sosModalVisible}
         onClose={() => setSosModalVisible(false)}
         channelId={selectedChannel?.id}
         channelName={selectedChannel?.name}
       />
-    </SafeAreaView>
+
+      {/* Channel Members Modal */}
+      {membersModalVisible && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
+          <div
+            className="w-full max-w-sm rounded-2xl border shadow-2xl overflow-hidden"
+            style={{
+              backgroundColor: colors.card,
+              borderColor: colors.cardBorder,
+            }}
+          >
+            <div className="flex items-center justify-between px-5 py-4 border-b border-slate-800 bg-slate-900/60">
+              <div className="flex items-center gap-2">
+                <Users className="w-4 h-4 text-rose-400" />
+                <h3 className="text-sm font-bold text-white">
+                  Miembros en Frecuencia ({channelMembers.length})
+                </h3>
+              </div>
+              <button
+                onClick={() => setMembersModalVisible(false)}
+                className="p-1 rounded text-slate-400 hover:text-white"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-4 space-y-2 max-h-72 overflow-y-auto">
+              {channelMembers.map((m) => (
+                <div
+                  key={m.id}
+                  className="flex items-center justify-between p-2.5 rounded-xl bg-slate-900/60 border border-slate-800 text-xs"
+                >
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-8 h-8 rounded-full bg-slate-800 border border-slate-700 flex items-center justify-center text-slate-300">
+                      <User className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <div className="font-semibold text-white">
+                        {m.name} {m.isMe && <span className="text-rose-400 font-mono">(Tú)</span>}
+                      </div>
+                      <div className="text-[11px] font-mono text-slate-400">
+                        {m.callsign}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1.5 text-[11px] text-emerald-400 font-medium">
+                    <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                    <span>En línea</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="p-3 border-t border-slate-800 text-center">
+              <button
+                onClick={() => setMembersModalVisible(false)}
+                className="w-full py-2 rounded-xl bg-slate-800 text-slate-300 text-xs font-semibold hover:bg-slate-700"
+              >
+                Cerrar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-  },
-  topBar: {
-    width: '100%',
-    paddingHorizontal: 20,
-    paddingTop: Platform.OS === 'ios' ? 14 : 20,
-    paddingBottom: 10,
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    justifyContent: 'space-between',
-    zIndex: 10,
-  },
-  channelTitleWrapper: {
-    flex: 1,
-    marginRight: 12,
-  },
-  channelLabel: {
-    fontSize: 11,
-    fontWeight: '700',
-    letterSpacing: 0.8,
-    textTransform: 'uppercase',
-  },
-  channelTitle: {
-    fontSize: 22,
-    fontWeight: 'bold',
-    marginTop: 2,
-    letterSpacing: -0.5,
-  },
-  topActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  // Botón SOS: Sólo icono en squircle, idéntico a versión móvil web
-  sosIconButton: {
-    width: 38,
-    height: 38,
-    borderRadius: 12,
-    backgroundColor: '#e11d48', // rose-600
-    borderWidth: 1,
-    borderColor: '#fda4af',
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#e11d48',
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.25,
-    shadowRadius: 5,
-    elevation: 3,
-  },
-  membersPill: {
-    height: 38,
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 12,
-    borderRadius: 12,
-    borderWidth: 1,
-    gap: 6,
-    shadowColor: '#000000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.04,
-    shadowRadius: 2,
-    elevation: 1,
-  },
-  membersText: {
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  centerArea: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 20,
-  },
-  promptWrapper: {
-    marginBottom: 26,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  promptRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 7,
-  },
-  idleDot: {
-    width: 7,
-    height: 7,
-    borderRadius: 4,
-    backgroundColor: '#10b981', // emerald-500
-  },
-  idleText: {
-    fontSize: 13,
-    fontWeight: '500',
-  },
-  transmittingDot: {
-    width: 9,
-    height: 9,
-    borderRadius: 5,
-    backgroundColor: '#f43f5e',
-  },
-  transmittingText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#e11d48',
-  },
-  pttCircleWrapper: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    position: 'relative',
-  },
-  // Aros de animación de radar expansivo
-  pingRing: {
-    position: 'absolute',
-    width: 250,
-    height: 250,
-    borderRadius: 125,
-    borderWidth: 2,
-    borderColor: '#f43f5e',
-    backgroundColor: 'rgba(244, 63, 94, 0.15)',
-  },
-  pttOuterRing: {
-    width: 250,
-    height: 250,
-    borderRadius: 125,
-    borderWidth: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.08,
-    shadowRadius: 18,
-    elevation: 6,
-  },
-  pttOuterRingTransmitting: {
-    borderWidth: 2,
-  },
-  pttInnerButton: {
-    width: 170,
-    height: 170,
-    borderRadius: 85,
-    borderWidth: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#000000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.06,
-    shadowRadius: 8,
-    elevation: 4,
-  },
-  pttInnerActive: {
-    transform: [{ scale: 0.95 }],
-  },
-  networkPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 14,
-    paddingVertical: 6,
-    borderRadius: 20,
-    borderWidth: 1,
-    gap: 6,
-    marginTop: 34,
-  },
-  networkPillText: {
-    fontSize: 12,
-    fontWeight: '600',
-  },
-
-  /* MODAL DE MIEMBROS (IMAGEN 3) */
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(15, 23, 42, 0.65)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-  },
-  modalCard: {
-    width: '100%',
-    maxWidth: 360,
-    borderRadius: 26,
-    borderWidth: 1,
-    overflow: 'hidden',
-    shadowColor: '#000000',
-    shadowOffset: { width: 0, height: 12 },
-    shadowOpacity: 0.25,
-    shadowRadius: 20,
-    elevation: 10,
-    maxHeight: '80%',
-  },
-  modalHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 18,
-    paddingVertical: 14,
-    borderBottomWidth: 1,
-  },
-  modalHeaderLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    flex: 1,
-  },
-  modalIconWrap: {
-    width: 42,
-    height: 42,
-    borderRadius: 16,
-    borderWidth: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  modalTitle: {
-    fontSize: 15,
-    fontWeight: 'bold',
-  },
-  modalSubtitle: {
-    fontSize: 11,
-    marginTop: 2,
-    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
-  },
-  modalCloseIconBtn: {
-    padding: 6,
-    marginLeft: 8,
-  },
-  modalBody: {
-    padding: 16,
-    maxHeight: 280,
-  },
-  memberCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: 12,
-    borderRadius: 18,
-    borderWidth: 1,
-    marginBottom: 8,
-  },
-  memberCardLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    flex: 1,
-  },
-  avatarWrapper: {
-    position: 'relative',
-  },
-  avatarBox: {
-    width: 40,
-    height: 40,
-    borderRadius: 16,
-    borderWidth: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  avatarText: {
-    fontSize: 14,
-    fontWeight: 'bold',
-  },
-  onlineDot: {
-    position: 'absolute',
-    bottom: -1,
-    right: -1,
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-    backgroundColor: '#10b981',
-    borderWidth: 2,
-    borderColor: '#ffffff',
-  },
-  memberNameRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  memberName: {
-    fontSize: 13,
-    fontWeight: 'bold',
-    flexShrink: 1,
-  },
-  meBadge: {
-    backgroundColor: '#691c32',
-    paddingHorizontal: 6,
-    paddingVertical: 1,
-    borderRadius: 6,
-  },
-  meBadgeText: {
-    color: '#ffffff',
-    fontSize: 9,
-    fontWeight: 'bold',
-    letterSpacing: 0.5,
-  },
-  memberMeta: {
-    fontSize: 10,
-    marginTop: 2,
-    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
-  },
-  roleBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 10,
-    borderWidth: 1,
-    marginLeft: 8,
-  },
-  roleText: {
-    fontSize: 10,
-    fontWeight: '600',
-  },
-  modalFooter: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderTopWidth: 1,
-  },
-  manageContactsBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    paddingVertical: 6,
-    paddingHorizontal: 4,
-  },
-  manageContactsText: {
-    fontSize: 12,
-    fontWeight: 'bold',
-  },
-  closeModalBtn: {
-    paddingHorizontal: 16,
-    paddingVertical: 7,
-    borderRadius: 12,
-  },
-  closeModalBtnText: {
-    fontSize: 12,
-    fontWeight: '600',
-  },
-});
+export default PttScreen;

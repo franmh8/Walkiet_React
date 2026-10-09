@@ -1,0 +1,6 @@
+{
+  "name": "C5i Hidalgo WalkieT",
+  "description": "Sistema de radiocomunicación táctica PTT (Push-to-Talk), canales operativos, chat cifrado y despacho de emergencias SOS para C5i Hidalgo.",
+  "permissions": [],
+  "capabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
