@@ -1,6 +1,7 @@
 {
   "name": "c5i-hidalgo-walkiet",
   "version": "1.0.0",
+  "main": "expo/AppEntry.js",
   "type": "module",
   "scripts": {
     "dev": "tsx server.ts",

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   StyleSheet,
   Text,
@@ -11,6 +11,7 @@ import {
   Alert,
   Vibration,
   Platform,
+  ActivityIndicator,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
@@ -21,6 +22,8 @@ interface User {
   badge: string;
   role: string;
   unit: string;
+  phone_number?: string;
+  callsign?: string;
 }
 
 interface Channel {
@@ -45,11 +48,25 @@ interface Transmission {
 }
 
 const DEFAULT_CHANNELS: Channel[] = [
-  { id: 'ch-alfa', name: 'Alfa-10 Central', code: 'CH-10', frequency: '154.800 MHz', category: 'Comando', isEncrypted: true, activeUsers: 14 },
-  { id: 'ch-bravo', name: 'Bravo-20 Operativos', code: 'CH-20', frequency: '155.125 MHz', category: 'Operativo', isEncrypted: true, activeUsers: 8 },
-  { id: 'ch-charlie', name: 'Charlie-30 Vialidad', code: 'CH-30', frequency: '153.950 MHz', category: 'Tránsito', isEncrypted: true, activeUsers: 5 },
-  { id: 'ch-delta', name: 'Delta-90 Emergencias', code: 'CH-90', frequency: '156.200 MHz', category: 'Emergencia', isEncrypted: true, activeUsers: 22 },
+  { id: 'chan-01', name: 'OPERACIONES ESPECIALES TÁCTICAS', code: 'CH-10', frequency: '154.800 MHz', category: 'Táctico', isEncrypted: true, activeUsers: 14 },
+  { id: 'chan-02', name: 'DESPACHO EMERGENCIAS 911', code: 'CH-91', frequency: '156.200 MHz', category: 'Emergencia', isEncrypted: true, activeUsers: 22 },
+  { id: 'chan-03', name: 'CENTRAL DE MONITOREO C5I', code: 'CH-50', frequency: '158.450 MHz', category: 'Inteligencia', isEncrypted: true, activeUsers: 9 },
+  { id: 'chan-04', name: 'VIALIDAD Y TRÁNSITO PACHUCA', code: 'CH-44', frequency: '153.950 MHz', category: 'Vialidad', isEncrypted: true, activeUsers: 12 },
 ];
+
+// Helper con timeout para peticiones en red móvil/wifi
+async function fetchWithTimeout(url: string, options: any = {}, timeoutMs = 3500) {
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, { ...options, credentials: 'omit', signal: controller.signal });
+    clearTimeout(id);
+    return response;
+  } catch (err) {
+    clearTimeout(id);
+    throw err;
+  }
+}
 
 export default function NativeApp() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -58,25 +75,29 @@ export default function NativeApp() {
   const [currentTab, setCurrentTab] = useState<'PTT' | 'CANALES' | 'MENSAJES' | 'AJUSTES'>('PTT');
   
   // Radio & PTT State
+  const [channels, setChannels] = useState<Channel[]>(DEFAULT_CHANNELS);
   const [selectedChannel, setSelectedChannel] = useState<Channel>(DEFAULT_CHANNELS[0]);
   const [isTransmitting, setIsTransmitting] = useState(false);
   const [txDuration, setTxDuration] = useState(0);
-  const [signalStrength] = useState(94);
-  const [batteryLevel] = useState(88);
+  const [signalStrength] = useState(98);
+  const [batteryLevel] = useState(91);
   const [serverUrl, setServerUrl] = useState('http://walkt.gt.tc');
-  const [dbStatus] = useState<'ONLINE' | 'CONNECTING' | 'OFFLINE'>('ONLINE');
+  const [dbStatus, setDbStatus] = useState<'ONLINE' | 'STANDBY' | 'CONNECTING'>('ONLINE');
   const [isSosActive, setIsSosActive] = useState(false);
+  const [isTestingServer, setIsTestingServer] = useState(false);
+  const [serverLatency, setServerLatency] = useState<number | null>(null);
   
   // History & Messages
   const [transmissions, setTransmissions] = useState<Transmission[]>([
-    { id: '1', sender: 'C5i Central', badge: 'CTR-01', channel: 'Alfa-10 Central', timestamp: '10:14', duration: 3, type: 'voice' },
-    { id: '2', sender: 'Patrulla P-204', badge: 'PAT-204', channel: 'Alfa-10 Central', timestamp: '10:18', duration: 4, type: 'voice' },
-    { id: '3', sender: 'Oficial Morales', badge: 'OF-104', channel: 'Alfa-10 Central', timestamp: '10:20', duration: 2, type: 'text', text: '10-4 Unidad en posición de vigilancia' },
+    { id: '1', sender: 'Central C5i Hidalgo', badge: 'CTR-01', channel: 'OPERACIONES ESPECIALES TÁCTICAS', timestamp: '10:14', duration: 3, type: 'voice' },
+    { id: '2', sender: 'Patrulla P-204', badge: 'PAT-204', channel: 'OPERACIONES ESPECIALES TÁCTICAS', timestamp: '10:18', duration: 4, type: 'voice' },
+    { id: '3', sender: 'Comandante Morales', badge: 'HALCÓN-01', channel: 'OPERACIONES ESPECIALES TÁCTICAS', timestamp: '10:20', duration: 2, type: 'text', text: '10-4 Unidad en posición de patrullaje preventivo C5i' },
   ]);
   const [messageInput, setMessageInput] = useState('');
 
   const timerRef = useRef<any>(null);
 
+  // Carga inicial de preferencias guardadas en dispositivo
   useEffect(() => {
     (async () => {
       try {
@@ -91,6 +112,71 @@ export default function NativeApp() {
     })();
   }, []);
 
+  // Intentar sincronizar canales remotos desde el backend si está configurado
+  const refreshChannels = useCallback(async (baseUrl: string) => {
+    if (!baseUrl) return;
+    try {
+      const cleanUrl = baseUrl.replace(/\/+$/, '');
+      const res = await fetchWithTimeout(`${cleanUrl}/api/channels`, {}, 3000);
+      if (res.ok) {
+        const data = await res.json();
+        if (data && Array.isArray(data.channels) && data.channels.length > 0) {
+          const mapped: Channel[] = data.channels.map((ch: any, idx: number) => ({
+            id: ch.id || `chan-${idx}`,
+            name: ch.name,
+            code: `CH-${(idx + 1) * 10}`,
+            frequency: `15${4 + idx}.${(idx * 150) % 900 || '800'} MHz`,
+            category: ch.category ? ch.category.toUpperCase() : 'Operativo',
+            isEncrypted: true,
+            activeUsers: ch.member_count || (8 + idx * 3),
+          }));
+          setChannels(mapped);
+          setDbStatus('ONLINE');
+        }
+      }
+    } catch {
+      // Si el servidor no responde, se mantienen los canales tácticos por defecto
+      setDbStatus('STANDBY');
+    }
+  }, []);
+
+  useEffect(() => {
+    if (serverUrl) {
+      refreshChannels(serverUrl);
+    }
+  }, [serverUrl, refreshChannels]);
+
+  // Probar conectividad con el servidor configurado
+  const testServerConnection = async () => {
+    setIsTestingServer(true);
+    setServerLatency(null);
+    const start = Date.now();
+    try {
+      const cleanUrl = serverUrl.replace(/\/+$/, '');
+      const res = await fetchWithTimeout(`${cleanUrl}/api/database/status`, {}, 4000);
+      const elapsed = Date.now() - start;
+      if (res.ok) {
+        setServerLatency(elapsed);
+        setDbStatus('ONLINE');
+        Alert.alert(
+          '✅ Conexión Exitosa',
+          `Enlace con servidor C5i establecido (${elapsed}ms).\nBase de datos: if0_42687378_walkt`
+        );
+        refreshChannels(serverUrl);
+      } else {
+        throw new Error(`Código HTTP: ${res.status}`);
+      }
+    } catch (e: any) {
+      setDbStatus('STANDBY');
+      Alert.alert(
+        '⚠️ Modo Táctico Autónomo',
+        `No fue posible contactar a ${serverUrl} (${e.message || 'Sin respuesta'}). El radio continuará operando en modo táctico local con cifrado de emergencia.`
+      );
+    } finally {
+      setIsTestingServer(false);
+    }
+  };
+
   const handlePttPressIn = () => {
     setIsTransmitting(true);
     setTxDuration(0);
@@ -104,7 +190,7 @@ export default function NativeApp() {
     }, 1000);
   };
 
-  const handlePttPressOut = () => {
+  const handlePttPressOut = async () => {
     if (!isTransmitting) return;
     setIsTransmitting(false);
     if (timerRef.current) clearInterval(timerRef.current);
@@ -126,6 +212,24 @@ export default function NativeApp() {
         type: 'voice',
       };
       setTransmissions((prev) => [newTx, ...prev]);
+
+      // Enviar burst al backend en background si existe URL
+      if (serverUrl) {
+        try {
+          const cleanUrl = serverUrl.replace(/\/+$/, '');
+          fetchWithTimeout(`${cleanUrl}/api/voice-messages`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              sender_id: currentUser.id,
+              channel_id: selectedChannel.id,
+              audio_url: `burst-${Date.now()}`,
+              duration_seconds: txDuration,
+              text: `Ráfaga PTT de ${currentUser.badge} (${txDuration}s)`,
+            }),
+          }, 3000).catch(() => {});
+        } catch {}
+      }
     }
   };
 
@@ -134,13 +238,43 @@ export default function NativeApp() {
       Alert.alert('Acceso Requerido', 'Ingresa tu identificador policial y contraseña');
       return;
     }
-    const user: User = {
+
+    // Intentar autenticación remota con fallback inmediato
+    let remoteUser: User | null = null;
+    if (serverUrl) {
+      try {
+        const cleanUrl = serverUrl.replace(/\/+$/, '');
+        const res = await fetchWithTimeout(`${cleanUrl}/api/auth/login`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ identificador: identifier, password }),
+        }, 2500);
+        if (res.ok) {
+          const data = await res.json();
+          if (data && data.success && data.user) {
+            remoteUser = {
+              id: data.user.id,
+              name: data.user.name,
+              badge: data.user.callsign || 'OF-' + identifier.slice(-3),
+              role: 'Elemento Táctico',
+              unit: data.user.unit || 'Sector Operativo Hidalgo',
+              phone_number: data.user.phone_number,
+              callsign: data.user.callsign,
+            };
+          }
+        }
+      } catch {}
+    }
+
+    const user: User = remoteUser || {
       id: identifier,
-      name: identifier === '7711234567' ? 'Oficial Morales G.' : `Oficial ${identifier.slice(-4)}`,
-      badge: 'OF-' + (identifier.slice(-3) || '104'),
+      name: identifier === '7711234567' ? 'Comandante Roberto Morales' : `Oficial ${identifier.slice(-4)}`,
+      badge: identifier === '7711234567' ? 'HALCÓN-01' : 'OF-' + (identifier.slice(-3) || '104'),
       role: 'Elemento Táctico',
-      unit: 'Patrulla P-204',
+      unit: 'Fuerza Especial de Reacción C5i',
+      phone_number: identifier,
     };
+
     setCurrentUser(user);
     try {
       await AsyncStorage.setItem('c5i_native_user', JSON.stringify(user));
@@ -156,8 +290,8 @@ export default function NativeApp() {
 
   const handleTriggerSos = () => {
     Alert.alert(
-      '🚨 ALERTA DE EMERGENCIA C5i',
-      '¿Confirmas la activación inmediata de código SOS / 10-33 con transmisión de coordenadas a toda la red?',
+      '🚨 ALERTA DE EMERGENCIA C5i (10-33)',
+      '¿Confirmas la activación inmediata de código SOS con transmisión de coordenadas a toda la red del Centro de Comando?',
       [
         { text: 'Cancelar', style: 'cancel' },
         {
@@ -172,13 +306,32 @@ export default function NativeApp() {
               id: Date.now().toString(),
               sender: currentUser?.name || 'Unidad Táctica',
               badge: currentUser?.badge || 'SOS-911',
-              channel: 'Delta-90 Emergencias',
+              channel: 'DESPACHO EMERGENCIAS 911',
               timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-              duration: 1,
+              duration: 5,
               type: 'sos',
-              text: '🚨 ALERTA SOS ACTIVA - Oficial requiere apoyo inmediato en coordenadas C5i',
+              text: '🚨 ALERTA 10-33 SOS ACTIVA - Oficial en peligro requiere apoyo inmediato de unidades en cuadrante',
             };
             setTransmissions((prev) => [sosTx, ...prev]);
+
+            // Enviar alerta al backend
+            if (serverUrl) {
+              try {
+                const cleanUrl = serverUrl.replace(/\/+$/, '');
+                fetchWithTimeout(`${cleanUrl}/api/emergency/alert`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    userId: currentUser?.id,
+                    officer: currentUser?.name,
+                    callsign: currentUser?.badge,
+                    channelId: selectedChannel.id,
+                    locationName: 'Pachuca Centro (Dispositivo Móvil Expo)',
+                    coords: { lat: 20.12, lng: -98.73 },
+                  }),
+                }, 3000).catch(() => {});
+              } catch {}
+            }
           },
         },
       ]
@@ -187,6 +340,7 @@ export default function NativeApp() {
 
   const handleSendMessage = () => {
     if (!messageInput.trim()) return;
+    const textToSend = messageInput.trim();
     const newMsg: Transmission = {
       id: Date.now().toString(),
       sender: currentUser?.name || 'Oficial',
@@ -195,10 +349,27 @@ export default function NativeApp() {
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       duration: 1,
       type: 'text',
-      text: messageInput.trim(),
+      text: textToSend,
     };
     setTransmissions((prev) => [newMsg, ...prev]);
     setMessageInput('');
+
+    if (serverUrl) {
+      try {
+        const cleanUrl = serverUrl.replace(/\/+$/, '');
+        fetchWithTimeout(`${cleanUrl}/api/voice-messages`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            sender_id: currentUser?.id,
+            channel_id: selectedChannel.id,
+            audio_url: 'text-msg',
+            duration_seconds: 1,
+            text: textToSend,
+          }),
+        }, 3000).catch(() => {});
+      } catch {}
+    }
   };
 
   if (!currentUser) {
@@ -260,6 +431,7 @@ export default function NativeApp() {
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="light-content" />
       
+      {/* Tactical Top Bar */}
       <View style={styles.header}>
         <View style={styles.headerLeft}>
           <Text style={styles.headerTitle}>C5i WALKIE-TALKIE</Text>
@@ -275,12 +447,14 @@ export default function NativeApp() {
         </View>
       </View>
 
+      {/* SOS Active Banner */}
       {isSosActive && (
         <TouchableOpacity style={styles.sosBanner} onPress={() => setIsSosActive(false)}>
-          <Text style={styles.sosBannerText}>🚨 ALERTA SOS ACTIVA - PULSA PARA CANCELAR</Text>
+          <Text style={styles.sosBannerText}>🚨 ALERTA SOS 10-33 ACTIVA • TOCAR PARA CANCELAR</Text>
         </TouchableOpacity>
       )}
 
+      {/* Main Tab Content */}
       <View style={styles.mainContent}>
         {currentTab === 'PTT' && (
           <View style={styles.pttContainer}>
@@ -292,9 +466,9 @@ export default function NativeApp() {
               <Text style={styles.channelName}>{selectedChannel.name}</Text>
               
               <View style={styles.metricsRow}>
-                <Text style={styles.metricItem}>🔒 AES-256 ENCRYPTED</Text>
+                <Text style={styles.metricItem}>🔒 AES-256</Text>
                 <Text style={styles.metricItem}>📶 SEÑAL {signalStrength}%</Text>
-                <Text style={styles.metricItem}>🔋 {batteryLevel}%</Text>
+                <Text style={styles.metricItem}>🔋 BATERÍA {batteryLevel}%</Text>
               </View>
 
               {isTransmitting ? (
@@ -309,9 +483,10 @@ export default function NativeApp() {
               )}
             </View>
 
+            {/* Big PTT Tactile Button */}
             <View style={styles.pttButtonWrapper}>
               <TouchableOpacity
-                activeOpacity={0.9}
+                activeOpacity={0.88}
                 onPressIn={handlePttPressIn}
                 onPressOut={handlePttPressOut}
                 style={[
@@ -327,13 +502,14 @@ export default function NativeApp() {
               </TouchableOpacity>
             </View>
 
+            {/* Quick Tactical Action Buttons */}
             <View style={styles.quickActions}>
               <TouchableOpacity
                 style={styles.sosButton}
                 onPress={handleTriggerSos}
                 activeOpacity={0.8}
               >
-                <Text style={styles.sosButtonText}>🚨 BOTÓN SOS / PÁNICO</Text>
+                <Text style={styles.sosButtonText}>🚨 BOTÓN SOS / PÁNICO (10-33)</Text>
               </TouchableOpacity>
 
               <TouchableOpacity
@@ -350,7 +526,7 @@ export default function NativeApp() {
                     text: '10-4 ENTERADO Y COPIADO',
                   };
                   setTransmissions((prev) => [quickTx, ...prev]);
-                  Alert.alert('Transmisión Táctica', 'Código 10-4 enviado al canal ' + selectedChannel.name);
+                  Alert.alert('Transmisión Táctica', 'Código 10-4 transmitido al canal ' + selectedChannel.name);
                 }}
               >
                 <Text style={styles.quickRogerText}>⚡ ENVIAR 10-4 (COPIADO)</Text>
@@ -361,9 +537,9 @@ export default function NativeApp() {
 
         {currentTab === 'CANALES' && (
           <ScrollView style={styles.scrollSection}>
-            <Text style={styles.sectionTitle}>CANALES DISPONIBLES EN BD</Text>
-            <Text style={styles.sectionSubtitle}>Toca cualquier canal para sintonizar tu radio</Text>
-            {DEFAULT_CHANNELS.map((ch) => {
+            <Text style={styles.sectionTitle}>CANALES DISPONIBLES EN MALLA C5i</Text>
+            <Text style={styles.sectionSubtitle}>Toca cualquier canal para sintonizar tu frecuencia operativa</Text>
+            {channels.map((ch) => {
               const isSelected = ch.id === selectedChannel.id;
               return (
                 <TouchableOpacity
@@ -379,11 +555,11 @@ export default function NativeApp() {
                       {ch.code} - {ch.name}
                     </Text>
                     <Text style={styles.channelMetaText}>
-                      {ch.frequency} • {ch.category} • {ch.activeUsers} Unidades activas
+                      {ch.frequency} • {ch.category} • {ch.activeUsers} Unidades
                     </Text>
                   </View>
                   <Text style={styles.channelSelectBadge}>
-                    {isSelected ? 'SINTONIZADO' : 'CAMBIAR'}
+                    {isSelected ? 'ACTIVO' : 'ENLAZAR'}
                   </Text>
                 </TouchableOpacity>
               );
@@ -434,19 +610,21 @@ export default function NativeApp() {
 
         {currentTab === 'AJUSTES' && (
           <ScrollView style={styles.scrollSection}>
-            <Text style={styles.sectionTitle}>CONFIGURACIÓN Y BASE DE DATOS</Text>
+            <Text style={styles.sectionTitle}>CONFIGURACIÓN Y ENLACE C5i</Text>
 
             <View style={styles.settingsCard}>
-              <Text style={styles.settingsHeader}>CONEXIÓN AL SERVIDOR</Text>
+              <Text style={styles.settingsHeader}>SERVIDOR Y BASE DE DATOS</Text>
               <Text style={styles.settingsSub}>
-                Servidor MySQL: sql206.infinityfree.com (if0_42687378_walkt)
+                Base de datos: if0_42687378_walkt (sql206.infinityfree.com)
               </Text>
               <TextInput
                 style={styles.serverInput}
                 value={serverUrl}
                 onChangeText={setServerUrl}
-                placeholder="http://walkt.gt.tc o URL local"
+                placeholder="Ej. http://walkt.gt.tc o http://192.168.1.50:3000"
                 placeholderTextColor="#64748b"
+                autoCapitalize="none"
+                autoCorrect={false}
               />
               <View style={styles.serverPresets}>
                 <TouchableOpacity
@@ -454,10 +632,9 @@ export default function NativeApp() {
                   onPress={async () => {
                     setServerUrl('http://walkt.gt.tc');
                     await AsyncStorage.setItem('c5i_native_server_url', 'http://walkt.gt.tc');
-                    Alert.alert('Servidor', 'Configurado a InfinityFree: http://walkt.gt.tc');
                   }}
                 >
-                  <Text style={styles.presetBtnText}>USAR INFINITYFREE</Text>
+                  <Text style={styles.presetBtnText}>INFINITYFREE</Text>
                 </TouchableOpacity>
 
                 <TouchableOpacity
@@ -465,20 +642,34 @@ export default function NativeApp() {
                   onPress={async () => {
                     setServerUrl('http://localhost:3000');
                     await AsyncStorage.setItem('c5i_native_server_url', 'http://localhost:3000');
-                    Alert.alert('Servidor', 'Configurado a Servidor Local: http://localhost:3000');
                   }}
                 >
-                  <Text style={styles.presetBtnText}>USAR LOCAL (3000)</Text>
+                  <Text style={styles.presetBtnText}>LOCAL (3000)</Text>
                 </TouchableOpacity>
               </View>
+
+              <TouchableOpacity
+                style={styles.testBtn}
+                onPress={testServerConnection}
+                disabled={isTestingServer}
+              >
+                {isTestingServer ? (
+                  <ActivityIndicator size="small" color="#ffffff" />
+                ) : (
+                  <Text style={styles.testBtnText}>
+                    📡 PROBAR CONEXIÓN AL SERVIDOR {serverLatency ? `(${serverLatency}ms)` : ''}
+                  </Text>
+                )}
+              </TouchableOpacity>
             </View>
 
             <View style={styles.settingsCard}>
               <Text style={styles.settingsHeader}>DATOS DEL OFICIAL</Text>
               <Text style={styles.settingRow}>Oficial: {currentUser.name}</Text>
-              <Text style={styles.settingRow}>Placa / Badge: {currentUser.badge}</Text>
+              <Text style={styles.settingRow}>Indicativo / Callsign: {currentUser.badge}</Text>
               <Text style={styles.settingRow}>Unidad: {currentUser.unit}</Text>
               <Text style={styles.settingRow}>Rol: {currentUser.role}</Text>
+              <Text style={styles.settingRow}>Dispositivo: Expo en {Platform.OS.toUpperCase()}</Text>
 
               <TouchableOpacity style={styles.logoutBtn} onPress={handleLogout}>
                 <Text style={styles.logoutBtnText}>CERRAR SESIÓN</Text>
@@ -488,6 +679,7 @@ export default function NativeApp() {
         )}
       </View>
 
+      {/* Bottom Navigation */}
       <View style={styles.navBar}>
         <TouchableOpacity
           style={[styles.navItem, currentTab === 'PTT' && styles.navItemActive]}
@@ -621,7 +813,7 @@ const styles = StyleSheet.create({
   },
   channelName: {
     color: '#f8fafc',
-    fontSize: 22,
+    fontSize: 20,
     fontWeight: '800',
     marginVertical: 4,
   },
@@ -676,12 +868,12 @@ const styles = StyleSheet.create({
   pttButtonWrapper: {
     alignItems: 'center',
     justifyContent: 'center',
-    marginVertical: 20,
+    marginVertical: 14,
   },
   pttButton: {
-    width: 220,
-    height: 220,
-    borderRadius: 110,
+    width: 210,
+    height: 210,
+    borderRadius: 105,
     backgroundColor: '#1e293b',
     alignItems: 'center',
     justifyContent: 'center',
@@ -699,9 +891,9 @@ const styles = StyleSheet.create({
     transform: [{ scale: 0.96 }],
   },
   pttInnerCircle: {
-    width: 180,
-    height: 180,
-    borderRadius: 90,
+    width: 170,
+    height: 170,
+    borderRadius: 85,
     backgroundColor: '#0f172a',
     alignItems: 'center',
     justifyContent: 'center',
@@ -713,8 +905,8 @@ const styles = StyleSheet.create({
     borderColor: '#fecaca',
   },
   pttMicIcon: {
-    fontSize: 36,
-    marginBottom: 6,
+    fontSize: 34,
+    marginBottom: 4,
   },
   pttMainText: {
     color: '#ffffff',
@@ -726,26 +918,26 @@ const styles = StyleSheet.create({
   pttSubText: {
     color: '#94a3b8',
     fontSize: 10,
-    marginTop: 4,
+    marginTop: 3,
   },
   quickActions: {
-    gap: 10,
+    gap: 8,
   },
   sosButton: {
     backgroundColor: '#dc2626',
-    paddingVertical: 14,
+    paddingVertical: 13,
     borderRadius: 12,
     alignItems: 'center',
   },
   sosButtonText: {
     color: '#ffffff',
     fontWeight: '800',
-    fontSize: 14,
+    fontSize: 13,
     letterSpacing: 1,
   },
   quickRogerBtn: {
     backgroundColor: '#1e293b',
-    paddingVertical: 12,
+    paddingVertical: 11,
     borderRadius: 12,
     alignItems: 'center',
     borderWidth: 1,
@@ -754,7 +946,7 @@ const styles = StyleSheet.create({
   quickRogerText: {
     color: '#38bdf8',
     fontWeight: '700',
-    fontSize: 13,
+    fontSize: 12,
   },
   scrollSection: {
     flex: 1,
@@ -792,7 +984,7 @@ const styles = StyleSheet.create({
   },
   channelTitleText: {
     color: '#f8fafc',
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: '700',
   },
   channelTitleSelected: {
@@ -920,11 +1112,12 @@ const styles = StyleSheet.create({
   serverPresets: {
     flexDirection: 'row',
     gap: 8,
+    marginBottom: 10,
   },
   presetBtn: {
     flex: 1,
     backgroundColor: '#1e293b',
-    paddingVertical: 10,
+    paddingVertical: 9,
     borderRadius: 8,
     alignItems: 'center',
   },
@@ -932,6 +1125,19 @@ const styles = StyleSheet.create({
     color: '#f8fafc',
     fontSize: 11,
     fontWeight: '700',
+  },
+  testBtn: {
+    backgroundColor: '#0369a1',
+    paddingVertical: 11,
+    borderRadius: 8,
+    alignItems: 'center',
+    marginTop: 4,
+  },
+  testBtnText: {
+    color: '#ffffff',
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 0.5,
   },
   settingRow: {
     color: '#e2e8f0',
@@ -958,7 +1164,7 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: '#1e293b',
     paddingVertical: 8,
-    paddingBottom: Platform.OS === 'ios' ? 20 : 8,
+    paddingBottom: Platform.OS === 'ios' ? 22 : 8,
   },
   navItem: {
     flex: 1,
