@@ -4,16 +4,15 @@ const { getDefaultConfig } = require('expo/metro-config');
 
 const config = getDefaultConfig(__dirname);
 
-// Ensure essential runtime polyfills (like ErrorUtils) are injected before InitializeCore
+// Inyectar únicamente el polyfill puro de ErrorUtils (sin require() de CommonJS)
 config.serializer = {
   ...config.serializer,
   getPolyfills: () => [
     path.resolve(__dirname, 'src/polyfills/error-guard.js'),
-    path.resolve(__dirname, 'node_modules/react-native/Libraries/Core/polyfillPromise.js'),
   ],
 };
 
-// Ensure node_modules is resolvable by Metro
+// Asegurar que node_modules se resuelva de manera confiable
 config.resolver = {
   ...config.resolver,
   nodeModulesPaths: [
