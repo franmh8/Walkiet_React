@@ -1,0 +1,167 @@
+{
+  "users": [
+    {
+      "id": "usr-c5i-01",
+      "phone_number": "7711234567",
+      "name": "Comandante Roberto Morales",
+      "password_hash": "123",
+      "avatar_url": null,
+      "status": "online",
+      "callsign": "HALCON-01",
+      "unit": "Fuerza Especial de Reacción C5i",
+      "created_at": "2026-10-01T08:00:00Z",
+      "updated_at": "2026-10-01T08:00:00Z"
+    },
+    {
+      "id": "usr-c5i-02",
+      "phone_number": "7719876543",
+      "name": "Oficial Karla Mendoza",
+      "password_hash": "123",
+      "avatar_url": null,
+      "status": "online",
+      "callsign": "PATRULLA-04",
+      "unit": "Sector Operativo Pachuca Sur",
+      "created_at": "2026-10-02T09:00:00Z",
+      "updated_at": "2026-10-02T09:00:00Z"
+    },
+    {
+      "id": "usr-c5i-03",
+      "phone_number": "7714567890",
+      "name": "Oficial Diego Navarrete",
+      "password_hash": "123",
+      "avatar_url": null,
+      "status": "online",
+      "callsign": "COBRA-09",
+      "unit": "Vialidad y Tránsito Estatal",
+      "created_at": "2026-10-03T10:00:00Z",
+      "updated_at": "2026-10-03T10:00:00Z"
+    },
+    {
+      "id": "usr-c5i-04",
+      "phone_number": "7710009911",
+      "name": "Despacho Central 911",
+      "password_hash": "123",
+      "avatar_url": null,
+      "status": "online",
+      "callsign": "CENTRAL-C5I",
+      "unit": "Centro de Comando C5i Hidalgo",
+      "created_at": "2026-10-01T00:00:00Z",
+      "updated_at": "2026-10-01T00:00:00Z"
+    }
+  ],
+  "channels": [
+    {
+      "id": "chan-01",
+      "name": "OPERACIONES ESPECIALES TÁCTICAS",
+      "is_private": 1,
+      "access_code": "1090",
+      "created_by": "usr-c5i-01",
+      "category": "tactico",
+      "created_at": "2026-10-01T08:00:00Z"
+    },
+    {
+      "id": "chan-02",
+      "name": "DESPACHO EMERGENCIAS 911",
+      "is_private": 0,
+      "access_code": "9110",
+      "created_by": "usr-c5i-04",
+      "category": "emergencia",
+      "created_at": "2026-10-01T08:00:00Z"
+    },
+    {
+      "id": "chan-03",
+      "name": "CENTRAL DE MONITOREO C5I",
+      "is_private": 1,
+      "access_code": "5001",
+      "created_by": "usr-c5i-04",
+      "category": "inteligencia",
+      "created_at": "2026-10-01T08:00:00Z"
+    },
+    {
+      "id": "chan-04",
+      "name": "VIALIDAD Y TRÁNSITO PACHUCA",
+      "is_private": 0,
+      "access_code": "4400",
+      "created_by": "usr-c5i-03",
+      "category": "vialidad",
+      "created_at": "2026-10-01T08:00:00Z"
+    }
+  ],
+  "channel_members": [
+    {
+      "id": "cm-1",
+      "channel_id": "chan-01",
+      "user_id": "usr-c5i-01",
+      "joined_at": "2026-10-01T08:00:00Z"
+    },
+    {
+      "id": "cm-2",
+      "channel_id": "chan-01",
+      "user_id": "usr-c5i-02",
+      "joined_at": "2026-10-01T08:00:00Z"
+    },
+    {
+      "id": "cm-3",
+      "channel_id": "chan-02",
+      "user_id": "usr-c5i-01",
+      "joined_at": "2026-10-01T08:00:00Z"
+    },
+    {
+      "id": "cm-4",
+      "channel_id": "chan-02",
+      "user_id": "usr-c5i-02",
+      "joined_at": "2026-10-01T08:00:00Z"
+    },
+    {
+      "id": "cm-5",
+      "channel_id": "chan-02",
+      "user_id": "usr-c5i-04",
+      "joined_at": "2026-10-01T08:00:00Z"
+    }
+  ],
+  "contacts": [
+    {
+      "id": "cnt-1",
+      "user_id": "usr-c5i-01",
+      "contact_user_id": "usr-c5i-02",
+      "alias": "PATRULLA-04",
+      "created_at": "2026-10-01T08:00:00Z"
+    },
+    {
+      "id": "cnt-2",
+      "user_id": "usr-c5i-01",
+      "contact_user_id": "usr-c5i-03",
+      "alias": "COBRA-09",
+      "created_at": "2026-10-01T08:00:00Z"
+    },
+    {
+      "id": "cnt-3",
+      "user_id": "usr-c5i-01",
+      "contact_user_id": "usr-c5i-04",
+      "alias": "CENTRAL-C5I",
+      "created_at": "2026-10-01T08:00:00Z"
+    }
+  ],
+  "voice_messages": [
+    {
+      "id": "vm-1",
+      "sender_id": "usr-c5i-02",
+      "channel_id": "chan-01",
+      "receiver_id": null,
+      "audio_url": "simulated-burst-1",
+      "duration_seconds": 3,
+      "created_at": "2026-10-20T16:12:23.529Z",
+      "text_content": "Unidad reportando posición en Bulevar Felipe Ángeles. Sector despejado."
+    },
+    {
+      "id": "vm-2",
+      "sender_id": "usr-c5i-04",
+      "channel_id": "chan-01",
+      "receiver_id": null,
+      "audio_url": "simulated-burst-2",
+      "duration_seconds": 2,
+      "created_at": "2026-10-20T16:17:23.530Z",
+      "text_content": "Recibido PATRULLA-04. Mantener patrullaje preventivo en cuadrante."
+    }
+  ]
+}

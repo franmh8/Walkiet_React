@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { Channel, VoiceMessage, Contact } from '../types';
 import { AudioService } from '../services/audioService';
+import { ApiService } from '../services/apiService';
 import { useAuth } from './AuthContext';
 
 export interface RadioContextType {
@@ -35,102 +36,6 @@ export interface RadioContextType {
   playVoiceMessage: (msg: VoiceMessage) => void;
 }
 
-const DEFAULT_TACTICAL_CHANNELS: Channel[] = [
-  {
-    id: 'chan-tactico-01',
-    name: 'OPERACIONES ESPECIALES TÁCTICAS',
-    is_private: true,
-    access_code: '1090',
-    category: 'tactico',
-    member_count: 8,
-    active_transmitters_count: 0,
-    is_encrypted: true,
-    created_by: 'admin',
-    admin_name: 'Mando Táctico C5i',
-    role: 'admin',
-    created_at: new Date(Date.now() - 86400000 * 5).toISOString(),
-  },
-  {
-    id: 'chan-emergencia-02',
-    name: 'DESPACHO EMERGENCIAS 911',
-    is_private: false,
-    access_code: '9110',
-    category: 'emergencia',
-    member_count: 14,
-    active_transmitters_count: 0,
-    is_encrypted: true,
-    created_by: 'admin',
-    admin_name: 'Despacho Central 911',
-    role: 'usuario',
-    created_at: new Date(Date.now() - 86400000 * 4).toISOString(),
-  },
-  {
-    id: 'chan-monitoreo-03',
-    name: 'CENTRAL DE MONITOREO C5I',
-    is_private: true,
-    access_code: '5001',
-    category: 'inteligencia',
-    member_count: 6,
-    active_transmitters_count: 0,
-    is_encrypted: true,
-    created_by: 'admin',
-    admin_name: 'Inteligencia Operativa',
-    role: 'usuario',
-    created_at: new Date(Date.now() - 86400000 * 3).toISOString(),
-  },
-  {
-    id: 'chan-vialidad-04',
-    name: 'VIALIDAD Y TRÁNSITO PACHUCA',
-    is_private: false,
-    access_code: '4400',
-    category: 'vialidad',
-    member_count: 5,
-    active_transmitters_count: 0,
-    is_encrypted: true,
-    created_by: 'admin',
-    admin_name: 'Tránsito Estatal',
-    role: 'usuario',
-    created_at: new Date(Date.now() - 86400000 * 2).toISOString(),
-  },
-  {
-    id: 'chan-general-05',
-    name: 'FRECUENCIA GENERAL ESTATAL',
-    is_private: false,
-    access_code: '1234',
-    category: 'general',
-    member_count: 22,
-    active_transmitters_count: 0,
-    is_encrypted: true,
-    created_by: 'admin',
-    admin_name: 'Coordinación C5i',
-    role: 'usuario',
-    created_at: new Date(Date.now() - 86400000 * 6).toISOString(),
-  },
-];
-
-const INITIAL_VOICE_HISTORY: VoiceMessage[] = [
-  {
-    id: 'burst-init-1',
-    sender_id: 'usr-default-02',
-    sender_name: 'Oficial Karla Mendoza',
-    sender_callsign: 'PATRULLA-04',
-    channel_id: 'chan-tactico-01',
-    audio_url: 'simulated-burst-1',
-    duration_seconds: 3,
-    created_at: new Date(Date.now() - 1000 * 60 * 12).toISOString(),
-  },
-  {
-    id: 'burst-init-2',
-    sender_id: 'usr-default-03',
-    sender_name: 'Mando Alfa',
-    sender_callsign: 'MANDO-ALFA',
-    channel_id: 'chan-tactico-01',
-    audio_url: 'simulated-burst-2',
-    duration_seconds: 2,
-    created_at: new Date(Date.now() - 1000 * 60 * 5).toISOString(),
-  },
-];
-
 const RadioContext = createContext<RadioContextType>({} as any);
 
 export const RadioProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -143,51 +48,46 @@ export const RadioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [transmittingUser, setTransmittingUser] = useState<string | null>(null);
   const [selectedContact, setSelectedContact] = useState<Contact | null>(null);
 
-  const loadNetworkChannels = (): Channel[] => {
+  // Load channels and voice bursts from the database
+  const loadDatabaseData = async () => {
     try {
-      const stored = localStorage.getItem('c5i_network_channels');
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        setAvailableNetworkChannels(parsed);
-        return parsed;
+      // 1. Fetch channels from backend
+      const remoteChannels = await ApiService.getChannels();
+      if (remoteChannels && remoteChannels.length > 0) {
+        setChannels(remoteChannels);
+        setAvailableNetworkChannels(remoteChannels);
+        setSelectedChannel((prev) => prev ? remoteChannels.find((c: Channel) => c.id === prev.id) || remoteChannels[0] : remoteChannels[0]);
+        localStorage.setItem('c5i_channels', JSON.stringify(remoteChannels));
       }
-    } catch (_) {}
-    setAvailableNetworkChannels(DEFAULT_TACTICAL_CHANNELS);
-    localStorage.setItem('c5i_network_channels', JSON.stringify(DEFAULT_TACTICAL_CHANNELS));
-    return DEFAULT_TACTICAL_CHANNELS;
-  };
 
-  const refreshNetworkChannels = async () => {
-    loadNetworkChannels();
+      // 2. Fetch voice messages from backend
+      const remoteVoice = await ApiService.getVoiceMessages(selectedChannel?.id);
+      if (remoteVoice && remoteVoice.length > 0) {
+        setVoiceHistory(remoteVoice);
+      }
+    } catch (err) {
+      console.warn('Error fetching radio data from backend:', err);
+    }
   };
 
   useEffect(() => {
-    try {
-      const netChannels = loadNetworkChannels();
-
-      const storedChannels = localStorage.getItem('c5i_channels');
-      if (storedChannels) {
-        const parsed: Channel[] = JSON.parse(storedChannels);
-        setChannels(parsed);
-        if (parsed.length > 0) setSelectedChannel(parsed[0]);
-      } else {
-        // Default enrolled channels
-        setChannels(netChannels);
-        setSelectedChannel(netChannels[0]);
-        localStorage.setItem('c5i_channels', JSON.stringify(netChannels));
-      }
-
-      const storedHistory = localStorage.getItem('c5i_voice_history');
-      if (storedHistory) {
-        setVoiceHistory(JSON.parse(storedHistory));
-      } else {
-        setVoiceHistory(INITIAL_VOICE_HISTORY);
-        localStorage.setItem('c5i_voice_history', JSON.stringify(INITIAL_VOICE_HISTORY));
-      }
-    } catch (err) {
-      console.warn('Error loading radio data:', err);
-    }
+    loadDatabaseData();
   }, [user]);
+
+  // Re-fetch voice messages when selected channel changes
+  useEffect(() => {
+    if (selectedChannel?.id) {
+      ApiService.getVoiceMessages(selectedChannel.id).then((msgs) => {
+        if (msgs && msgs.length > 0) {
+          setVoiceHistory(msgs);
+        }
+      });
+    }
+  }, [selectedChannel?.id]);
+
+  const refreshNetworkChannels = async () => {
+    await loadDatabaseData();
+  };
 
   const createChannel = async (
     name: string,
@@ -196,6 +96,25 @@ export const RadioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     accessCode?: string
   ): Promise<Channel> => {
     const generatedPin = accessCode?.trim() || String(Math.floor(1000 + Math.random() * 9000));
+
+    try {
+      const res = await ApiService.createChannel({
+        name: name.trim().toUpperCase(),
+        is_private: isPrivate,
+        access_code: generatedPin,
+        created_by: user?.id || 'usr-c5i-01',
+        category,
+      });
+
+      if (res && res.success && res.channel) {
+        const updated = [res.channel, ...channels];
+        setChannels(updated);
+        setSelectedChannel(res.channel);
+        return res.channel;
+      }
+    } catch (_) {}
+
+    // Fallback in-memory
     const newChan: Channel = {
       id: `chan-${Date.now()}`,
       name: name.trim().toUpperCase(),
@@ -205,28 +124,16 @@ export const RadioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       member_count: 1,
       active_transmitters_count: 0,
       is_encrypted: true,
-      created_by: user?.id || 'admin',
-      admin_id: user?.id || 'admin',
+      created_by: user?.id || 'usr-c5i-01',
+      admin_id: user?.id || 'usr-c5i-01',
       admin_name: user?.name || user?.callsign || 'Administrador',
       role: 'admin',
       created_at: new Date().toISOString(),
     };
 
-    const updated = [...channels, newChan];
+    const updated = [newChan, ...channels];
     setChannels(updated);
     setSelectedChannel(newChan);
-    localStorage.setItem('c5i_channels', JSON.stringify(updated));
-
-    // Update network channels
-    try {
-      const netChannels = loadNetworkChannels();
-      const updatedNet = [newChan, ...netChannels.filter((c) => c.id !== newChan.id)];
-      setAvailableNetworkChannels(updatedNet);
-      localStorage.setItem('c5i_network_channels', JSON.stringify(updatedNet));
-    } catch (e) {
-      console.warn('Error updating network channels:', e);
-    }
-
     return newChan;
   };
 
@@ -234,39 +141,19 @@ export const RadioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     channelId: string,
     pin?: string
   ): Promise<{ success: boolean; message?: string; channel?: Channel }> => {
-    const netChannels = availableNetworkChannels.length > 0
-      ? availableNetworkChannels
-      : loadNetworkChannels();
-
-    const target = netChannels.find((c) => c.id === channelId);
-    if (!target) {
-      return { success: false, message: 'Canal no encontrado en la red táctica C5i.' };
-    }
-
-    if (target.is_private && target.access_code) {
-      if (!pin || pin.trim() !== target.access_code.trim()) {
-        return { success: false, message: 'Código PIN o clave táctica incorrecta.' };
+    try {
+      const res = await ApiService.joinChannel(channelId, user?.id || 'usr-c5i-01', pin);
+      if (res && res.success && res.channel) {
+        setSelectedChannel(res.channel);
+        await loadDatabaseData();
+        return { success: true, channel: res.channel };
+      } else if (res && !res.success) {
+        return { success: false, message: res.message || 'Código PIN incorrecto' };
       }
-    }
+    } catch (_) {}
 
-    const isUserAdmin = Boolean(
-      user?.role === 'admin' ||
-      (user?.id && target.created_by === user.id) ||
-      (user?.id && target.admin_id === user.id)
-    );
-
-    if (!channels.some((c) => c.id === target.id)) {
-      const updatedTarget: Channel = {
-        ...target,
-        member_count: (target.member_count || 1) + 1,
-        role: isUserAdmin ? 'admin' : 'usuario',
-      };
-      const updatedChannels = [...channels, updatedTarget];
-      setChannels(updatedChannels);
-      setSelectedChannel(updatedTarget);
-      localStorage.setItem('c5i_channels', JSON.stringify(updatedChannels));
-      return { success: true, channel: updatedTarget };
-    }
+    const target = availableNetworkChannels.find((c) => c.id === channelId);
+    if (!target) return { success: false, message: 'Canal no encontrado' };
 
     setSelectedChannel(target);
     return { success: true, channel: target };
@@ -276,58 +163,50 @@ export const RadioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     code: string
   ): Promise<{ success: boolean; message?: string; channel?: Channel }> => {
     const clean = code.trim();
-    if (!clean || clean.length < 4) {
-      return { success: false, message: 'Ingresa un código válido de 4 a 6 dígitos.' };
-    }
+    if (!clean) return { success: false, message: 'Ingresa un código válido' };
 
-    const netChannels = availableNetworkChannels.length > 0
-      ? availableNetworkChannels
-      : loadNetworkChannels();
-
-    const found = netChannels.find(
+    const found = availableNetworkChannels.find(
       (c) =>
         (c.access_code && c.access_code.trim() === clean) ||
-        c.id.toLowerCase() === clean.toLowerCase() ||
-        c.id.toLowerCase().endsWith(clean.toLowerCase())
+        c.id.toLowerCase() === clean.toLowerCase()
     );
 
     if (!found) {
-      return {
-        success: false,
-        message: 'No se encontró ningún canal activo con el código ingresado.',
-      };
+      return { success: false, message: 'No se encontró canal activo con ese código PIN' };
     }
 
     return await joinChannel(found.id, clean);
   };
 
   const deleteChannel = async (channelId: string): Promise<void> => {
+    try {
+      await ApiService.deleteChannel(channelId);
+    } catch (_) {}
+
     const updated = channels.filter((c) => c.id !== channelId);
     setChannels(updated);
     if (selectedChannel?.id === channelId) {
       setSelectedChannel(updated.length > 0 ? updated[0] : null);
     }
-    localStorage.setItem('c5i_channels', JSON.stringify(updated));
   };
 
   const leaveChannel = async (channelId: string): Promise<void> => {
-    const updated = channels.filter((c) => c.id !== channelId);
-    setChannels(updated);
-    if (selectedChannel?.id === channelId) {
-      setSelectedChannel(updated.length > 0 ? updated[0] : null);
-    }
-    localStorage.setItem('c5i_channels', JSON.stringify(updated));
+    await deleteChannel(channelId);
   };
 
   const clearHistory = async () => {
     setVoiceHistory([]);
-    localStorage.removeItem('c5i_voice_history');
   };
 
   const startTransmitting = async () => {
     if (isTransmitting) return;
     setIsTransmitting(true);
     setTransmittingUser(user?.callsign || 'TÚ (TRANSMITIENDO)');
+
+    if (user?.id) {
+      ApiService.updateUserStatus(user.id, 'transmitting').catch(() => {});
+    }
+
     await AudioService.startRecording();
   };
 
@@ -335,10 +214,33 @@ export const RadioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     if (!isTransmitting) return;
     setIsTransmitting(false);
     setTransmittingUser(null);
+
+    if (user?.id) {
+      ApiService.updateUserStatus(user.id, 'online').catch(() => {});
+    }
+
     const audioUri = await AudioService.stopRecording();
 
     if (audioUri && user) {
-      const newBurst: VoiceMessage = {
+      const newBurstPayload = {
+        sender_id: user.id,
+        channel_id: selectedChannel?.id || null,
+        receiver_id: selectedContact?.id || null,
+        audio_url: audioUri,
+        duration_seconds: 2,
+        is_emergency: false,
+      };
+
+      try {
+        const res = await ApiService.transmitVoiceMessage(newBurstPayload);
+        if (res && res.success && res.voice_message) {
+          setVoiceHistory((prev) => [res.voice_message, ...prev].slice(0, 50));
+          return;
+        }
+      } catch (_) {}
+
+      // Fallback local addition
+      const localBurst: VoiceMessage = {
         id: `burst-${Date.now()}`,
         sender_id: user.id,
         sender_name: user.name,
@@ -348,9 +250,7 @@ export const RadioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         duration_seconds: 2,
         created_at: new Date().toISOString(),
       };
-      const updatedHistory = [newBurst, ...voiceHistory].slice(0, 30);
-      setVoiceHistory(updatedHistory);
-      localStorage.setItem('c5i_voice_history', JSON.stringify(updatedHistory));
+      setVoiceHistory((prev) => [localBurst, ...prev].slice(0, 50));
     }
   };
 

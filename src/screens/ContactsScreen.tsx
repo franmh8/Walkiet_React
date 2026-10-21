@@ -6,63 +6,23 @@ import {
   X,
   Search,
   Radio,
-  RadioTower,
   Shield,
   CheckCircle,
+  Database,
 } from 'lucide-react';
 import { Contact } from '../types';
 import { useTheme } from '../context/ThemeContext';
 import { useRadio } from '../context/RadioContext';
-
-const DEFAULT_TACTICAL_CONTACTS: Contact[] = [
-  {
-    id: 'cnt-1',
-    name: 'Comandante R. Morales',
-    phone_number: '7711234567',
-    callsign: 'HALCON-01',
-    unit: 'Fuerza Especial de Reacción C5i',
-    status: 'online',
-  },
-  {
-    id: 'cnt-2',
-    name: 'Oficial Karla Mendoza',
-    phone_number: '7719876543',
-    callsign: 'PATRULLA-04',
-    unit: 'Sector Pachuca Sur',
-    status: 'online',
-  },
-  {
-    id: 'cnt-3',
-    name: 'Oficial Diego Navarrete',
-    phone_number: '7714567890',
-    callsign: 'COBRA-09',
-    unit: 'Vialidad y Tránsito Estatal',
-    status: 'online',
-  },
-  {
-    id: 'cnt-4',
-    name: 'Despacho Central 911',
-    phone_number: '7710009911',
-    callsign: 'CENTRAL-C5I',
-    unit: 'Centro de Comando y Control C5i',
-    status: 'online',
-  },
-  {
-    id: 'cnt-5',
-    name: 'Oficial Andrea Trejo',
-    phone_number: '7713451234',
-    callsign: 'DELTA-03',
-    unit: 'Sector Pachuca Norte',
-    status: 'offline',
-  },
-];
+import { useAuth } from '../context/AuthContext';
+import { ApiService } from '../services/apiService';
 
 interface ContactsScreenProps {
   onNavigateTab: (tab: string) => void;
 }
 
 export function ContactsScreen({ onNavigateTab }: ContactsScreenProps) {
-  const { colors, isDark } = useTheme();
+  const { user } = useAuth();
+  const { colors } = useTheme();
   const { setSelectedContact } = useRadio();
 
   const [contacts, setContacts] = useState<Contact[]>([]);
@@ -76,21 +36,22 @@ export function ContactsScreen({ onNavigateTab }: ContactsScreenProps) {
   const [unit, setUnit] = useState('Sector Operativo Hidalgo');
   const [formError, setFormError] = useState<string | null>(null);
 
-  useEffect(() => {
+  const loadContacts = async () => {
     try {
-      const stored = localStorage.getItem('c5i_contacts');
-      if (stored) {
-        setContacts(JSON.parse(stored));
-      } else {
-        setContacts(DEFAULT_TACTICAL_CONTACTS);
-        localStorage.setItem('c5i_contacts', JSON.stringify(DEFAULT_TACTICAL_CONTACTS));
+      const data = await ApiService.getContacts(user?.id);
+      if (data && data.length > 0) {
+        setContacts(data);
       }
-    } catch {
-      setContacts(DEFAULT_TACTICAL_CONTACTS);
+    } catch (e) {
+      console.warn('Error loading contacts:', e);
     }
-  }, []);
+  };
 
-  const handleAddContact = (e: React.FormEvent) => {
+  useEffect(() => {
+    loadContacts();
+  }, [user]);
+
+  const handleAddContact = async (e: React.FormEvent) => {
     e.preventDefault();
     setFormError(null);
 
@@ -105,18 +66,33 @@ export function ContactsScreen({ onNavigateTab }: ContactsScreenProps) {
       return;
     }
 
-    const newContact: Contact = {
-      id: `cnt-${Date.now()}`,
-      name: name.trim(),
-      phone_number: cleanPhone,
-      callsign: callsign.trim().toUpperCase() || `PATRULLA-${cleanPhone.slice(-3)}`,
-      unit: unit.trim(),
-      status: 'online',
-    };
+    try {
+      const res = await ApiService.addContact({
+        user_id: user?.id || 'usr-c5i-01',
+        name: name.trim(),
+        phone_number: cleanPhone,
+        callsign: callsign.trim().toUpperCase() || `PATRULLA-${cleanPhone.slice(-3)}`,
+        alias: callsign.trim().toUpperCase() || name.trim(),
+        unit: unit.trim(),
+      });
 
-    const updated = [newContact, ...contacts];
-    setContacts(updated);
-    localStorage.setItem('c5i_contacts', JSON.stringify(updated));
+      if (res && res.success && res.contact) {
+        setContacts((prev) => [res.contact, ...prev.filter((c) => c.phone_number !== cleanPhone)]);
+      } else {
+        await loadContacts();
+      }
+    } catch (_) {
+      // Local fallback
+      const newContact: Contact = {
+        id: `cnt-${Date.now()}`,
+        name: name.trim(),
+        phone_number: cleanPhone,
+        callsign: callsign.trim().toUpperCase() || `PATRULLA-${cleanPhone.slice(-3)}`,
+        unit: unit.trim(),
+        status: 'online',
+      };
+      setContacts((prev) => [newContact, ...prev]);
+    }
 
     setModalVisible(false);
     setName('');
@@ -148,7 +124,7 @@ export function ContactsScreen({ onNavigateTab }: ContactsScreenProps) {
       >
         <div>
           <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
-            DIRECTORIO OPERATIVO
+            DIRECTORIO OPERATIVO (TABLA CONTACTS)
           </span>
           <h2 className="text-base md:text-lg font-bold" style={{ color: colors.text }}>
             Contactos C5i
@@ -206,7 +182,7 @@ export function ContactsScreen({ onNavigateTab }: ContactsScreenProps) {
                 <div className="flex items-center gap-3 truncate">
                   <div className="relative">
                     <div className="w-10 h-10 rounded-full bg-slate-800 border border-slate-700 flex items-center justify-center text-slate-300 font-bold text-sm">
-                      {c.callsign.slice(0, 2)}
+                      {c.callsign ? c.callsign.slice(0, 2) : 'OF'}
                     </div>
                     <span
                       className={`absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full border-2 border-slate-900 ${
@@ -221,12 +197,12 @@ export function ContactsScreen({ onNavigateTab }: ContactsScreenProps) {
                         {c.name}
                       </h4>
                       <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-rose-950/60 text-rose-400 border border-rose-800/60 font-bold">
-                        {c.callsign}
+                        {c.callsign || 'OFICIAL'}
                       </span>
                     </div>
 
                     <div className="flex items-center gap-3 text-xs text-slate-400 mt-0.5">
-                      <span className="truncate">{c.unit}</span>
+                      <span className="truncate">{c.unit || 'Sector Operativo Hidalgo'}</span>
                       <span className="font-mono text-[11px] text-slate-500 flex items-center gap-1">
                         <Phone className="w-3 h-3" />
                         {c.phone_number}
@@ -262,7 +238,7 @@ export function ContactsScreen({ onNavigateTab }: ContactsScreenProps) {
             <div className="flex items-center justify-between px-6 py-4 border-b border-slate-800 bg-slate-900/60">
               <div className="flex items-center gap-2">
                 <User className="w-5 h-5 text-rose-400" />
-                <h3 className="text-base font-bold text-white">Agregar Oficial al Directorio</h3>
+                <h3 className="text-base font-bold text-white">Agregar Oficial al Directorio BD</h3>
               </div>
               <button
                 onClick={() => setModalVisible(false)}
@@ -338,7 +314,7 @@ export function ContactsScreen({ onNavigateTab }: ContactsScreenProps) {
                   type="submit"
                   className="flex-1 py-2.5 px-4 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-semibold text-sm transition"
                 >
-                  Guardar Contacto
+                  Guardar en BD
                 </button>
               </div>
             </form>

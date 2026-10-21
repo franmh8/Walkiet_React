@@ -23,8 +23,8 @@ interface AuthContextType {
 
 const DEFAULT_USERS: User[] = [
   {
-    id: 'usr-default-01',
-    name: 'Oficial Roberto Morales',
+    id: 'usr-c5i-01',
+    name: 'Comandante Roberto Morales',
     phone_number: '7711234567',
     correo: 'rmorales@c5i.hidalgo.gob.mx',
     callsign: 'HALCON-01',
@@ -34,7 +34,7 @@ const DEFAULT_USERS: User[] = [
     status: 'online',
   },
   {
-    id: 'usr-default-02',
+    id: 'usr-c5i-02',
     name: 'Oficial Karla Mendoza',
     phone_number: '7719876543',
     correo: 'kmendoza@c5i.hidalgo.gob.mx',
@@ -59,28 +59,30 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
 
-  // Load session or initialize default users
+  // Load session or initialize
   useEffect(() => {
-    try {
-      const storedUsersRaw = localStorage.getItem('c5i_users_db');
-      if (!storedUsersRaw) {
-        localStorage.setItem('c5i_users_db', JSON.stringify(DEFAULT_USERS));
-      }
-
-      const storedUser = localStorage.getItem('c5i_user');
-      if (storedUser) {
-        setUser(JSON.parse(storedUser));
-      } else {
-        // Auto-login with default officer for immediate accessibility in AI Studio preview if no session
+    (async () => {
+      try {
+        const storedUser = localStorage.getItem('c5i_user');
+        if (storedUser) {
+          const parsed = JSON.parse(storedUser);
+          setUser(parsed);
+          // Sync status with backend
+          if (parsed.id) {
+            ApiService.updateUserStatus(parsed.id, 'online').catch(() => {});
+          }
+        } else {
+          // Default officer profile for easy preview
+          setUser(DEFAULT_USERS[0]);
+          localStorage.setItem('c5i_user', JSON.stringify(DEFAULT_USERS[0]));
+        }
+      } catch (err) {
+        console.warn('Error reading stored user session:', err);
         setUser(DEFAULT_USERS[0]);
-        localStorage.setItem('c5i_user', JSON.stringify(DEFAULT_USERS[0]));
+      } finally {
+        setLoading(false);
       }
-    } catch (err) {
-      console.warn('Error reading stored user session:', err);
-      setUser(DEFAULT_USERS[0]);
-    } finally {
-      setLoading(false);
-    }
+    })();
   }, []);
 
   const login = async (identifier: string, pass: string): Promise<LoginResponse> => {
@@ -88,23 +90,27 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const cleanPass = pass.trim();
 
     try {
-      // 1. Try remote C5i backend
-      try {
-        const remoteRes = await ApiService.login(cleanId, cleanPass);
-        if (remoteRes && (remoteRes.success || remoteRes.status === 'success') && (remoteRes.user || remoteRes.usuario)) {
-          const loggedUser = remoteRes.user || remoteRes.usuario;
-          setUser(loggedUser);
-          localStorage.setItem('c5i_user', JSON.stringify(loggedUser));
-          return {
-            success: true,
-            code: 'SUCCESS',
-            message: remoteRes.message || 'Sesión iniciada correctamente',
-            user: loggedUser,
-          };
-        }
-      } catch (_) {}
+      // 1. Authenticate with backend API (connected to if0_42687378_walkiet_db)
+      const remoteRes = await ApiService.login(cleanId, cleanPass);
+      if (remoteRes && remoteRes.success && (remoteRes.user || remoteRes.usuario)) {
+        const loggedUser = remoteRes.user || remoteRes.usuario;
+        setUser(loggedUser);
+        localStorage.setItem('c5i_user', JSON.stringify(loggedUser));
+        return {
+          success: true,
+          code: 'SUCCESS',
+          message: remoteRes.message || 'Sesión iniciada correctamente',
+          user: loggedUser,
+        };
+      } else if (remoteRes && !remoteRes.success && remoteRes.message) {
+        return {
+          success: false,
+          code: remoteRes.code || 'USER_NOT_FOUND',
+          message: remoteRes.message,
+        };
+      }
 
-      // 2. Validate in local storage database
+      // 2. Fallback to local DB check
       const storedUsersRaw = localStorage.getItem('c5i_users_db');
       const users: User[] = storedUsersRaw ? JSON.parse(storedUsersRaw) : DEFAULT_USERS;
 
@@ -115,7 +121,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           u.callsign?.toLowerCase() === cleanId.toLowerCase()
       );
 
-      // User not found
       if (!userMatch) {
         return {
           success: false,
@@ -124,7 +129,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         };
       }
 
-      // Password mismatch (if password was configured)
       if (userMatch.password && cleanPass && userMatch.password !== cleanPass) {
         return {
           success: false,
@@ -152,6 +156,24 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const register = async (data: RegisterData): Promise<boolean> => {
+    try {
+      // Send to backend DB
+      const res = await ApiService.register({
+        name: data.name,
+        phone_number: data.phone_number,
+        callsign: data.callsign.toUpperCase(),
+        unit: data.unit,
+        password: data.password,
+      });
+
+      if (res && res.success && res.user) {
+        setUser(res.user);
+        localStorage.setItem('c5i_user', JSON.stringify(res.user));
+        return true;
+      }
+    } catch (_) {}
+
+    // Fallback store
     const newUser: User = {
       id: `usr-${Date.now()}`,
       name: data.name,
@@ -179,6 +201,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const logout = async () => {
+    if (user?.id) {
+      ApiService.updateUserStatus(user.id, 'offline').catch(() => {});
+    }
     setUser(null);
     localStorage.removeItem('c5i_user');
   };
