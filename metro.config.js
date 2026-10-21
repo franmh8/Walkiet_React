@@ -1,4 +1,5 @@
 // Learn more https://docs.expo.io/guides/customizing-metro
+const path = require('path');
 const { getDefaultConfig } = require('expo/metro-config');
 
 const config = getDefaultConfig(__dirname);
@@ -7,6 +8,14 @@ const config = getDefaultConfig(__dirname);
 config.serializer = {
   ...config.serializer,
   getPolyfills: () => [],
+};
+
+// Ensure node_modules is resolvable by Metro
+config.resolver = {
+  ...config.resolver,
+  nodeModulesPaths: [
+    path.resolve(__dirname, 'node_modules'),
+  ],
 };
 
 module.exports = config;
