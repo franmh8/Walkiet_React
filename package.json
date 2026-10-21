@@ -11,11 +11,13 @@
     "preview": "vite preview --host 0.0.0.0 --port 3000",
     "expo": "expo start",
     "android": "expo start --android",
-    "ios": "expo start --ios"
+    "ios": "expo start --ios",
+    "postinstall": "node -e \"const fs=require('fs'); const p='./node_modules/react-native/rn-get-polyfills.js'; if(fs.existsSync('./node_modules/react-native') && !fs.existsSync(p)){fs.writeFileSync(p, \\\"module.exports = require('@react-native/js-polyfills');\\\\n\\\");}\""
   },
   "dependencies": {
     "@expo/vector-icons": "^15.1.1",
     "@react-native-async-storage/async-storage": "^3.1.1",
+    "@react-native/js-polyfills": "^0.88.0",
     "cors": "^2.8.6",
     "expo": "^57.0.31",
     "expo-status-bar": "^58.0.3",
