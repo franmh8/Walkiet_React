@@ -11,8 +11,6 @@ import {
   Alert,
   Vibration,
   Platform,
-  ActivityIndicator,
-  Modal,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
@@ -63,10 +61,10 @@ export default function NativeApp() {
   const [selectedChannel, setSelectedChannel] = useState<Channel>(DEFAULT_CHANNELS[0]);
   const [isTransmitting, setIsTransmitting] = useState(false);
   const [txDuration, setTxDuration] = useState(0);
-  const [signalStrength, setSignalStrength] = useState(94);
-  const [batteryLevel, setBatteryLevel] = useState(88);
+  const [signalStrength] = useState(94);
+  const [batteryLevel] = useState(88);
   const [serverUrl, setServerUrl] = useState('http://walkt.gt.tc');
-  const [dbStatus, setDbStatus] = useState<'ONLINE' | 'CONNECTING' | 'OFFLINE'>('ONLINE');
+  const [dbStatus] = useState<'ONLINE' | 'CONNECTING' | 'OFFLINE'>('ONLINE');
   const [isSosActive, setIsSosActive] = useState(false);
   
   // History & Messages
@@ -80,7 +78,6 @@ export default function NativeApp() {
   const timerRef = useRef<any>(null);
 
   useEffect(() => {
-    // Cargar credenciales previas de AsyncStorage
     (async () => {
       try {
         const savedUser = await AsyncStorage.getItem('c5i_native_user');
@@ -94,7 +91,6 @@ export default function NativeApp() {
     })();
   }, []);
 
-  // Manejo de transmisión PTT
   const handlePttPressIn = () => {
     setIsTransmitting(true);
     setTxDuration(0);
@@ -115,7 +111,7 @@ export default function NativeApp() {
     
     if (Platform.OS !== 'web') {
       try {
-        Vibration.vibrate([0, 30, 40, 30]); // Roger beep háptico
+        Vibration.vibrate([0, 30, 40, 30]);
       } catch {}
     }
 
@@ -205,11 +201,10 @@ export default function NativeApp() {
     setMessageInput('');
   };
 
-  // Pantalla de Login si no hay usuario autenticado
   if (!currentUser) {
     return (
       <SafeAreaView style={styles.container}>
-        <StatusBar barStyle="light-content" backgroundColor="#0b0f19" />
+        <StatusBar barStyle="light-content" />
         <View style={styles.loginCard}>
           <View style={styles.shieldBadge}>
             <Text style={styles.shieldIcon}>🛡️</Text>
@@ -261,12 +256,10 @@ export default function NativeApp() {
     );
   }
 
-  // Interfaz Principal Táctica
   return (
     <SafeAreaView style={styles.container}>
-      <StatusBar barStyle="light-content" backgroundColor="#0b0f19" />
+      <StatusBar barStyle="light-content" />
       
-      {/* Barra Superior Táctica C5i */}
       <View style={styles.header}>
         <View style={styles.headerLeft}>
           <Text style={styles.headerTitle}>C5i WALKIE-TALKIE</Text>
@@ -282,18 +275,15 @@ export default function NativeApp() {
         </View>
       </View>
 
-      {/* Banner de SOS si está activo */}
       {isSosActive && (
         <TouchableOpacity style={styles.sosBanner} onPress={() => setIsSosActive(false)}>
           <Text style={styles.sosBannerText}>🚨 ALERTA SOS ACTIVA - PULSA PARA CANCELAR</Text>
         </TouchableOpacity>
       )}
 
-      {/* Contenido según la Pestaña Activa */}
       <View style={styles.mainContent}>
         {currentTab === 'PTT' && (
           <View style={styles.pttContainer}>
-            {/* Display de Radio Táctico */}
             <View style={styles.radioDisplay}>
               <View style={styles.displayHeader}>
                 <Text style={styles.channelLabel}>CANAL SINTONIZADO</Text>
@@ -319,7 +309,6 @@ export default function NativeApp() {
               )}
             </View>
 
-            {/* Gran Botón Táctil PTT */}
             <View style={styles.pttButtonWrapper}>
               <TouchableOpacity
                 activeOpacity={0.9}
@@ -338,7 +327,6 @@ export default function NativeApp() {
               </TouchableOpacity>
             </View>
 
-            {/* Botones Rápidos de Operación */}
             <View style={styles.quickActions}>
               <TouchableOpacity
                 style={styles.sosButton}
@@ -500,7 +488,6 @@ export default function NativeApp() {
         )}
       </View>
 
-      {/* Barra de Navegación Inferior Nativa */}
       <View style={styles.navBar}>
         <TouchableOpacity
           style={[styles.navItem, currentTab === 'PTT' && styles.navItemActive]}
@@ -993,7 +980,6 @@ const styles = StyleSheet.create({
   navLabelActive: {
     color: '#38bdf8',
   },
-  // Login Styles
   loginCard: {
     flex: 1,
     justifyContent: 'center',
