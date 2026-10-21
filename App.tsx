@@ -1,3 +1,4 @@
+import './src/polyfills/error-guard';
 import React from 'react';
 import { Platform } from 'react-native';
 import WebApp from './src/App';
