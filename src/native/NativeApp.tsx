@@ -13,7 +13,7 @@ import {
   Platform,
   ActivityIndicator,
 } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { safeStorage } from './storage';
 
 // Tipos para React Native
 interface User {
@@ -101,10 +101,10 @@ export default function NativeApp() {
   useEffect(() => {
     (async () => {
       try {
-        const savedUser = await AsyncStorage.getItem('c5i_native_user');
+        const savedUser = await safeStorage.getItem('c5i_native_user');
         if (savedUser) setCurrentUser(JSON.parse(savedUser));
         
-        const savedUrl = await AsyncStorage.getItem('c5i_native_server_url');
+        const savedUrl = await safeStorage.getItem('c5i_native_server_url');
         if (savedUrl) setServerUrl(savedUrl);
       } catch (e) {
         console.log('Error reading storage', e);
@@ -277,14 +277,14 @@ export default function NativeApp() {
 
     setCurrentUser(user);
     try {
-      await AsyncStorage.setItem('c5i_native_user', JSON.stringify(user));
+      await safeStorage.setItem('c5i_native_user', JSON.stringify(user));
     } catch {}
   };
 
   const handleLogout = async () => {
     setCurrentUser(null);
     try {
-      await AsyncStorage.removeItem('c5i_native_user');
+      await safeStorage.removeItem('c5i_native_user');
     } catch {}
   };
 
@@ -631,7 +631,7 @@ export default function NativeApp() {
                   style={styles.presetBtn}
                   onPress={async () => {
                     setServerUrl('http://walkt.gt.tc');
-                    await AsyncStorage.setItem('c5i_native_server_url', 'http://walkt.gt.tc');
+                    await safeStorage.setItem('c5i_native_server_url', 'http://walkt.gt.tc');
                   }}
                 >
                   <Text style={styles.presetBtnText}>INFINITYFREE</Text>
@@ -641,7 +641,7 @@ export default function NativeApp() {
                   style={styles.presetBtn}
                   onPress={async () => {
                     setServerUrl('http://localhost:3000');
-                    await AsyncStorage.setItem('c5i_native_server_url', 'http://localhost:3000');
+                    await safeStorage.setItem('c5i_native_server_url', 'http://localhost:3000');
                   }}
                 >
                   <Text style={styles.presetBtnText}>LOCAL (3000)</Text>
