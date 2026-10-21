@@ -19,12 +19,31 @@ config.serializer = {
   },
 };
 
-// Asegurar que node_modules se resuelva de manera confiable
+const defaultResolveRequest = config.resolver.resolveRequest;
+
+// Asegurar que node_modules se resuelva de manera confiable y silenciar version mismatch en Expo Go
 config.resolver = {
   ...config.resolver,
   nodeModulesPaths: [
     path.resolve(__dirname, 'node_modules'),
   ],
+  resolveRequest: (context, moduleName, platform) => {
+    if (
+      moduleName === './ReactNativeVersionCheck' ||
+      moduleName === 'react-native/Libraries/Core/ReactNativeVersionCheck' ||
+      moduleName.endsWith('/ReactNativeVersionCheck') ||
+      moduleName.endsWith('/ReactNativeVersionCheck.js')
+    ) {
+      return {
+        filePath: path.resolve(__dirname, 'src/polyfills/ReactNativeVersionCheck.js'),
+        type: 'sourceFile',
+      };
+    }
+    if (defaultResolveRequest) {
+      return defaultResolveRequest(context, moduleName, platform);
+    }
+    return context.resolveRequest(context, moduleName, platform);
+  },
 };
 
 module.exports = config;

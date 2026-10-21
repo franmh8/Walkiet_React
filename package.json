@@ -12,7 +12,7 @@
     "expo": "expo start",
     "android": "expo start --android",
     "ios": "expo start --ios",
-    "postinstall": "node -e \"const fs=require('fs'); const p='./node_modules/react-native/rn-get-polyfills.js'; if(fs.existsSync('./node_modules/react-native') && !fs.existsSync(p)){fs.writeFileSync(p, \\\"module.exports = require('@react-native/js-polyfills');\\\\n\\\");}\""
+    "postinstall": "node -e \"const fs=require('fs'); const p='./node_modules/react-native/rn-get-polyfills.js'; if(fs.existsSync('./node_modules/react-native') && !fs.existsSync(p)){fs.writeFileSync(p, \\\"module.exports = require('@react-native/js-polyfills');\\\\n\\\");} const vc='./node_modules/react-native/Libraries/Core/ReactNativeVersionCheck.js'; if(fs.existsSync(vc)){fs.writeFileSync(vc, \\\"export function checkVersions(){}\\\\n\\\");}\""
   },
   "dependencies": {
     "@expo/vector-icons": "^15.1.1",
