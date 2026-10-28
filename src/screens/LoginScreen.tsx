@@ -8,7 +8,6 @@ import {
   CheckCircle2,
   AlertTriangle,
   UserPlus,
-  Zap,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { C5iLogo } from '../components/C5iLogo';
@@ -30,8 +29,8 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
   prefilledSuccessMessage = null,
 }) => {
   const { login } = useAuth();
-  const [identifier, setIdentifier] = useState(prefilledIdentifier || '7711234567');
-  const [password, setPassword] = useState('123');
+  const [identifier, setIdentifier] = useState(prefilledIdentifier || '');
+  const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -197,14 +196,6 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
     }
   };
 
-  const handleQuickDemoSelect = (userPhone: string) => {
-    setIdentifier(userPhone);
-    setPassword('123');
-    setIdentifierError(null);
-    setPasswordError(null);
-    setInlineWarning(null);
-  };
-
   return (
     <div className="min-h-screen bg-slate-100 dark:bg-[#0c0f17] text-slate-800 dark:text-slate-100 flex flex-col justify-center items-center p-4 sm:p-6 relative select-none transition-colors duration-200">
       {/* Subtle radial ambient background glow in C5i burgundy */}
@@ -354,35 +345,8 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
           </button>
         </form>
 
-        {/* Quick Demo Selector for fast testing */}
-        <div className="mt-4 pt-3 border-t border-slate-200/80 dark:border-slate-800/60">
-          <div className="flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400 mb-2">
-            <span className="flex items-center gap-1 font-semibold uppercase tracking-wider text-[10px]">
-              <Zap className="w-3 h-3 text-amber-500" /> Acceso Rápido Demo
-            </span>
-          </div>
-          <div className="grid grid-cols-2 gap-2 text-xs">
-            <button
-              type="button"
-              onClick={() => handleQuickDemoSelect('7711234567')}
-              className="px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/60 hover:border-[#8a1a36] text-left transition"
-            >
-              <div className="font-bold text-slate-800 dark:text-slate-200 text-[11px]">HALCÓN-01</div>
-              <div className="text-[10px] text-slate-500 truncate">Cmdte. Morales</div>
-            </button>
-            <button
-              type="button"
-              onClick={() => handleQuickDemoSelect('7719876543')}
-              className="px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/60 hover:border-[#8a1a36] text-left transition"
-            >
-              <div className="font-bold text-slate-800 dark:text-slate-200 text-[11px]">PATRULLA-04</div>
-              <div className="text-[10px] text-slate-500 truncate">Of. Mendoza</div>
-            </button>
-          </div>
-        </div>
-
         {/* Minimalist Footer Actions */}
-        <div className="mt-4 pt-3 border-t border-slate-200 dark:border-slate-800/80 flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
+        <div className="mt-6 pt-4 border-t border-slate-200 dark:border-slate-800/80 flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
           <button
             id="btn-open-forgot-pass-footer"
             type="button"

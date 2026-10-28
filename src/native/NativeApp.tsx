@@ -71,8 +71,8 @@ async function fetchWithTimeout(url: string, options: any = {}, timeoutMs = 3500
 
 export default function NativeApp() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
-  const [identifier, setIdentifier] = useState('7711234567');
-  const [password, setPassword] = useState('123');
+  const [identifier, setIdentifier] = useState('');
+  const [password, setPassword] = useState('');
   const [currentTab, setCurrentTab] = useState<'PTT' | 'CANALES' | 'MENSAJES' | 'AJUSTES'>('PTT');
   
   // Radio & PTT State
@@ -413,17 +413,6 @@ export default function NativeApp() {
 
           <TouchableOpacity style={styles.loginBtn} onPress={handleLogin} activeOpacity={0.88}>
             <Text style={styles.loginBtnText}>Iniciar Sesión</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.demoBtn}
-            onPress={() => {
-              setIdentifier('7711234567');
-              setPassword('123');
-              handleLogin();
-            }}
-          >
-            <Text style={styles.demoBtnText}>⚡ Acceso Rápido Operador (Demo)</Text>
           </TouchableOpacity>
         </View>
       </SafeAreaView>
@@ -1254,19 +1243,5 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     fontSize: 14,
     letterSpacing: 0.5,
-  },
-  demoBtn: {
-    backgroundColor: '#1e293b',
-    paddingVertical: 12,
-    borderRadius: 12,
-    alignItems: 'center',
-    marginTop: 12,
-    borderWidth: 1,
-    borderColor: '#334155',
-  },
-  demoBtnText: {
-    color: '#38bdf8',
-    fontWeight: '700',
-    fontSize: 12,
   },
 });
