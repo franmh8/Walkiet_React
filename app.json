@@ -5,10 +5,6 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "userInterfaceStyle": "dark",
-    "splash": {
-      "resizeMode": "contain",
-      "backgroundColor": "#090d16"
-    },
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.c5i.hidalgo.walkiet",
