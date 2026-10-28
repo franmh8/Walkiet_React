@@ -15,11 +15,11 @@ const HOST = '0.0.0.0';
 app.use(cors());
 app.use(express.json({ limit: '25mb' }));
 
-// Database configuration based on ER Diagram: if0_42687378_walkt on sql206.infinityfree.com
+// Database configuration
 const DB_NAME = process.env.DB_NAME || 'if0_42687378_walkt';
-const DB_HOST = process.env.DB_HOST || 'sql206.infinityfree.com';
-const DB_USER = process.env.DB_USER || 'if0_42687378';
-const DB_PASSWORD = process.env.DB_PASSWORD || 'GL1VUtpmEw6PD8b';
+const DB_HOST = process.env.DB_HOST;
+const DB_USER = process.env.DB_USER;
+const DB_PASSWORD = process.env.DB_PASSWORD;
 const DB_PORT = Number(process.env.DB_PORT) || 3306;
 
 let mysqlPool: mysql.Pool | null = null;
@@ -27,7 +27,7 @@ let isMysqlConnected = false;
 
 // Attempt optional MySQL connection if environment provides credentials
 async function initMysql() {
-  if (DB_HOST && DB_USER) {
+  if (DB_HOST && DB_USER && DB_PASSWORD) {
     try {
       mysqlPool = mysql.createPool({
         host: DB_HOST,
@@ -37,18 +37,18 @@ async function initMysql() {
         port: DB_PORT,
         waitForConnections: true,
         connectionLimit: 10,
-        connectTimeout: 5000,
+        connectTimeout: 3000,
       });
-      const [rows] = await mysqlPool.query('SELECT 1 as test');
+      await mysqlPool.query('SELECT 1 as test');
       isMysqlConnected = true;
       console.log(`[Database] Conectado exitosamente a MySQL: ${DB_NAME} en ${DB_HOST}`);
     } catch (err: any) {
       isMysqlConnected = false;
-      console.warn(`[Database] MySQL remoto (${DB_HOST}) no disponible o bloquea conexiones directas:`, err.message);
+      console.warn(`[Database] MySQL remoto (${DB_HOST}) no disponible o conexiones directas bloqueadas:`, err.message);
       console.log(`[Database] Activando motor de almacenamiento táctico local replicando esquema exacto de ${DB_NAME}`);
     }
   } else {
-    console.log(`[Database] Motor de base de datos inicializado con esquema: ${DB_NAME}`);
+    console.log(`[Database] Motor de base de datos táctico inicializado con esquema: ${DB_NAME}`);
   }
 }
 initMysql();
