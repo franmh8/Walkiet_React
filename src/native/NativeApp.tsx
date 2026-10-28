@@ -6,13 +6,14 @@ import {
   TouchableOpacity,
   TextInput,
   ScrollView,
-  SafeAreaView,
   StatusBar,
   Alert,
   Vibration,
   Platform,
   ActivityIndicator,
+  Image,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { safeStorage } from './storage';
 
 // Tipos para React Native
@@ -377,39 +378,41 @@ export default function NativeApp() {
       <SafeAreaView style={styles.container}>
         <StatusBar barStyle="light-content" />
         <View style={styles.loginCard}>
-          <View style={styles.shieldBadge}>
-            <Text style={styles.shieldIcon}>🛡️</Text>
-          </View>
-          <Text style={styles.loginTitle}>C5i HIDALGO</Text>
-          <Text style={styles.loginSubtitle}>SISTEMA DE COMUNICACIONES TÁCTICAS PTT</Text>
-          <Text style={styles.loginDbInfo}>Base de datos: if0_42687378_walkt (MySQL)</Text>
+          <Image
+            source={require('../../assets/c5i-logo.png')}
+            style={styles.loginLogo}
+            resizeMode="contain"
+          />
+          <Text style={styles.loginTitle}>C5i Walkiet</Text>
+          <Text style={styles.loginSubtitle}>Sistema de Radiocomunicación Táctica</Text>
 
           <View style={styles.inputGroup}>
-            <Text style={styles.inputLabel}>IDENTIFICADOR O TELÉFONO</Text>
+            <Text style={styles.inputLabel}>Teléfono o Correo</Text>
             <TextInput
               style={styles.textInput}
               value={identifier}
               onChangeText={setIdentifier}
-              placeholder="Ej. 7711234567"
-              placeholderTextColor="#556987"
+              placeholder="Ingresa tu teléfono o correo"
+              placeholderTextColor="#64748b"
               keyboardType="phone-pad"
+              autoCapitalize="none"
             />
           </View>
 
           <View style={styles.inputGroup}>
-            <Text style={styles.inputLabel}>PIN / CONTRASEÑA TÁCTICA</Text>
+            <Text style={styles.inputLabel}>Contraseña</Text>
             <TextInput
               style={styles.textInput}
               value={password}
               onChangeText={setPassword}
-              placeholder="Contraseña"
-              placeholderTextColor="#556987"
+              placeholder="Ingresa tu contraseña"
+              placeholderTextColor="#64748b"
               secureTextEntry
             />
           </View>
 
-          <TouchableOpacity style={styles.loginBtn} onPress={handleLogin} activeOpacity={0.8}>
-            <Text style={styles.loginBtnText}>INICIAR ENLACE ENCRIPTADO</Text>
+          <TouchableOpacity style={styles.loginBtn} onPress={handleLogin} activeOpacity={0.88}>
+            <Text style={styles.loginBtnText}>Iniciar Sesión</Text>
           </TouchableOpacity>
 
           <TouchableOpacity
@@ -420,7 +423,7 @@ export default function NativeApp() {
               handleLogin();
             }}
           >
-            <Text style={styles.demoBtnText}>⚡ ACCESO RÁPIDO OPERADOR (DEMO)</Text>
+            <Text style={styles.demoBtnText}>⚡ Acceso Rápido Operador (Demo)</Text>
           </TouchableOpacity>
         </View>
       </SafeAreaView>
@@ -1190,83 +1193,74 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     padding: 24,
-  },
-  shieldBadge: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
-    backgroundColor: '#0c1a30',
+    maxWidth: 420,
+    width: '100%',
     alignSelf: 'center',
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 2,
-    borderColor: '#38bdf8',
-    marginBottom: 16,
   },
-  shieldIcon: {
-    fontSize: 28,
+  loginLogo: {
+    width: 140,
+    height: 110,
+    alignSelf: 'center',
+    marginBottom: 8,
   },
   loginTitle: {
     color: '#f8fafc',
     fontSize: 24,
     fontWeight: '900',
     textAlign: 'center',
-    letterSpacing: 1.5,
-  },
-  loginSubtitle: {
-    color: '#38bdf8',
-    fontSize: 11,
-    fontWeight: '700',
-    textAlign: 'center',
-    marginTop: 4,
     letterSpacing: 0.5,
   },
-  loginDbInfo: {
-    color: '#64748b',
-    fontSize: 11,
+  loginSubtitle: {
+    color: '#94a3b8',
+    fontSize: 12,
+    fontWeight: '600',
     textAlign: 'center',
-    marginTop: 6,
-    marginBottom: 28,
+    marginTop: 4,
+    marginBottom: 24,
   },
   inputGroup: {
     marginBottom: 16,
   },
   inputLabel: {
-    color: '#94a3b8',
-    fontSize: 11,
-    fontWeight: '700',
+    color: '#cbd5e1',
+    fontSize: 12,
+    fontWeight: '600',
     marginBottom: 6,
-    letterSpacing: 0.5,
   },
   textInput: {
-    backgroundColor: '#0f172a',
+    backgroundColor: '#0c1220',
     borderWidth: 1,
     borderColor: '#334155',
-    borderRadius: 10,
+    borderRadius: 12,
     paddingHorizontal: 14,
     paddingVertical: 12,
     color: '#f8fafc',
     fontSize: 14,
   },
   loginBtn: {
-    backgroundColor: '#0284c7',
+    backgroundColor: '#691c32',
     paddingVertical: 14,
-    borderRadius: 10,
+    borderRadius: 12,
     alignItems: 'center',
     marginTop: 10,
+    shadowColor: '#691c32',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.4,
+    shadowRadius: 8,
+    elevation: 4,
   },
   loginBtnText: {
     color: '#ffffff',
     fontWeight: '800',
-    fontSize: 13,
-    letterSpacing: 1,
+    fontSize: 14,
+    letterSpacing: 0.5,
   },
   demoBtn: {
     backgroundColor: '#1e293b',
     paddingVertical: 12,
-    borderRadius: 10,
+    borderRadius: 12,
     alignItems: 'center',
-    marginTop: 10,
+    marginTop: 12,
     borderWidth: 1,
     borderColor: '#334155',
   },
