@@ -12,9 +12,13 @@ import {
   Platform,
   ActivityIndicator,
   Image,
+  SafeAreaView,
+  LogBox,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 import { safeStorage } from './storage';
+
+// Silenciar advertencia informativa de SafeAreaView en React Native
+LogBox.ignoreLogs(['SafeAreaView has been deprecated']);
 
 // Tipos para React Native
 interface User {
