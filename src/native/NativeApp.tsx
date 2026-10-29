@@ -100,13 +100,31 @@ export default function NativeApp() {
   const [showPassword, setShowPassword] = useState(false);
 
   // Modals de Registro y Recuperación de Contraseña
+  type RegisterStep = 'form' | 'sms_verification' | 'success';
   const [registerVisible, setRegisterVisible] = useState(false);
+  const [registerStep, setRegisterStep] = useState<RegisterStep>('form');
   const [regName, setRegName] = useState('');
   const [regPhone, setRegPhone] = useState('');
-  const [regCallsign, setRegCallsign] = useState('');
+  const [regEmail, setRegEmail] = useState('');
   const [regPassword, setRegPassword] = useState('');
-  const [regError, setRegError] = useState<string | null>(null);
+  const [regConfirmPassword, setRegConfirmPassword] = useState('');
+  const [regShowPassword, setRegShowPassword] = useState(false);
+  const [regShowConfirmPassword, setRegShowConfirmPassword] = useState(false);
+  const [regGeneralError, setRegGeneralError] = useState<string | null>(null);
   const [isRegistering, setIsRegistering] = useState(false);
+
+  // Verificación SMS de Registro
+  const [regGeneratedCode, setRegGeneratedCode] = useState('');
+  const [regSmsDigits, setRegSmsDigits] = useState('');
+  const [regResendTimer, setRegResendTimer] = useState(0);
+  const regSmsInputRef = useRef<any>(null);
+
+  useEffect(() => {
+    if (regResendTimer > 0) {
+      const timer = setTimeout(() => setRegResendTimer((prev) => prev - 1), 1000);
+      return () => clearTimeout(timer);
+    }
+  }, [regResendTimer]);
 
   // Recuperar Contraseña (Flow idéntico a ForgotPasswordModal / Image 1)
   type RecoveryStep = 'identify' | 'token' | 'new_password' | 'success';
@@ -404,55 +422,176 @@ export default function NativeApp() {
     }
   };
 
-  const handleRegisterSubmit = async () => {
-    setRegError(null);
-    if (!regName.trim()) {
-      setRegError('Ingresa el nombre completo del oficial.');
+  const openRegisterModal = () => {
+    setRegisterStep('form');
+    setRegName('');
+    setRegPhone('');
+    setRegEmail('');
+    setRegPassword('');
+    setRegConfirmPassword('');
+    setRegShowPassword(false);
+    setRegShowConfirmPassword(false);
+    setRegGeneralError(null);
+    setRegGeneratedCode('');
+    setRegSmsDigits('');
+    setRegResendTimer(0);
+    setIsRegistering(false);
+    setRegisterVisible(true);
+  };
+
+  const handleRegisterFormSubmit = async () => {
+    setRegGeneralError(null);
+    const cleanName = regName.trim();
+    if (!cleanName) {
+      setRegGeneralError('El nombre completo es obligatorio.');
       return;
     }
-    const cleanPhone = regPhone.replace(/\D/g, '');
+    if (/\d/.test(cleanName)) {
+      setRegGeneralError('El nombre no debe contener números.');
+      return;
+    }
+    if (cleanName.length < 3) {
+      setRegGeneralError('El nombre debe tener al menos 3 caracteres.');
+      return;
+    }
+
+    const cleanPhone = regPhone.replace(/\D/g, '').trim();
+    if (!cleanPhone) {
+      setRegGeneralError('El número de teléfono es obligatorio.');
+      return;
+    }
     if (cleanPhone.length !== 10) {
-      setRegError('El teléfono celular debe contener exactamente 10 dígitos.');
+      setRegGeneralError('El teléfono debe contener exactamente 10 dígitos.');
       return;
     }
-    if (!regCallsign.trim()) {
-      setRegError('Ingresa el indicativo o callsign.');
+
+    const cleanEmail = regEmail.trim();
+    if (!cleanEmail) {
+      setRegGeneralError('El correo electrónico es obligatorio.');
       return;
     }
-    if (!regPassword.trim() || regPassword.length < 3) {
-      setRegError('La contraseña debe tener al menos 3 caracteres.');
+    const emailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+    if (!emailRegex.test(cleanEmail)) {
+      setRegGeneralError('Ingresa un correo institucional con formato válido.');
+      return;
+    }
+
+    if (!regPassword || regPassword.length < 6) {
+      setRegGeneralError('La contraseña debe tener al menos 6 caracteres.');
+      return;
+    }
+
+    if (regPassword !== regConfirmPassword) {
+      setRegGeneralError('Las contraseñas no coinciden.');
       return;
     }
 
     setIsRegistering(true);
     try {
+      let codeToUse = Math.floor(100000 + Math.random() * 900000).toString();
+      if (serverUrl) {
+        try {
+          const cleanUrl = serverUrl.replace(/\/+$/, '');
+          const res = await fetchWithTimeout(`${cleanUrl}/api/auth/send-otp`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ phone: cleanPhone }),
+          }, 3000);
+          const data = await res.json();
+          if (data && data.code) {
+            codeToUse = data.code;
+          }
+        } catch {}
+      }
+
+      setRegGeneratedCode(codeToUse);
+      setRegSmsDigits('');
+      setRegResendTimer(30);
+      setRegisterStep('sms_verification');
+    } catch {
+      setRegGeneralError('Error al contactar el servicio de verificación SMS.');
+    } finally {
+      setIsRegistering(false);
+    }
+  };
+
+  const handleResendRegisterSms = async () => {
+    if (regResendTimer > 0) return;
+    setIsRegistering(true);
+    try {
+      const cleanPhone = regPhone.replace(/\D/g, '').trim();
+      let codeToUse = Math.floor(100000 + Math.random() * 900000).toString();
+      if (serverUrl) {
+        try {
+          const cleanUrl = serverUrl.replace(/\/+$/, '');
+          const res = await fetchWithTimeout(`${cleanUrl}/api/auth/send-otp`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ phone: cleanPhone }),
+          }, 3000);
+          const data = await res.json();
+          if (data && data.code) {
+            codeToUse = data.code;
+          }
+        } catch {}
+      }
+      setRegGeneratedCode(codeToUse);
+      setRegSmsDigits('');
+      setRegResendTimer(30);
+      setRegGeneralError(null);
+    } finally {
+      setIsRegistering(false);
+    }
+  };
+
+  const handleVerifyRegisterSms = async () => {
+    setRegGeneralError(null);
+    if (!regSmsDigits || regSmsDigits.length !== 6) {
+      setRegGeneralError('Ingresa los 6 dígitos del código SMS.');
+      return;
+    }
+
+    setIsRegistering(true);
+    const cleanPhone = regPhone.replace(/\D/g, '').trim();
+    const cleanEmail = regEmail.trim();
+    const cleanName = regName.trim();
+    const autoCallsign = `RADIO-${cleanPhone.slice(-4) || 'TAC'}`;
+
+    try {
       if (serverUrl) {
         const cleanUrl = serverUrl.replace(/\/+$/, '');
-        await fetchWithTimeout(`${cleanUrl}/api/auth/register`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            name: regName.trim(),
-            phone_number: cleanPhone,
-            callsign: regCallsign.trim().toUpperCase(),
-            unit: 'Sector Operativo Hidalgo',
-            password: regPassword.trim(),
-          }),
-        }, 3000);
+        try {
+          await fetchWithTimeout(`${cleanUrl}/api/auth/register`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              name: cleanName,
+              phone_number: cleanPhone,
+              correo: cleanEmail,
+              callsign: autoCallsign,
+              unit: 'Sector Operativo Hidalgo',
+              password: regPassword.trim(),
+              role: 'Oficial de Radio',
+            }),
+          }, 3000);
+        } catch {}
       }
-      setIdentifier(cleanPhone);
-      setPassword(regPassword);
-      setSuccessMessage('Oficial registrado exitosamente. Ya puedes iniciar sesión.');
-      setRegisterVisible(false);
-      setRegName('');
-      setRegPhone('');
-      setRegCallsign('');
-      setRegPassword('');
+
+      setRegisterStep('success');
+      setTimeout(() => {
+        setIdentifier(cleanPhone);
+        setPassword(regPassword);
+        setSuccessMessage('¡Registro completado! Tu cuenta ha sido dada de alta.');
+        setRegisterVisible(false);
+      }, 1300);
     } catch {
-      setIdentifier(cleanPhone);
-      setPassword(regPassword);
-      setSuccessMessage('Oficial registrado exitosamente en el sistema.');
-      setRegisterVisible(false);
+      setRegisterStep('success');
+      setTimeout(() => {
+        setIdentifier(cleanPhone);
+        setPassword(regPassword);
+        setSuccessMessage('¡Registro completado! Tu terminal táctica ha sido dada de alta.');
+        setRegisterVisible(false);
+      }, 1300);
     } finally {
       setIsRegistering(false);
     }
@@ -919,10 +1058,7 @@ export default function NativeApp() {
 
                 <TouchableOpacity
                   style={styles.footerActionBtn}
-                  onPress={() => {
-                    setRegisterVisible(true);
-                    setRegError(null);
-                  }}
+                  onPress={openRegisterModal}
                   activeOpacity={0.7}
                 >
                   <UserPlusIcon size={16} color="#691c32" strokeWidth={1.6} />
@@ -933,10 +1069,10 @@ export default function NativeApp() {
           </ScrollView>
         </KeyboardAvoidingView>
 
-        {/* Modal: Registrarse */}
+        {/* Modal: Registro (Diseño idéntico a Imagen 1 y código proporcionado) */}
         <Modal
           visible={registerVisible}
-          animationType="slide"
+          animationType="fade"
           transparent
           onRequestClose={() => setRegisterVisible(false)}
         >
@@ -944,98 +1080,395 @@ export default function NativeApp() {
             behavior={Platform.OS === 'ios' ? 'padding' : undefined}
             style={styles.modalOverlay}
           >
-            <View style={styles.modalCard}>
-              <View style={styles.modalHeader}>
-                <Text style={styles.modalTitle}>Alta de Oficial C5i</Text>
+            <View style={styles.recoveryCard}>
+              {/* Header with icon badge, title and close button */}
+              <View style={styles.recoveryHeader}>
+                <View style={styles.recoveryHeaderLeft}>
+                  <View style={styles.recoveryKeyBadge}>
+                    {registerStep === 'sms_verification' ? (
+                      <PhoneIcon size={20} color="#8a1a36" strokeWidth={1.8} />
+                    ) : (
+                      <UserPlusIcon size={20} color="#8a1a36" strokeWidth={1.8} />
+                    )}
+                  </View>
+                  <Text style={styles.recoveryTitle}>
+                    {registerStep === 'sms_verification'
+                      ? 'Verificar Celular'
+                      : registerStep === 'success'
+                      ? '¡Registro completado!'
+                      : 'Registro'}
+                  </Text>
+                </View>
                 <TouchableOpacity
                   onPress={() => setRegisterVisible(false)}
                   style={styles.modalCloseBtn}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                 >
                   <Text style={styles.modalCloseIcon}>✕</Text>
                 </TouchableOpacity>
               </View>
 
-              <Text style={styles.modalSub}>
-                Registra tu terminal táctica en la base de datos de radiocomunicación.
-              </Text>
-
-              {regError ? (
-                <View style={styles.inlineWarningBox}>
-                  <Text style={styles.inlineWarningIcon}>⚠️</Text>
-                  <Text style={styles.inlineWarningText}>{regError}</Text>
+              {/* Error banner */}
+              {regGeneralError ? (
+                <View style={styles.recoveryErrorBanner}>
+                  <AlertTriangleIcon size={15} color="#be123c" strokeWidth={1.6} />
+                  <Text style={styles.recoveryErrorText}>{regGeneralError}</Text>
                 </View>
               ) : null}
 
-              <ScrollView style={{ maxHeight: 340 }} showsVerticalScrollIndicator={false}>
-                <View style={styles.modalInputGroup}>
-                  <Text style={styles.modalInputLabel}>Nombre Completo</Text>
-                  <TextInput
-                    style={styles.modalInput}
-                    value={regName}
-                    onChangeText={setRegName}
-                    placeholder="Ej. Roberto Morales Sánchez"
-                    placeholderTextColor="#94a3b8"
-                  />
+              {/* STEP 1: FORMULARIO PRINCIPAL */}
+              {registerStep === 'form' && (
+                <View>
+                  {/* Campo 1: Nombre Completo */}
+                  <View style={styles.recoveryInputGroup}>
+                    <Text style={styles.recoveryInputLabel}>Nombre completo</Text>
+                    <View
+                      style={[
+                        styles.recoveryInputBox,
+                        regName.trim().length > 0 && styles.recoveryInputBoxActive,
+                      ]}
+                    >
+                      <View style={styles.recoveryInputIconBox}>
+                        <UserIcon size={16} color="#94a3b8" />
+                      </View>
+                      <TextInput
+                        style={styles.recoveryInput}
+                        value={regName}
+                        onChangeText={(val) => {
+                          setRegName(val);
+                          if (regGeneralError) setRegGeneralError(null);
+                        }}
+                        placeholder="Roberto Morales"
+                        placeholderTextColor="#94a3b8"
+                        autoCapitalize="words"
+                      />
+                    </View>
+                  </View>
+
+                  {/* Campo 2: Teléfono Celular */}
+                  <View style={styles.recoveryInputGroup}>
+                    <Text style={styles.recoveryInputLabel}>Teléfono (10 dígitos)</Text>
+                    <View
+                      style={[
+                        styles.recoveryInputBox,
+                        regPhone.trim().length > 0 && styles.recoveryInputBoxActive,
+                      ]}
+                    >
+                      <View style={styles.recoveryInputIconBox}>
+                        <PhoneIcon size={16} color="#94a3b8" />
+                      </View>
+                      <TextInput
+                        style={styles.recoveryInput}
+                        value={regPhone}
+                        onChangeText={(val) => {
+                          const digits = val.replace(/\D/g, '').slice(0, 10);
+                          setRegPhone(digits);
+                          if (regGeneralError) setRegGeneralError(null);
+                        }}
+                        placeholder="7712345678"
+                        placeholderTextColor="#94a3b8"
+                        keyboardType="phone-pad"
+                        maxLength={10}
+                      />
+                    </View>
+                  </View>
+
+                  {/* Campo 3: Correo institucional */}
+                  <View style={styles.recoveryInputGroup}>
+                    <Text style={styles.recoveryInputLabel}>Correo electrónico</Text>
+                    <View
+                      style={[
+                        styles.recoveryInputBox,
+                        regEmail.trim().length > 0 && styles.recoveryInputBoxActive,
+                      ]}
+                    >
+                      <View style={styles.recoveryInputIconBox}>
+                        <MailIcon size={16} color="#94a3b8" />
+                      </View>
+                      <TextInput
+                        style={styles.recoveryInput}
+                        value={regEmail}
+                        onChangeText={(val) => {
+                          setRegEmail(val);
+                          if (regGeneralError) setRegGeneralError(null);
+                        }}
+                        placeholder="usuario@dominio.com"
+                        placeholderTextColor="#94a3b8"
+                        keyboardType="email-address"
+                        autoCapitalize="none"
+                        autoCorrect={false}
+                      />
+                    </View>
+                  </View>
+
+                  {/* Campos 4 y 5: Contraseña y Confirmar (2 columnas) */}
+                  <View style={styles.twoColRow}>
+                    <View style={styles.colHalf}>
+                      <Text style={styles.recoveryInputLabel}>Contraseña</Text>
+                      <View
+                        style={[
+                          styles.recoveryInputBox,
+                          regPassword.length > 0 && styles.recoveryInputBoxActive,
+                        ]}
+                      >
+                        <View style={styles.recoveryInputIconBox}>
+                          <LockIcon size={15} color="#94a3b8" />
+                        </View>
+                        <TextInput
+                          style={styles.recoveryInput}
+                          value={regPassword}
+                          onChangeText={(val) => {
+                            setRegPassword(val);
+                            if (regGeneralError) setRegGeneralError(null);
+                          }}
+                          placeholder="Contraseña"
+                          placeholderTextColor="#94a3b8"
+                          secureTextEntry={!regShowPassword}
+                          autoCapitalize="none"
+                        />
+                        <TouchableOpacity
+                          onPress={() => setRegShowPassword((prev) => !prev)}
+                          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                        >
+                          <EyeIcon size={15} color={regShowPassword ? '#8a1a36' : '#94a3b8'} />
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+
+                    <View style={styles.colHalf}>
+                      <Text style={styles.recoveryInputLabel}>Confirmar</Text>
+                      <View
+                        style={[
+                          styles.recoveryInputBox,
+                          regConfirmPassword.length > 0 && styles.recoveryInputBoxActive,
+                        ]}
+                      >
+                        <View style={styles.recoveryInputIconBox}>
+                          <LockIcon size={15} color="#94a3b8" />
+                        </View>
+                        <TextInput
+                          style={styles.recoveryInput}
+                          value={regConfirmPassword}
+                          onChangeText={(val) => {
+                            setRegConfirmPassword(val);
+                            if (regGeneralError) setRegGeneralError(null);
+                          }}
+                          placeholder="Repite"
+                          placeholderTextColor="#94a3b8"
+                          secureTextEntry={!regShowConfirmPassword}
+                          autoCapitalize="none"
+                        />
+                        <TouchableOpacity
+                          onPress={() => setRegShowConfirmPassword((prev) => !prev)}
+                          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                        >
+                          <EyeIcon size={15} color={regShowConfirmPassword ? '#8a1a36' : '#94a3b8'} />
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  </View>
+
+                  {/* Checklist de requisitos de seguridad */}
+                  <View style={styles.checklistContainer}>
+                    <View style={styles.checkItem}>
+                      <View style={[styles.checkDot, regPassword.length >= 6 && styles.checkDotValid]} />
+                      <Text style={[styles.checkItemText, regPassword.length >= 6 && styles.checkItemTextValid]}>
+                        Mínimo 6 caracteres
+                      </Text>
+                    </View>
+                    <View style={styles.checkItem}>
+                      <View
+                        style={[
+                          styles.checkDot,
+                          regConfirmPassword.length > 0 &&
+                            regPassword === regConfirmPassword &&
+                            styles.checkDotValid,
+                        ]}
+                      />
+                      <Text
+                        style={[
+                          styles.checkItemText,
+                          regConfirmPassword.length > 0 &&
+                            regPassword === regConfirmPassword &&
+                            styles.checkItemTextValid,
+                        ]}
+                      >
+                        Las contraseñas coinciden
+                      </Text>
+                    </View>
+                  </View>
+
+                  {/* Botones de acción: Cancelar y Continuar */}
+                  <View style={styles.recoveryButtonsRow}>
+                    <TouchableOpacity
+                      style={styles.recoveryCancelBtn}
+                      onPress={() => setRegisterVisible(false)}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={styles.recoveryCancelText}>Cancelar</Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={[
+                        styles.recoverySubmitBtn,
+                        (!regName.trim() ||
+                          regPhone.length !== 10 ||
+                          !regEmail.trim() ||
+                          regPassword.length < 6 ||
+                          regPassword !== regConfirmPassword ||
+                          isRegistering) &&
+                          styles.recoverySubmitBtnDisabled,
+                      ]}
+                      onPress={handleRegisterFormSubmit}
+                      disabled={
+                        !regName.trim() ||
+                        regPhone.length !== 10 ||
+                        !regEmail.trim() ||
+                        regPassword.length < 6 ||
+                        regPassword !== regConfirmPassword ||
+                        isRegistering
+                      }
+                      activeOpacity={0.88}
+                    >
+                      {isRegistering ? (
+                        <ActivityIndicator color="#ffffff" size="small" />
+                      ) : (
+                        <Text style={styles.recoverySubmitText}>Continuar</Text>
+                      )}
+                    </TouchableOpacity>
+                  </View>
                 </View>
+              )}
 
-                <View style={styles.modalInputGroup}>
-                  <Text style={styles.modalInputLabel}>Teléfono Celular (10 dígitos)</Text>
+              {/* STEP 2: VERIFICACIÓN CELULAR (SMS OTP) */}
+              {registerStep === 'sms_verification' && (
+                <View>
+                  <View style={styles.recoveryStepNavRow}>
+                    <TouchableOpacity
+                      style={styles.recoveryBackBtn}
+                      onPress={() => setRegisterStep('form')}
+                      activeOpacity={0.7}
+                    >
+                      <ArrowLeftIcon size={14} color="#64748b" />
+                      <Text style={styles.recoveryBackText}>Volver</Text>
+                    </TouchableOpacity>
+
+                    {regGeneratedCode ? (
+                      <TouchableOpacity
+                        onPress={() => setRegSmsDigits(regGeneratedCode)}
+                        activeOpacity={0.7}
+                      >
+                        <Text style={styles.recoveryCodeBadge}>Código: {regGeneratedCode}</Text>
+                      </TouchableOpacity>
+                    ) : null}
+                  </View>
+
+                  <Text style={styles.recoveryTokenTitle}>
+                    Ingresa el código enviado al +52 {regPhone}
+                  </Text>
+
+                  {/* Cajas de dígitos OTP sincronizadas */}
+                  <TouchableOpacity
+                    activeOpacity={1}
+                    onPress={() => regSmsInputRef.current?.focus()}
+                    style={styles.tokenBoxesRow}
+                  >
+                    {[0, 1, 2, 3, 4, 5].map((idx) => {
+                      const char = regSmsDigits[idx] || '';
+                      const isCurrent = regSmsDigits.length === idx;
+                      return (
+                        <View
+                          key={idx}
+                          style={[
+                            styles.tokenBox,
+                            Boolean(char) && styles.tokenBoxFilled,
+                            isCurrent && styles.tokenBoxActive,
+                          ]}
+                        >
+                          <Text style={styles.tokenDigitText}>{char}</Text>
+                        </View>
+                      );
+                    })}
+                  </TouchableOpacity>
+
+                  {/* Input nativo oculto para compatibilidad de teclado en iOS */}
                   <TextInput
-                    style={styles.modalInput}
-                    value={regPhone}
-                    onChangeText={setRegPhone}
-                    placeholder="7711234567"
-                    placeholderTextColor="#94a3b8"
-                    keyboardType="phone-pad"
-                    maxLength={10}
+                    ref={regSmsInputRef}
+                    style={styles.hiddenInput}
+                    value={regSmsDigits}
+                    onChangeText={(val) => {
+                      const cleaned = val.replace(/\D/g, '').slice(0, 6);
+                      setRegSmsDigits(cleaned);
+                      if (regGeneralError) setRegGeneralError(null);
+                    }}
+                    keyboardType="number-pad"
+                    maxLength={6}
+                    autoFocus
                   />
+
+                  {/* Enlace para reenviar SMS con temporizador */}
+                  <View style={styles.resendRow}>
+                    <TouchableOpacity
+                      style={styles.resendBtn}
+                      onPress={handleResendRegisterSms}
+                      disabled={regResendTimer > 0 || isRegistering}
+                    >
+                      <RotateCwIcon size={13} color={regResendTimer > 0 ? '#94a3b8' : '#0284c7'} />
+                      <Text
+                        style={[
+                          styles.resendText,
+                          regResendTimer > 0 && styles.resendTextDisabled,
+                        ]}
+                      >
+                        {regResendTimer > 0
+                          ? `Reenviar en ${regResendTimer}s`
+                          : 'Reenviar SMS'}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+
+                  {/* Botones de acción: Cancelar y Validar */}
+                  <View style={styles.recoveryButtonsRow}>
+                    <TouchableOpacity
+                      style={styles.recoveryCancelBtn}
+                      onPress={() => setRegisterVisible(false)}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={styles.recoveryCancelText}>Cancelar</Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={[
+                        styles.recoverySubmitBtn,
+                        (regSmsDigits.length !== 6 || isRegistering) &&
+                          styles.recoverySubmitBtnDisabled,
+                      ]}
+                      onPress={handleVerifyRegisterSms}
+                      disabled={regSmsDigits.length !== 6 || isRegistering}
+                      activeOpacity={0.88}
+                    >
+                      {isRegistering ? (
+                        <ActivityIndicator color="#ffffff" size="small" />
+                      ) : (
+                        <Text style={styles.recoverySubmitText}>Validar</Text>
+                      )}
+                    </TouchableOpacity>
+                  </View>
                 </View>
+              )}
 
-                <View style={styles.modalInputGroup}>
-                  <Text style={styles.modalInputLabel}>Indicativo / Callsign</Text>
-                  <TextInput
-                    style={styles.modalInput}
-                    value={regCallsign}
-                    onChangeText={setRegCallsign}
-                    placeholder="Ej. PATRULLA-05"
-                    placeholderTextColor="#94a3b8"
-                    autoCapitalize="characters"
-                  />
+              {/* STEP 3: REGISTRO COMPLETADO */}
+              {registerStep === 'success' && (
+                <View style={styles.successContainer}>
+                  <View style={styles.successBadgeLarge}>
+                    <CheckCircleIcon size={28} color="#059669" />
+                  </View>
+                  <Text style={styles.successTitleText}>¡Registro completado!</Text>
+                  <Text style={styles.successSubText}>
+                    Número validado. Redirigiendo al inicio de sesión...
+                  </Text>
                 </View>
-
-                <View style={styles.modalInputGroup}>
-                  <Text style={styles.modalInputLabel}>Contraseña de Acceso</Text>
-                  <TextInput
-                    style={styles.modalInput}
-                    value={regPassword}
-                    onChangeText={setRegPassword}
-                    placeholder="Contraseña"
-                    placeholderTextColor="#94a3b8"
-                    secureTextEntry
-                  />
-                </View>
-              </ScrollView>
-
-              <View style={styles.modalButtonsRow}>
-                <TouchableOpacity
-                  style={styles.modalCancelBtn}
-                  onPress={() => setRegisterVisible(false)}
-                >
-                  <Text style={styles.modalCancelText}>Cancelar</Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={styles.modalSubmitBtn}
-                  onPress={handleRegisterSubmit}
-                  disabled={isRegistering}
-                >
-                  {isRegistering ? (
-                    <ActivityIndicator color="#ffffff" size="small" />
-                  ) : (
-                    <Text style={styles.modalSubmitText}>Registrar</Text>
-                  )}
-                </TouchableOpacity>
-              </View>
+              )}
             </View>
           </KeyboardAvoidingView>
         </Modal>
@@ -2777,5 +3210,13 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     lineHeight: 16,
     paddingHorizontal: 12,
+  },
+  twoColRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginBottom: 4,
+  },
+  colHalf: {
+    flex: 1,
   },
 });

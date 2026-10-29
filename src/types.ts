@@ -8,6 +8,7 @@ export interface User {
   avatar_url?: string | null;
   status: 'online' | 'offline' | 'transmitting';
   callsign?: string;
+  badge?: string;
   unit?: string;
 }
 

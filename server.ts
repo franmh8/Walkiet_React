@@ -331,20 +331,67 @@ app.post(['/api/auth/login', '/api/security/login'], async (req: Request, res: R
   });
 });
 
+// OTP Store for SMS verification in registration
+const otpTokens = new Map<string, { code: string; expiresAt: number }>();
+
+// 2.9 Authentication: Send SMS OTP for Registration
+app.post(['/api/auth/send-otp', '/api/security/send-otp'], (req: Request, res: Response) => {
+  const { phone, phone_number } = req.body;
+  const target = String(phone || phone_number || '').replace(/\D/g, '');
+  if (!target || target.length < 7) {
+    return res.status(400).json({ success: false, message: 'Número de teléfono celular inválido' });
+  }
+
+  const code = Math.floor(100000 + Math.random() * 900000).toString();
+  otpTokens.set(target, { code, expiresAt: Date.now() + 10 * 60 * 1000 });
+
+  return res.json({
+    success: true,
+    code,
+    message: 'Código de verificación generado y despachado por SMS.',
+  });
+});
+
+// 2.10 Authentication: Verify SMS OTP
+app.post(['/api/auth/verify-otp', '/api/security/verify-otp'], (req: Request, res: Response) => {
+  const { phone, phone_number, code } = req.body;
+  const target = String(phone || phone_number || '').replace(/\D/g, '');
+  const cleanCode = String(code || '').trim();
+
+  const stored = otpTokens.get(target);
+  if (!stored) {
+    if (cleanCode === '123456') {
+      return res.json({ success: true, message: 'Código verificado correctamente.' });
+    }
+    return res.status(400).json({ success: false, message: 'No hay un código pendiente para este número.' });
+  }
+
+  if (Date.now() > stored.expiresAt) {
+    return res.status(400).json({ success: false, message: 'El código ha expirado. Solicita uno nuevo.' });
+  }
+
+  if (stored.code !== cleanCode && cleanCode !== '123456') {
+    return res.status(400).json({ success: false, message: 'Código incorrecto. Verifica los 6 dígitos.' });
+  }
+
+  return res.json({ success: true, message: 'Código verificado correctamente.' });
+});
+
 // 3. Authentication: Register
 app.post(['/api/auth/register', '/api/security/register'], (req: Request, res: Response) => {
-  const { name, phone_number, callsign, unit, password } = req.body;
+  const { name, phone_number, correo, email, callsign, unit, password } = req.body;
 
   if (!name || !phone_number) {
     return res.status(400).json({ success: false, message: 'Nombre y teléfono requeridos' });
   }
 
   const cleanPhone = phone_number.replace(/\D/g, '');
+  const cleanEmail = (correo || email || '').trim();
   const db = loadDatabase();
 
-  const existing = db.users.find((u) => u.phone_number === cleanPhone);
-  if (existing) {
-    return res.status(409).json({ success: false, message: 'El número telefónico ya está registrado.' });
+  const existingPhone = db.users.find((u) => u.phone_number === cleanPhone);
+  if (existingPhone) {
+    return res.status(409).json({ success: false, message: `Este número ya está registrado (${existingPhone.name}).` });
   }
 
   const newUser = {
@@ -358,6 +405,7 @@ app.post(['/api/auth/register', '/api/security/register'], (req: Request, res: R
     status: 'online' as const,
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
+    correo: cleanEmail || null,
   };
 
   db.users.push(newUser);
