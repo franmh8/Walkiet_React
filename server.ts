@@ -9,7 +9,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
-const PORT = 3000;
+const PORT = Number(process.env.PORT) || 3000;
 const HOST = '0.0.0.0';
 
 app.use(cors());
@@ -1019,9 +1019,29 @@ async function setupVite() {
     app.use(vite.middlewares);
   } else {
     const distPath = path.join(__dirname, 'dist');
-    app.use(express.static(distPath));
-    app.get('*', (_req: Request, res: Response) => {
-      res.sendFile(path.join(distPath, 'index.html'));
+    if (fs.existsSync(distPath)) {
+      app.use(express.static(distPath));
+    }
+    // Enrutador universal compatible con Express 5 (evita el error de sintaxis de path-to-regexp con '*')
+    app.use((_req: Request, res: Response) => {
+      const indexPath = path.join(distPath, 'index.html');
+      if (fs.existsSync(indexPath)) {
+        res.sendFile(indexPath);
+      } else {
+        res.json({
+          status: 'ONLINE',
+          service: 'C5i Hidalgo Walkie-Talkie API',
+          version: '1.0.0',
+          endpoints: [
+            '/api/auth/login',
+            '/api/auth/register',
+            '/api/auth/send-otp',
+            '/api/database/status',
+            '/api/channels',
+            '/api/voice-messages',
+          ],
+        });
+      }
     });
   }
 

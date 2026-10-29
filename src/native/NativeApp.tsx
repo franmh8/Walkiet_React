@@ -398,7 +398,12 @@ export default function NativeApp() {
             }, 4500).catch(() => null);
           }
 
-          const data = res ? await res.json().catch(() => ({})) : null;
+          const rawText = res ? await res.text().catch(() => '') : '';
+          let data: any = null;
+          try {
+            data = JSON.parse(rawText);
+          } catch {}
+
           if (res && res.ok && data && data.success && data.user) {
             remoteUser = {
               id: data.user.id,
@@ -420,7 +425,7 @@ export default function NativeApp() {
               msg.toLowerCase().includes('inexistente')
             ) {
               setIdentifierError('Usuario no registrado');
-              setInlineWarning(`El usuario «${cleanIdentifier}» no se encuentra registrado en el sistema.`);
+              setInlineWarning(`El usuario «${cleanIdentifier}» no se encuentra registrado en el sistema C5i.`);
               return;
             }
 
@@ -436,10 +441,12 @@ export default function NativeApp() {
             }
 
             loginErrorMsg = msg || 'Credenciales inválidas en el sistema C5i.';
+          } else if (rawText.includes('aes.js') || rawText.includes('__test') || rawText.includes('openresty')) {
+            loginErrorMsg = 'InfinityFree bloqueó la app móvil con su filtro anti-bots (TestCookie). En Ajustes ⚙️ usa la URL del servidor backend.';
           } else if (res && !res.ok) {
             loginErrorMsg = `El servidor respondió con código HTTP ${res.status}.`;
           } else {
-            loginErrorMsg = 'No fue posible contactar a walkt.gt.tc (error de red o CORS en el navegador).';
+            loginErrorMsg = 'No fue posible contactar al servidor C5i (error de red o bloqueo de host).';
           }
         } catch (e: any) {
           loginErrorMsg = e.message || 'Error de conexión con la base de datos C5i.';
@@ -680,16 +687,23 @@ export default function NativeApp() {
           }
 
           if (res) {
-            const data = await res.json().catch(() => null);
+            const rawText = await res.text().catch(() => '');
+            let data: any = null;
+            try {
+              data = JSON.parse(rawText);
+            } catch {}
+
             if (res.ok && data && (data.success || data.user)) {
               registeredSuccess = true;
             } else if (data && data.message) {
               serverErrorMsg = data.message;
+            } else if (rawText.includes('aes.js') || rawText.includes('__test') || rawText.includes('openresty')) {
+              serverErrorMsg = 'InfinityFree bloqueó la app con su filtro anti-bots (TestCookie). En Ajustes ⚙️ cambia la URL al servidor backend.';
             } else {
               serverErrorMsg = `El servidor respondió con código HTTP ${res.status}`;
             }
           } else {
-            serverErrorMsg = 'No fue posible contactar a walkt.gt.tc (error de red o bloqueo de CORS en navegador).';
+            serverErrorMsg = 'No fue posible contactar al servidor C5i (error de red o bloqueo de host).';
           }
         } catch (e: any) {
           serverErrorMsg = e.message || 'Error al comunicarse con la base de datos C5i.';
