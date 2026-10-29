@@ -18,6 +18,15 @@ import {
   KeyboardAvoidingView,
 } from 'react-native';
 import { safeStorage } from './storage';
+import {
+  UserIcon,
+  LockIcon,
+  EyeIcon,
+  KeyIcon,
+  UserPlusIcon,
+  AlertTriangleIcon,
+  CheckCircleIcon,
+} from './icons';
 
 // Silenciar advertencia informativa de SafeAreaView en React Native
 LogBox.ignoreLogs(['SafeAreaView has been deprecated']);
@@ -544,7 +553,9 @@ export default function NativeApp() {
               {/* Feedback Success Message */}
               {successMessage ? (
                 <View style={styles.successBanner}>
-                  <Text style={styles.successIcon}>✓</Text>
+                  <View style={styles.bannerIconBox}>
+                    <CheckCircleIcon size={16} color="#059669" strokeWidth={1.7} />
+                  </View>
                   <Text style={styles.successText}>{successMessage}</Text>
                 </View>
               ) : null}
@@ -552,7 +563,9 @@ export default function NativeApp() {
               {/* Inline Warning Banner */}
               {inlineWarning ? (
                 <View style={styles.inlineWarningBox}>
-                  <Text style={styles.inlineWarningIcon}>⚠️</Text>
+                  <View style={styles.bannerIconBox}>
+                    <AlertTriangleIcon size={16} color="#be123c" strokeWidth={1.6} />
+                  </View>
                   <Text style={styles.inlineWarningText}>{inlineWarning}</Text>
                 </View>
               ) : null}
@@ -566,7 +579,13 @@ export default function NativeApp() {
                   ) : null}
                 </View>
                 <View style={[styles.inputBox, !!identifierError && styles.inputBoxError]}>
-                  <Text style={styles.inputLeadingIcon}>👤</Text>
+                  <View style={styles.inputLeadingIconBox}>
+                    <UserIcon
+                      size={18}
+                      color={identifierError ? '#f43f5e' : '#94a3b8'}
+                      strokeWidth={1.6}
+                    />
+                  </View>
                   <TextInput
                     style={styles.inputInner}
                     value={identifier}
@@ -593,7 +612,13 @@ export default function NativeApp() {
                   ) : null}
                 </View>
                 <View style={[styles.inputBox, !!passwordError && styles.inputBoxError]}>
-                  <Text style={styles.inputLeadingIcon}>🔒</Text>
+                  <View style={styles.inputLeadingIconBox}>
+                    <LockIcon
+                      size={18}
+                      color={passwordError ? '#f43f5e' : '#94a3b8'}
+                      strokeWidth={1.6}
+                    />
+                  </View>
                   <TextInput
                     style={styles.inputInner}
                     value={password}
@@ -611,8 +636,14 @@ export default function NativeApp() {
                     onPress={() => setShowPassword(!showPassword)}
                     style={styles.eyeBtn}
                     hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                    activeOpacity={0.7}
                   >
-                    <Text style={styles.eyeIcon}>{showPassword ? '🙈' : '👁️'}</Text>
+                    <EyeIcon
+                      size={18}
+                      color="#94a3b8"
+                      off={showPassword}
+                      strokeWidth={1.6}
+                    />
                   </TouchableOpacity>
                 </View>
               </View>
@@ -644,7 +675,7 @@ export default function NativeApp() {
                   }}
                   activeOpacity={0.7}
                 >
-                  <Text style={styles.footerActionIcon}>🔑</Text>
+                  <KeyIcon size={16} color="#64748b" strokeWidth={1.6} />
                   <Text style={styles.footerActionText}>Recuperar acceso</Text>
                 </TouchableOpacity>
 
@@ -656,7 +687,7 @@ export default function NativeApp() {
                   }}
                   activeOpacity={0.7}
                 >
-                  <Text style={styles.registerActionIcon}>👤⁺</Text>
+                  <UserPlusIcon size={16} color="#691c32" strokeWidth={1.6} />
                   <Text style={styles.registerActionText}>Registrarse</Text>
                 </TouchableOpacity>
               </View>
@@ -1747,10 +1778,16 @@ const styles = StyleSheet.create({
     borderColor: '#f43f5e',
     backgroundColor: '#fff1f2',
   },
-  inputLeadingIcon: {
-    fontSize: 15,
+  bannerIconBox: {
     marginRight: 8,
-    opacity: 0.6,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  inputLeadingIconBox: {
+    width: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 8,
   },
   inputInner: {
     flex: 1,
@@ -1759,11 +1796,9 @@ const styles = StyleSheet.create({
     height: '100%',
   },
   eyeBtn: {
-    padding: 4,
-  },
-  eyeIcon: {
-    fontSize: 15,
-    opacity: 0.6,
+    padding: 6,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   loginBtn: {
     backgroundColor: '#691c32',
