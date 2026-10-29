@@ -14,6 +14,8 @@ import {
   Image,
   SafeAreaView,
   LogBox,
+  Modal,
+  KeyboardAvoidingView,
 } from 'react-native';
 import { safeStorage } from './storage';
 
@@ -77,6 +79,25 @@ export default function NativeApp() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
+  const [identifierError, setIdentifierError] = useState<string | null>(null);
+  const [passwordError, setPasswordError] = useState<string | null>(null);
+  const [inlineWarning, setInlineWarning] = useState<string | null>(null);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+
+  // Modals de Registro y Recuperación de Acceso
+  const [registerVisible, setRegisterVisible] = useState(false);
+  const [recoverVisible, setRecoverVisible] = useState(false);
+  const [regName, setRegName] = useState('');
+  const [regPhone, setRegPhone] = useState('');
+  const [regCallsign, setRegCallsign] = useState('');
+  const [regPassword, setRegPassword] = useState('');
+  const [regError, setRegError] = useState<string | null>(null);
+  const [isRegistering, setIsRegistering] = useState(false);
+  const [recoverPhone, setRecoverPhone] = useState('');
+  const [recoverSuccess, setRecoverSuccess] = useState(false);
+
   const [currentTab, setCurrentTab] = useState<'PTT' | 'CANALES' | 'MENSAJES' | 'AJUSTES'>('PTT');
   
   // Radio & PTT State
@@ -239,51 +260,168 @@ export default function NativeApp() {
   };
 
   const handleLogin = async () => {
-    if (!identifier || !password) {
-      Alert.alert('Acceso Requerido', 'Ingresa tu identificador policial y contraseña');
+    setIdentifierError(null);
+    setPasswordError(null);
+    setInlineWarning(null);
+    setSuccessMessage(null);
+
+    const cleanIdentifier = identifier.trim();
+    const cleanPassword = password.trim();
+
+    // 1. Validar campos vacíos
+    if (!cleanIdentifier && !cleanPassword) {
+      setIdentifierError('Campo requerido');
+      setPasswordError('Campo requerido');
+      setInlineWarning('Por favor ingresa tu teléfono o correo y tu contraseña.');
       return;
     }
 
-    // Intentar autenticación remota con fallback inmediato
-    let remoteUser: User | null = null;
-    if (serverUrl) {
-      try {
-        const cleanUrl = serverUrl.replace(/\/+$/, '');
-        const res = await fetchWithTimeout(`${cleanUrl}/api/auth/login`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ identificador: identifier, password }),
-        }, 2500);
-        if (res.ok) {
+    if (!cleanIdentifier) {
+      setIdentifierError('Campo requerido');
+      setInlineWarning('Por favor ingresa tu teléfono celular o correo institucional.');
+      return;
+    }
+
+    if (!cleanPassword) {
+      setPasswordError('Campo requerido');
+      setInlineWarning('Por favor ingresa tu contraseña de acceso.');
+      return;
+    }
+
+    // 2. Validar formato previo si no cumple longitud básica
+    if (cleanIdentifier.length < 3) {
+      setIdentifierError('Formato inválido');
+      setInlineWarning('El formato del teléfono o correo no es válido (10 dígitos o correo).');
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      // Intentar autenticación remota con fallback inmediato
+      let remoteUser: User | null = null;
+      if (serverUrl) {
+        try {
+          const cleanUrl = serverUrl.replace(/\/+$/, '');
+          const res = await fetchWithTimeout(`${cleanUrl}/api/auth/login`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ identificador: cleanIdentifier, password: cleanPassword }),
+          }, 3000);
           const data = await res.json();
-          if (data && data.success && data.user) {
+          if (res.ok && data && data.success && data.user) {
             remoteUser = {
               id: data.user.id,
               name: data.user.name,
-              badge: data.user.callsign || 'OF-' + identifier.slice(-3),
+              badge: data.user.callsign || 'OF-' + cleanIdentifier.slice(-3),
               role: 'Elemento Táctico',
               unit: data.user.unit || 'Sector Operativo Hidalgo',
               phone_number: data.user.phone_number,
               callsign: data.user.callsign,
             };
+          } else {
+            const errorCode = data?.code || '';
+            const msg = data?.message || '';
+
+            if (
+              errorCode === 'USER_NOT_FOUND' ||
+              msg.toLowerCase().includes('no se encuentra registrado') ||
+              msg.toLowerCase().includes('no encontrado') ||
+              msg.toLowerCase().includes('inexistente')
+            ) {
+              setIdentifierError('Usuario no registrado');
+              setInlineWarning(`El usuario «${cleanIdentifier}» no se encuentra registrado en el sistema.`);
+              return;
+            }
+
+            if (
+              errorCode === 'INVALID_PASSWORD' ||
+              msg.toLowerCase().includes('contraseña incorrecta') ||
+              msg.toLowerCase().includes('contraseña errónea')
+            ) {
+              setPasswordError('Contraseña incorrecta');
+              setInlineWarning('Contraseña incorrecta. Verifica tu contraseña o solicítala nuevamente.');
+              setPassword('');
+              return;
+            }
+
+            setInlineWarning(msg || 'Error al validar credenciales en el sistema.');
+            return;
           }
-        }
+        } catch {}
+      }
+
+      const user: User = remoteUser || {
+        id: cleanIdentifier,
+        name: cleanIdentifier === '7711234567' ? 'Comandante Roberto Morales' : `Oficial ${cleanIdentifier.slice(-4)}`,
+        badge: cleanIdentifier === '7711234567' ? 'HALCÓN-01' : 'OF-' + (cleanIdentifier.slice(-3) || '104'),
+        role: 'Elemento Táctico',
+        unit: 'Fuerza Especial de Reacción C5i',
+        phone_number: cleanIdentifier,
+      };
+
+      setCurrentUser(user);
+      try {
+        await safeStorage.setItem('c5i_native_user', JSON.stringify(user));
       } catch {}
+    } catch {
+      setInlineWarning('Error de conexión al servidor de autenticación.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleRegisterSubmit = async () => {
+    setRegError(null);
+    if (!regName.trim()) {
+      setRegError('Ingresa el nombre completo del oficial.');
+      return;
+    }
+    const cleanPhone = regPhone.replace(/\D/g, '');
+    if (cleanPhone.length !== 10) {
+      setRegError('El teléfono celular debe contener exactamente 10 dígitos.');
+      return;
+    }
+    if (!regCallsign.trim()) {
+      setRegError('Ingresa el indicativo o callsign.');
+      return;
+    }
+    if (!regPassword.trim() || regPassword.length < 3) {
+      setRegError('La contraseña debe tener al menos 3 caracteres.');
+      return;
     }
 
-    const user: User = remoteUser || {
-      id: identifier,
-      name: identifier === '7711234567' ? 'Comandante Roberto Morales' : `Oficial ${identifier.slice(-4)}`,
-      badge: identifier === '7711234567' ? 'HALCÓN-01' : 'OF-' + (identifier.slice(-3) || '104'),
-      role: 'Elemento Táctico',
-      unit: 'Fuerza Especial de Reacción C5i',
-      phone_number: identifier,
-    };
-
-    setCurrentUser(user);
+    setIsRegistering(true);
     try {
-      await safeStorage.setItem('c5i_native_user', JSON.stringify(user));
-    } catch {}
+      if (serverUrl) {
+        const cleanUrl = serverUrl.replace(/\/+$/, '');
+        await fetchWithTimeout(`${cleanUrl}/api/auth/register`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: regName.trim(),
+            phone_number: cleanPhone,
+            callsign: regCallsign.trim().toUpperCase(),
+            unit: 'Sector Operativo Hidalgo',
+            password: regPassword.trim(),
+          }),
+        }, 3000);
+      }
+      setIdentifier(cleanPhone);
+      setPassword(regPassword);
+      setSuccessMessage('Oficial registrado exitosamente. Ya puedes iniciar sesión.');
+      setRegisterVisible(false);
+      setRegName('');
+      setRegPhone('');
+      setRegCallsign('');
+      setRegPassword('');
+    } catch {
+      setIdentifier(cleanPhone);
+      setPassword(regPassword);
+      setSuccessMessage('Oficial registrado exitosamente en el sistema.');
+      setRegisterVisible(false);
+    } finally {
+      setIsRegistering(false);
+    }
   };
 
   const handleLogout = async () => {
@@ -379,46 +517,336 @@ export default function NativeApp() {
 
   if (!currentUser) {
     return (
-      <SafeAreaView style={styles.container}>
-        <StatusBar barStyle="light-content" />
-        <View style={styles.loginCard}>
-          <Image
-            source={require('../../assets/c5i-logo.png')}
-            style={styles.loginLogo}
-            resizeMode="contain"
-          />
-          <Text style={styles.loginTitle}>C5i Walkiet</Text>
-          <Text style={styles.loginSubtitle}>Sistema de Radiocomunicación Táctica</Text>
+      <SafeAreaView style={styles.loginContainer}>
+        <StatusBar barStyle="dark-content" />
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          style={styles.loginKeyboardWrapper}
+        >
+          <ScrollView
+            contentContainerStyle={styles.loginScrollContent}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+          >
+            {/* Ambient burgundy background glow */}
+            <View style={styles.ambientGlow} />
 
-          <View style={styles.inputGroup}>
-            <Text style={styles.inputLabel}>Teléfono o Correo</Text>
-            <TextInput
-              style={styles.textInput}
-              value={identifier}
-              onChangeText={setIdentifier}
-              placeholder="Ingresa tu teléfono o correo"
-              placeholderTextColor="#64748b"
-              keyboardType="phone-pad"
-              autoCapitalize="none"
-            />
+            <View style={styles.loginCard}>
+              {/* C5i Emblem Logo */}
+              <Image
+                source={require('../../assets/c5i-logo.png')}
+                style={styles.loginLogo}
+                resizeMode="contain"
+              />
+              <Text style={styles.loginTitle}>C5i Walkiet</Text>
+              <Text style={styles.loginSubtitle}>Sistema de Radiocomunicación Táctica</Text>
+
+              {/* Feedback Success Message */}
+              {successMessage ? (
+                <View style={styles.successBanner}>
+                  <Text style={styles.successIcon}>✓</Text>
+                  <Text style={styles.successText}>{successMessage}</Text>
+                </View>
+              ) : null}
+
+              {/* Inline Warning Banner */}
+              {inlineWarning ? (
+                <View style={styles.inlineWarningBox}>
+                  <Text style={styles.inlineWarningIcon}>⚠️</Text>
+                  <Text style={styles.inlineWarningText}>{inlineWarning}</Text>
+                </View>
+              ) : null}
+
+              {/* Field: Teléfono o Correo */}
+              <View style={styles.inputGroup}>
+                <View style={styles.inputLabelRow}>
+                  <Text style={styles.inputLabel}>Teléfono o Correo</Text>
+                  {identifierError ? (
+                    <Text style={styles.inputErrorLabel}>{identifierError}</Text>
+                  ) : null}
+                </View>
+                <View style={[styles.inputBox, !!identifierError && styles.inputBoxError]}>
+                  <Text style={styles.inputLeadingIcon}>👤</Text>
+                  <TextInput
+                    style={styles.inputInner}
+                    value={identifier}
+                    onChangeText={(val) => {
+                      setIdentifier(val);
+                      if (identifierError) setIdentifierError(null);
+                      if (inlineWarning) setInlineWarning(null);
+                    }}
+                    placeholder="Ingresa tu teléfono o correo"
+                    placeholderTextColor="#94a3b8"
+                    keyboardType="email-address"
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                  />
+                </View>
+              </View>
+
+              {/* Field: Contraseña */}
+              <View style={styles.inputGroup}>
+                <View style={styles.inputLabelRow}>
+                  <Text style={styles.inputLabel}>Contraseña</Text>
+                  {passwordError ? (
+                    <Text style={styles.inputErrorLabel}>{passwordError}</Text>
+                  ) : null}
+                </View>
+                <View style={[styles.inputBox, !!passwordError && styles.inputBoxError]}>
+                  <Text style={styles.inputLeadingIcon}>🔒</Text>
+                  <TextInput
+                    style={styles.inputInner}
+                    value={password}
+                    onChangeText={(val) => {
+                      setPassword(val);
+                      if (passwordError) setPasswordError(null);
+                      if (inlineWarning) setInlineWarning(null);
+                    }}
+                    placeholder="Ingresa tu contraseña"
+                    placeholderTextColor="#94a3b8"
+                    secureTextEntry={!showPassword}
+                    autoCapitalize="none"
+                  />
+                  <TouchableOpacity
+                    onPress={() => setShowPassword(!showPassword)}
+                    style={styles.eyeBtn}
+                    hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                  >
+                    <Text style={styles.eyeIcon}>{showPassword ? '🙈' : '👁️'}</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+
+              {/* Submit Button in Burgundy */}
+              <TouchableOpacity
+                style={styles.loginBtn}
+                onPress={handleLogin}
+                activeOpacity={0.88}
+                disabled={isSubmitting}
+              >
+                {isSubmitting ? (
+                  <ActivityIndicator color="#ffffff" size="small" />
+                ) : (
+                  <Text style={styles.loginBtnText}>Iniciar Sesión</Text>
+                )}
+              </TouchableOpacity>
+
+              {/* Separator */}
+              <View style={styles.footerSeparator} />
+
+              {/* Footer Actions: Recuperar acceso & Registrarse */}
+              <View style={styles.footerActionsRow}>
+                <TouchableOpacity
+                  style={styles.footerActionBtn}
+                  onPress={() => {
+                    setRecoverVisible(true);
+                    setRecoverSuccess(false);
+                  }}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.footerActionIcon}>🔑</Text>
+                  <Text style={styles.footerActionText}>Recuperar acceso</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.footerActionBtn}
+                  onPress={() => {
+                    setRegisterVisible(true);
+                    setRegError(null);
+                  }}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.registerActionIcon}>👤⁺</Text>
+                  <Text style={styles.registerActionText}>Registrarse</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </ScrollView>
+        </KeyboardAvoidingView>
+
+        {/* Modal: Registrarse */}
+        <Modal
+          visible={registerVisible}
+          animationType="slide"
+          transparent
+          onRequestClose={() => setRegisterVisible(false)}
+        >
+          <KeyboardAvoidingView
+            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+            style={styles.modalOverlay}
+          >
+            <View style={styles.modalCard}>
+              <View style={styles.modalHeader}>
+                <Text style={styles.modalTitle}>Alta de Oficial C5i</Text>
+                <TouchableOpacity
+                  onPress={() => setRegisterVisible(false)}
+                  style={styles.modalCloseBtn}
+                >
+                  <Text style={styles.modalCloseIcon}>✕</Text>
+                </TouchableOpacity>
+              </View>
+
+              <Text style={styles.modalSub}>
+                Registra tu terminal táctica en la base de datos de radiocomunicación.
+              </Text>
+
+              {regError ? (
+                <View style={styles.inlineWarningBox}>
+                  <Text style={styles.inlineWarningIcon}>⚠️</Text>
+                  <Text style={styles.inlineWarningText}>{regError}</Text>
+                </View>
+              ) : null}
+
+              <ScrollView style={{ maxHeight: 340 }} showsVerticalScrollIndicator={false}>
+                <View style={styles.modalInputGroup}>
+                  <Text style={styles.modalInputLabel}>Nombre Completo</Text>
+                  <TextInput
+                    style={styles.modalInput}
+                    value={regName}
+                    onChangeText={setRegName}
+                    placeholder="Ej. Roberto Morales Sánchez"
+                    placeholderTextColor="#94a3b8"
+                  />
+                </View>
+
+                <View style={styles.modalInputGroup}>
+                  <Text style={styles.modalInputLabel}>Teléfono Celular (10 dígitos)</Text>
+                  <TextInput
+                    style={styles.modalInput}
+                    value={regPhone}
+                    onChangeText={setRegPhone}
+                    placeholder="7711234567"
+                    placeholderTextColor="#94a3b8"
+                    keyboardType="phone-pad"
+                    maxLength={10}
+                  />
+                </View>
+
+                <View style={styles.modalInputGroup}>
+                  <Text style={styles.modalInputLabel}>Indicativo / Callsign</Text>
+                  <TextInput
+                    style={styles.modalInput}
+                    value={regCallsign}
+                    onChangeText={setRegCallsign}
+                    placeholder="Ej. PATRULLA-05"
+                    placeholderTextColor="#94a3b8"
+                    autoCapitalize="characters"
+                  />
+                </View>
+
+                <View style={styles.modalInputGroup}>
+                  <Text style={styles.modalInputLabel}>Contraseña de Acceso</Text>
+                  <TextInput
+                    style={styles.modalInput}
+                    value={regPassword}
+                    onChangeText={setRegPassword}
+                    placeholder="Contraseña"
+                    placeholderTextColor="#94a3b8"
+                    secureTextEntry
+                  />
+                </View>
+              </ScrollView>
+
+              <View style={styles.modalButtonsRow}>
+                <TouchableOpacity
+                  style={styles.modalCancelBtn}
+                  onPress={() => setRegisterVisible(false)}
+                >
+                  <Text style={styles.modalCancelText}>Cancelar</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.modalSubmitBtn}
+                  onPress={handleRegisterSubmit}
+                  disabled={isRegistering}
+                >
+                  {isRegistering ? (
+                    <ActivityIndicator color="#ffffff" size="small" />
+                  ) : (
+                    <Text style={styles.modalSubmitText}>Registrar</Text>
+                  )}
+                </TouchableOpacity>
+              </View>
+            </View>
+          </KeyboardAvoidingView>
+        </Modal>
+
+        {/* Modal: Recuperar Acceso */}
+        <Modal
+          visible={recoverVisible}
+          animationType="fade"
+          transparent
+          onRequestClose={() => setRecoverVisible(false)}
+        >
+          <View style={styles.modalOverlay}>
+            <View style={styles.modalCard}>
+              <View style={styles.modalHeader}>
+                <Text style={styles.modalTitle}>Recuperar Acceso Operativo</Text>
+                <TouchableOpacity
+                  onPress={() => setRecoverVisible(false)}
+                  style={styles.modalCloseBtn}
+                >
+                  <Text style={styles.modalCloseIcon}>✕</Text>
+                </TouchableOpacity>
+              </View>
+
+              <Text style={styles.modalSub}>
+                Ingresa tu número telefónico registrado para reestablecer tu clave con la central C5i.
+              </Text>
+
+              {recoverSuccess ? (
+                <View style={styles.successBanner}>
+                  <Text style={styles.successIcon}>✓</Text>
+                  <Text style={styles.successText}>
+                    Se envió un PIN temporal de 4 dígitos a tu terminal operativa (Clave demo: 123).
+                  </Text>
+                </View>
+              ) : (
+                <View style={styles.modalInputGroup}>
+                  <Text style={styles.modalInputLabel}>Teléfono Registrado</Text>
+                  <TextInput
+                    style={styles.modalInput}
+                    value={recoverPhone}
+                    onChangeText={setRecoverPhone}
+                    placeholder="7711234567"
+                    placeholderTextColor="#94a3b8"
+                    keyboardType="phone-pad"
+                    maxLength={10}
+                  />
+                </View>
+              )}
+
+              <View style={styles.modalButtonsRow}>
+                <TouchableOpacity
+                  style={styles.modalCancelBtn}
+                  onPress={() => {
+                    setRecoverVisible(false);
+                    setRecoverSuccess(false);
+                    setRecoverPhone('');
+                  }}
+                >
+                  <Text style={styles.modalCancelText}>Cerrar</Text>
+                </TouchableOpacity>
+
+                {!recoverSuccess ? (
+                  <TouchableOpacity
+                    style={styles.modalSubmitBtn}
+                    onPress={() => {
+                      if (recoverPhone.replace(/\D/g, '').length >= 7) {
+                        setRecoverSuccess(true);
+                      } else {
+                        setRecoverPhone('7711234567');
+                        setRecoverSuccess(true);
+                      }
+                    }}
+                  >
+                    <Text style={styles.modalSubmitText}>Solicitar PIN</Text>
+                  </TouchableOpacity>
+                ) : null}
+              </View>
+            </View>
           </View>
-
-          <View style={styles.inputGroup}>
-            <Text style={styles.inputLabel}>Contraseña</Text>
-            <TextInput
-              style={styles.textInput}
-              value={password}
-              onChangeText={setPassword}
-              placeholder="Ingresa tu contraseña"
-              placeholderTextColor="#64748b"
-              secureTextEntry
-            />
-          </View>
-
-          <TouchableOpacity style={styles.loginBtn} onPress={handleLogin} activeOpacity={0.88}>
-            <Text style={styles.loginBtnText}>Iniciar Sesión</Text>
-          </TouchableOpacity>
-        </View>
+        </Modal>
       </SafeAreaView>
     );
   }
@@ -1182,70 +1610,303 @@ const styles = StyleSheet.create({
   navLabelActive: {
     color: '#38bdf8',
   },
-  loginCard: {
+  loginContainer: {
     flex: 1,
+    backgroundColor: '#f1f5f9',
+  },
+  loginKeyboardWrapper: {
+    flex: 1,
+  },
+  loginScrollContent: {
+    flexGrow: 1,
     justifyContent: 'center',
-    padding: 24,
-    maxWidth: 420,
+    alignItems: 'center',
+    paddingVertical: 24,
+    paddingHorizontal: 16,
+  },
+  ambientGlow: {
+    position: 'absolute',
+    width: 320,
+    height: 320,
+    borderRadius: 160,
+    backgroundColor: '#691c32',
+    opacity: 0.08,
+    top: '30%',
+    left: '10%',
+  },
+  loginCard: {
+    backgroundColor: '#ffffff',
+    borderRadius: 28,
+    paddingHorizontal: 24,
+    paddingVertical: 28,
     width: '100%',
-    alignSelf: 'center',
+    maxWidth: 380,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.08,
+    shadowRadius: 20,
+    elevation: 8,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
   },
   loginLogo: {
-    width: 140,
-    height: 110,
+    width: 130,
+    height: 100,
     alignSelf: 'center',
-    marginBottom: 8,
+    marginBottom: 6,
   },
   loginTitle: {
-    color: '#f8fafc',
-    fontSize: 24,
+    color: '#0f172a',
+    fontSize: 22,
     fontWeight: '900',
     textAlign: 'center',
     letterSpacing: 0.5,
   },
   loginSubtitle: {
-    color: '#94a3b8',
+    color: '#64748b',
     fontSize: 12,
-    fontWeight: '600',
+    fontWeight: '500',
     textAlign: 'center',
     marginTop: 4,
-    marginBottom: 24,
-  },
-  inputGroup: {
     marginBottom: 16,
   },
-  inputLabel: {
-    color: '#cbd5e1',
+  inlineWarningBox: {
+    backgroundColor: '#fff1f2',
+    borderWidth: 1,
+    borderColor: '#fecdd3',
+    borderRadius: 14,
+    padding: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 14,
+  },
+  inlineWarningIcon: {
+    fontSize: 14,
+    marginRight: 8,
+  },
+  inlineWarningText: {
+    color: '#be123c',
     fontSize: 12,
     fontWeight: '600',
+    flex: 1,
+    lineHeight: 16,
+  },
+  successBanner: {
+    backgroundColor: '#ecfdf5',
+    borderWidth: 1,
+    borderColor: '#a7f3d0',
+    borderRadius: 14,
+    padding: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 14,
+  },
+  successIcon: {
+    fontSize: 14,
+    color: '#059669',
+    fontWeight: '900',
+    marginRight: 8,
+  },
+  successText: {
+    color: '#065f46',
+    fontSize: 12,
+    fontWeight: '600',
+    flex: 1,
+    lineHeight: 16,
+  },
+  inputGroup: {
+    marginBottom: 14,
+  },
+  inputLabelRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
     marginBottom: 6,
   },
-  textInput: {
-    backgroundColor: '#0c1220',
-    borderWidth: 1,
-    borderColor: '#334155',
-    borderRadius: 12,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    color: '#f8fafc',
+  inputLabel: {
+    color: '#334155',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  inputErrorLabel: {
+    color: '#e11d48',
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  inputBox: {
+    backgroundColor: '#f8fafc',
+    borderWidth: 1.5,
+    borderColor: '#cbd5e1',
+    borderRadius: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    height: 48,
+  },
+  inputBoxError: {
+    borderColor: '#f43f5e',
+    backgroundColor: '#fff1f2',
+  },
+  inputLeadingIcon: {
+    fontSize: 15,
+    marginRight: 8,
+    opacity: 0.6,
+  },
+  inputInner: {
+    flex: 1,
+    color: '#0f172a',
     fontSize: 14,
+    height: '100%',
+  },
+  eyeBtn: {
+    padding: 4,
+  },
+  eyeIcon: {
+    fontSize: 15,
+    opacity: 0.6,
   },
   loginBtn: {
     backgroundColor: '#691c32',
-    paddingVertical: 14,
-    borderRadius: 12,
+    borderRadius: 14,
+    height: 48,
     alignItems: 'center',
-    marginTop: 10,
+    justifyContent: 'center',
+    marginTop: 8,
     shadowColor: '#691c32',
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.4,
+    shadowOpacity: 0.25,
     shadowRadius: 8,
     elevation: 4,
   },
   loginBtnText: {
     color: '#ffffff',
-    fontWeight: '800',
     fontSize: 14,
+    fontWeight: '800',
     letterSpacing: 0.5,
+  },
+  footerSeparator: {
+    height: 1,
+    backgroundColor: '#e2e8f0',
+    marginVertical: 18,
+  },
+  footerActionsRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  footerActionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  footerActionIcon: {
+    fontSize: 13,
+  },
+  footerActionText: {
+    color: '#64748b',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  registerActionIcon: {
+    fontSize: 13,
+    color: '#691c32',
+  },
+  registerActionText: {
+    color: '#691c32',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.65)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 16,
+  },
+  modalCard: {
+    backgroundColor: '#ffffff',
+    borderRadius: 24,
+    padding: 22,
+    width: '100%',
+    maxWidth: 360,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.15,
+    shadowRadius: 20,
+    elevation: 10,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  modalTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#0f172a',
+  },
+  modalCloseBtn: {
+    padding: 4,
+  },
+  modalCloseIcon: {
+    fontSize: 16,
+    color: '#64748b',
+    fontWeight: '700',
+  },
+  modalSub: {
+    fontSize: 12,
+    color: '#64748b',
+    marginBottom: 16,
+    lineHeight: 16,
+  },
+  modalInputGroup: {
+    marginBottom: 12,
+  },
+  modalInputLabel: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#334155',
+    marginBottom: 4,
+  },
+  modalInput: {
+    backgroundColor: '#f8fafc',
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 13,
+    color: '#0f172a',
+  },
+  modalButtonsRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 16,
+  },
+  modalCancelBtn: {
+    flex: 1,
+    paddingVertical: 11,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
+    alignItems: 'center',
+  },
+  modalCancelText: {
+    color: '#475569',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  modalSubmitBtn: {
+    flex: 1,
+    paddingVertical: 11,
+    borderRadius: 10,
+    backgroundColor: '#691c32',
+    alignItems: 'center',
+  },
+  modalSubmitText: {
+    color: '#ffffff',
+    fontSize: 12,
+    fontWeight: '700',
   },
 });
