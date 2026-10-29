@@ -1,0 +1,13 @@
+# .htaccess para InfinityFree - C5i Hidalgo Walkie-Talkie
+# Habilita CORS y cabeceras para permitir peticiones desde la App Web y Móvil
+
+<IfModule mod_headers.c>
+    Header always set Access-Control-Allow-Origin "*"
+    Header always set Access-Control-Allow-Methods "GET, POST, OPTIONS, PUT, DELETE"
+    Header always set Access-Control-Allow-Headers "Content-Type, Authorization, X-Requested-With, Origin, Accept"
+</IfModule>
+
+# Responder directamente a solicitudes OPTIONS (Preflight)
+RewriteEngine On
+RewriteCond %{REQUEST_METHOD} OPTIONS
+RewriteRule ^(.*)$ $1 [R=200,L]

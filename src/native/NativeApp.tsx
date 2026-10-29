@@ -190,14 +190,22 @@ export default function NativeApp() {
     })();
   }, []);
 
+  // En navegador web, enviar text/plain evita que Chrome envíe la solicitud previa OPTIONS que InfinityFree bloquea
+  const getSafePostHeaders = () => ({
+    'Content-Type': Platform.OS === 'web' ? 'text/plain;charset=UTF-8' : 'application/json',
+  });
+
   // Intentar sincronizar canales remotos desde el backend si está configurado
   const refreshChannels = useCallback(async (baseUrl: string) => {
     if (!baseUrl) return;
     try {
       const cleanUrl = baseUrl.replace(/\/+$/, '');
-      const res = await fetchWithTimeout(`${cleanUrl}/api/channels`, {}, 3000);
-      if (res.ok) {
-        const data = await res.json();
+      let res = await fetchWithTimeout(`${cleanUrl}/channels.php`, {}, 3000).catch(() => null);
+      if (!res || !res.ok) {
+        res = await fetchWithTimeout(`${cleanUrl}/api/channels`, {}, 3000).catch(() => null);
+      }
+      if (res && res.ok) {
+        const data = await res.json().catch(() => null);
         if (data && Array.isArray(data.channels) && data.channels.length > 0) {
           const mapped: Channel[] = data.channels.map((ch: any, idx: number) => ({
             id: ch.id || `chan-${idx}`,
@@ -231,12 +239,12 @@ export default function NativeApp() {
     const start = Date.now();
     try {
       const cleanUrl = serverUrl.replace(/\/+$/, '');
-      let res = await fetchWithTimeout(`${cleanUrl}/api/database/status`, {}, 4000).catch(() => null);
+      let res = await fetchWithTimeout(`${cleanUrl}/status.php`, {}, 4000).catch(() => null);
       if (!res || !res.ok) {
         res = await fetchWithTimeout(`${cleanUrl}/api/status.php`, {}, 4000).catch(() => null);
       }
       if (!res || !res.ok) {
-        res = await fetchWithTimeout(`${cleanUrl}/status.php`, {}, 4000).catch(() => null);
+        res = await fetchWithTimeout(`${cleanUrl}/api/database/status`, {}, 4000).catch(() => null);
       }
 
       const elapsed = Date.now() - start;
@@ -357,39 +365,37 @@ export default function NativeApp() {
 
     setIsSubmitting(true);
     try {
-      // Intentar autenticación remota con fallback inmediato
+      // Intentar autenticación remota en base de datos MySQL
       let remoteUser: User | null = null;
+      let loginErrorMsg: string | null = null;
+
       if (serverUrl) {
         try {
           const cleanUrl = serverUrl.replace(/\/+$/, '');
-          let res = await fetchWithTimeout(`${cleanUrl}/api/auth/login`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ identificador: cleanIdentifier, password: cleanPassword }),
-          }, 3500).catch(() => null);
+          const headers = getSafePostHeaders();
+          const payload = JSON.stringify({ identificador: cleanIdentifier, password: cleanPassword });
 
-          if (!res || res.status === 404) {
-            res = await fetchWithTimeout(`${cleanUrl}/login.php`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ identificador: cleanIdentifier, password: cleanPassword }),
-            }, 3500).catch(() => null);
-          }
+          // 1. Endpoint directo PHP en InfinityFree (evita preflight en web)
+          let res = await fetchWithTimeout(`${cleanUrl}/login.php`, {
+            method: 'POST',
+            headers,
+            body: payload,
+          }, 4500).catch(() => null);
 
           if (!res || res.status === 404) {
             res = await fetchWithTimeout(`${cleanUrl}/auth/login.php`, {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ identificador: cleanIdentifier, password: cleanPassword }),
-            }, 3500).catch(() => null);
+              headers,
+              body: payload,
+            }, 4500).catch(() => null);
           }
 
           if (!res || res.status === 404) {
-            res = await fetchWithTimeout(`${cleanUrl}/api/login.php`, {
+            res = await fetchWithTimeout(`${cleanUrl}/api/auth/login`, {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ identificador: cleanIdentifier, password: cleanPassword }),
-            }, 3500).catch(() => null);
+              headers,
+              body: payload,
+            }, 4500).catch(() => null);
           }
 
           const data = res ? await res.json().catch(() => ({})) : null;
@@ -397,13 +403,13 @@ export default function NativeApp() {
             remoteUser = {
               id: data.user.id,
               name: data.user.name,
-              badge: data.user.callsign || 'OF-' + cleanIdentifier.slice(-3),
-              role: 'Elemento Táctico',
+              badge: data.user.callsign || data.user.badge || 'OF-' + cleanIdentifier.slice(-3),
+              role: data.user.role || 'Elemento Táctico',
               unit: data.user.unit || 'Sector Operativo Hidalgo',
-              phone_number: data.user.phone_number,
+              phone_number: data.user.phone_number || cleanIdentifier,
               callsign: data.user.callsign,
             };
-          } else {
+          } else if (data && (data.message || data.code)) {
             const errorCode = data?.code || '';
             const msg = data?.message || '';
 
@@ -429,24 +435,25 @@ export default function NativeApp() {
               return;
             }
 
-            setInlineWarning(msg || 'Error al validar credenciales en el sistema.');
-            return;
+            loginErrorMsg = msg || 'Credenciales inválidas en el sistema C5i.';
+          } else if (res && !res.ok) {
+            loginErrorMsg = `El servidor respondió con código HTTP ${res.status}.`;
+          } else {
+            loginErrorMsg = 'No fue posible contactar a walkt.gt.tc (error de red o CORS en el navegador).';
           }
-        } catch {}
+        } catch (e: any) {
+          loginErrorMsg = e.message || 'Error de conexión con la base de datos C5i.';
+        }
       }
 
-      const user: User = remoteUser || {
-        id: cleanIdentifier,
-        name: cleanIdentifier === '7711234567' ? 'Comandante Roberto Morales' : `Oficial ${cleanIdentifier.slice(-4)}`,
-        badge: cleanIdentifier === '7711234567' ? 'HALCÓN-01' : 'OF-' + (cleanIdentifier.slice(-3) || '104'),
-        role: 'Elemento Táctico',
-        unit: 'Fuerza Especial de Reacción C5i',
-        phone_number: cleanIdentifier,
-      };
+      if (!remoteUser) {
+        setInlineWarning(loginErrorMsg || 'No se pudo iniciar sesión. Verifica la conexión con el servidor MySQL.');
+        return;
+      }
 
-      setCurrentUser(user);
+      setCurrentUser(remoteUser);
       try {
-        await safeStorage.setItem('c5i_native_user', JSON.stringify(user));
+        await safeStorage.setItem('c5i_native_user', JSON.stringify(remoteUser));
       } catch {}
     } catch {
       setInlineWarning('Error de conexión al servidor de autenticación.');
@@ -525,26 +532,30 @@ export default function NativeApp() {
       if (serverUrl) {
         try {
           const cleanUrl = serverUrl.replace(/\/+$/, '');
-          let res = await fetchWithTimeout(`${cleanUrl}/api/auth/send-otp`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ phone: cleanPhone }),
-          }, 3500).catch(() => null);
+          const headers = getSafePostHeaders();
+          const payload = JSON.stringify({ phone: cleanPhone });
 
-          if (!res || res.status === 404) {
-            res = await fetchWithTimeout(`${cleanUrl}/send-otp.php`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ phone: cleanPhone }),
-            }, 3500).catch(() => null);
-          }
+          // 1. Endpoint directo PHP en InfinityFree (evita preflight OPTIONS en web)
+          let res = await fetchWithTimeout(`${cleanUrl}/send-otp.php`, {
+            method: 'POST',
+            headers,
+            body: payload,
+          }, 4500).catch(() => null);
 
           if (!res || res.status === 404) {
             res = await fetchWithTimeout(`${cleanUrl}/api/send-otp.php`, {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ phone: cleanPhone }),
-            }, 3500).catch(() => null);
+              headers,
+              body: payload,
+            }, 4500).catch(() => null);
+          }
+
+          if (!res || res.status === 404) {
+            res = await fetchWithTimeout(`${cleanUrl}/api/auth/send-otp`, {
+              method: 'POST',
+              headers,
+              body: payload,
+            }, 4500).catch(() => null);
           }
 
           const data = res ? await res.json().catch(() => ({})) : null;
@@ -574,26 +585,29 @@ export default function NativeApp() {
       if (serverUrl) {
         try {
           const cleanUrl = serverUrl.replace(/\/+$/, '');
-          let res = await fetchWithTimeout(`${cleanUrl}/api/auth/send-otp`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ phone: cleanPhone }),
-          }, 3500).catch(() => null);
+          const headers = getSafePostHeaders();
+          const payload = JSON.stringify({ phone: cleanPhone });
 
-          if (!res || res.status === 404) {
-            res = await fetchWithTimeout(`${cleanUrl}/send-otp.php`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ phone: cleanPhone }),
-            }, 3500).catch(() => null);
-          }
+          let res = await fetchWithTimeout(`${cleanUrl}/send-otp.php`, {
+            method: 'POST',
+            headers,
+            body: payload,
+          }, 4500).catch(() => null);
 
           if (!res || res.status === 404) {
             res = await fetchWithTimeout(`${cleanUrl}/api/send-otp.php`, {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ phone: cleanPhone }),
-            }, 3500).catch(() => null);
+              headers,
+              body: payload,
+            }, 4500).catch(() => null);
+          }
+
+          if (!res || res.status === 404) {
+            res = await fetchWithTimeout(`${cleanUrl}/api/auth/send-otp`, {
+              method: 'POST',
+              headers,
+              body: payload,
+            }, 4500).catch(() => null);
           }
 
           const data = res ? await res.json().catch(() => ({})) : null;
@@ -625,72 +639,77 @@ export default function NativeApp() {
     const autoCallsign = `RADIO-${cleanPhone.slice(-4) || 'TAC'}`;
 
     try {
+      let registeredSuccess = false;
+      let serverErrorMsg: string | null = null;
+
       if (serverUrl) {
         const cleanUrl = serverUrl.replace(/\/+$/, '');
+        const headers = getSafePostHeaders();
+        const payload = JSON.stringify({
+          name: cleanName,
+          phone_number: cleanPhone,
+          correo: cleanEmail,
+          callsign: autoCallsign,
+          unit: 'Sector Operativo Hidalgo',
+          password: regPassword.trim(),
+          role: 'Oficial de Radio',
+        });
+
         try {
-          let res = await fetchWithTimeout(`${cleanUrl}/api/auth/register`, {
+          // 1. Endpoint directo PHP en InfinityFree (evita preflight OPTIONS en navegador)
+          let res = await fetchWithTimeout(`${cleanUrl}/register.php`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              name: cleanName,
-              phone_number: cleanPhone,
-              correo: cleanEmail,
-              callsign: autoCallsign,
-              unit: 'Sector Operativo Hidalgo',
-              password: regPassword.trim(),
-              role: 'Oficial de Radio',
-            }),
-          }, 3500).catch(() => null);
+            headers,
+            body: payload,
+          }, 5000).catch(() => null);
 
           if (!res || res.status === 404) {
-            res = await fetchWithTimeout(`${cleanUrl}/register.php`, {
+            res = await fetchWithTimeout(`${cleanUrl}/auth/register.php`, {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                name: cleanName,
-                phone_number: cleanPhone,
-                correo: cleanEmail,
-                callsign: autoCallsign,
-                unit: 'Sector Operativo Hidalgo',
-                password: regPassword.trim(),
-                role: 'Oficial de Radio',
-              }),
-            }, 3500).catch(() => null);
+              headers,
+              body: payload,
+            }, 5000).catch(() => null);
           }
 
           if (!res || res.status === 404) {
-            await fetchWithTimeout(`${cleanUrl}/auth/register.php`, {
+            res = await fetchWithTimeout(`${cleanUrl}/api/auth/register`, {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                name: cleanName,
-                phone_number: cleanPhone,
-                correo: cleanEmail,
-                callsign: autoCallsign,
-                unit: 'Sector Operativo Hidalgo',
-                password: regPassword.trim(),
-                role: 'Oficial de Radio',
-              }),
-            }, 3500).catch(() => null);
+              headers,
+              body: payload,
+            }, 5000).catch(() => null);
           }
-        } catch {}
+
+          if (res) {
+            const data = await res.json().catch(() => null);
+            if (res.ok && data && (data.success || data.user)) {
+              registeredSuccess = true;
+            } else if (data && data.message) {
+              serverErrorMsg = data.message;
+            } else {
+              serverErrorMsg = `El servidor respondió con código HTTP ${res.status}`;
+            }
+          } else {
+            serverErrorMsg = 'No fue posible contactar a walkt.gt.tc (error de red o bloqueo de CORS en navegador).';
+          }
+        } catch (e: any) {
+          serverErrorMsg = e.message || 'Error al comunicarse con la base de datos C5i.';
+        }
+      }
+
+      if (!registeredSuccess) {
+        setRegGeneralError(serverErrorMsg || 'Error al guardar el nuevo oficial en la base de datos MySQL.');
+        return;
       }
 
       setRegisterStep('success');
       setTimeout(() => {
         setIdentifier(cleanPhone);
         setPassword(regPassword);
-        setSuccessMessage('¡Registro completado! Tu cuenta ha sido dada de alta.');
+        setSuccessMessage('¡Registro completado! Tu cuenta ha sido dada de alta en MySQL.');
         setRegisterVisible(false);
       }, 1300);
-    } catch {
-      setRegisterStep('success');
-      setTimeout(() => {
-        setIdentifier(cleanPhone);
-        setPassword(regPassword);
-        setSuccessMessage('¡Registro completado! Tu terminal táctica ha sido dada de alta.');
-        setRegisterVisible(false);
-      }, 1300);
+    } catch (e: any) {
+      setRegGeneralError(e.message || 'Error en el proceso de alta en el servidor.');
     } finally {
       setIsRegistering(false);
     }
