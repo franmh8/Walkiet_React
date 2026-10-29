@@ -224,25 +224,33 @@ export default function NativeApp() {
     }
   }, [serverUrl, refreshChannels]);
 
-  // Probar conectividad con el servidor configurado
+  // Probar conectividad con el servidor configurado (soporta Node Express y PHP InfinityFree)
   const testServerConnection = async () => {
     setIsTestingServer(true);
     setServerLatency(null);
     const start = Date.now();
     try {
       const cleanUrl = serverUrl.replace(/\/+$/, '');
-      const res = await fetchWithTimeout(`${cleanUrl}/api/database/status`, {}, 4000);
+      let res = await fetchWithTimeout(`${cleanUrl}/api/database/status`, {}, 4000).catch(() => null);
+      if (!res || !res.ok) {
+        res = await fetchWithTimeout(`${cleanUrl}/api/status.php`, {}, 4000).catch(() => null);
+      }
+      if (!res || !res.ok) {
+        res = await fetchWithTimeout(`${cleanUrl}/status.php`, {}, 4000).catch(() => null);
+      }
+
       const elapsed = Date.now() - start;
-      if (res.ok) {
+      if (res && res.ok) {
+        const data = await res.json().catch(() => ({}));
         setServerLatency(elapsed);
         setDbStatus('ONLINE');
         Alert.alert(
           '✅ Conexión Exitosa',
-          `Enlace con servidor C5i establecido (${elapsed}ms).\nBase de datos: if0_42687378_walkt`
+          `Enlace con servidor C5i establecido (${elapsed}ms).\nBase de datos: ${data.database_name || 'if0_42687378_walkt'}\nMotor: ${data.engine || 'MySQL Server'}`
         );
         refreshChannels(serverUrl);
       } else {
-        throw new Error(`Código HTTP: ${res.status}`);
+        throw new Error(res ? `Código HTTP: ${res.status}` : 'Sin respuesta del host');
       }
     } catch (e: any) {
       setDbStatus('STANDBY');
@@ -354,13 +362,22 @@ export default function NativeApp() {
       if (serverUrl) {
         try {
           const cleanUrl = serverUrl.replace(/\/+$/, '');
-          const res = await fetchWithTimeout(`${cleanUrl}/api/auth/login`, {
+          let res = await fetchWithTimeout(`${cleanUrl}/api/auth/login`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ identificador: cleanIdentifier, password: cleanPassword }),
-          }, 3000);
-          const data = await res.json();
-          if (res.ok && data && data.success && data.user) {
+          }, 3500).catch(() => null);
+
+          if (!res || res.status === 404) {
+            res = await fetchWithTimeout(`${cleanUrl}/api/login.php`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ identificador: cleanIdentifier, password: cleanPassword }),
+            }, 3500).catch(() => null);
+          }
+
+          const data = res ? await res.json().catch(() => ({})) : null;
+          if (res && res.ok && data && data.success && data.user) {
             remoteUser = {
               id: data.user.id,
               name: data.user.name,
@@ -492,12 +509,21 @@ export default function NativeApp() {
       if (serverUrl) {
         try {
           const cleanUrl = serverUrl.replace(/\/+$/, '');
-          const res = await fetchWithTimeout(`${cleanUrl}/api/auth/send-otp`, {
+          let res = await fetchWithTimeout(`${cleanUrl}/api/auth/send-otp`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ phone: cleanPhone }),
-          }, 3000);
-          const data = await res.json();
+          }, 3500).catch(() => null);
+
+          if (!res || res.status === 404) {
+            res = await fetchWithTimeout(`${cleanUrl}/api/send-otp.php`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ phone: cleanPhone }),
+            }, 3500).catch(() => null);
+          }
+
+          const data = res ? await res.json().catch(() => ({})) : null;
           if (data && data.code) {
             codeToUse = data.code;
           }
@@ -524,12 +550,21 @@ export default function NativeApp() {
       if (serverUrl) {
         try {
           const cleanUrl = serverUrl.replace(/\/+$/, '');
-          const res = await fetchWithTimeout(`${cleanUrl}/api/auth/send-otp`, {
+          let res = await fetchWithTimeout(`${cleanUrl}/api/auth/send-otp`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ phone: cleanPhone }),
-          }, 3000);
-          const data = await res.json();
+          }, 3500).catch(() => null);
+
+          if (!res || res.status === 404) {
+            res = await fetchWithTimeout(`${cleanUrl}/api/send-otp.php`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ phone: cleanPhone }),
+            }, 3500).catch(() => null);
+          }
+
+          const data = res ? await res.json().catch(() => ({})) : null;
           if (data && data.code) {
             codeToUse = data.code;
           }
@@ -561,7 +596,7 @@ export default function NativeApp() {
       if (serverUrl) {
         const cleanUrl = serverUrl.replace(/\/+$/, '');
         try {
-          await fetchWithTimeout(`${cleanUrl}/api/auth/register`, {
+          let res = await fetchWithTimeout(`${cleanUrl}/api/auth/register`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -573,7 +608,23 @@ export default function NativeApp() {
               password: regPassword.trim(),
               role: 'Oficial de Radio',
             }),
-          }, 3000);
+          }, 3500).catch(() => null);
+
+          if (!res || res.status === 404) {
+            await fetchWithTimeout(`${cleanUrl}/api/register.php`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                name: cleanName,
+                phone_number: cleanPhone,
+                correo: cleanEmail,
+                callsign: autoCallsign,
+                unit: 'Sector Operativo Hidalgo',
+                password: regPassword.trim(),
+                role: 'Oficial de Radio',
+              }),
+            }, 3500).catch(() => null);
+          }
         } catch {}
       }
 

@@ -25,6 +25,56 @@ const DB_PORT = Number(process.env.DB_PORT) || 3306;
 let mysqlPool: mysql.Pool | null = null;
 let isMysqlConnected = false;
 
+// Ensure tables exist in MySQL if remote connection is established
+async function ensureMysqlTables() {
+  if (!mysqlPool) return;
+  try {
+    await mysqlPool.query(`
+      CREATE TABLE IF NOT EXISTS users (
+        id VARCHAR(64) PRIMARY KEY,
+        phone_number VARCHAR(20) NOT NULL UNIQUE,
+        name VARCHAR(120) NOT NULL,
+        correo VARCHAR(120) NULL,
+        password_hash VARCHAR(255) NOT NULL,
+        avatar_url VARCHAR(255) NULL,
+        status VARCHAR(20) DEFAULT 'online',
+        callsign VARCHAR(50) NULL,
+        unit VARCHAR(100) NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    `);
+
+    await mysqlPool.query(`
+      CREATE TABLE IF NOT EXISTS channels (
+        id VARCHAR(64) PRIMARY KEY,
+        name VARCHAR(120) NOT NULL,
+        is_private TINYINT DEFAULT 0,
+        access_code VARCHAR(20) NULL,
+        created_by VARCHAR(64) NULL,
+        category VARCHAR(50) DEFAULT 'operativo',
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    `);
+
+    await mysqlPool.query(`
+      CREATE TABLE IF NOT EXISTS voice_messages (
+        id VARCHAR(64) PRIMARY KEY,
+        sender_id VARCHAR(64) NOT NULL,
+        channel_id VARCHAR(64) NULL,
+        receiver_id VARCHAR(64) NULL,
+        audio_url TEXT NOT NULL,
+        duration_seconds INT DEFAULT 0,
+        text_content TEXT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    `);
+    console.log('[Database] Esquema de tablas MySQL verificado y listo.');
+  } catch (err: any) {
+    console.warn('[Database] Advertencia al verificar tablas MySQL:', err.message);
+  }
+}
+
 // Attempt optional MySQL connection if environment provides credentials
 async function initMysql() {
   if (DB_HOST && DB_USER && DB_PASSWORD) {
@@ -37,11 +87,12 @@ async function initMysql() {
         port: DB_PORT,
         waitForConnections: true,
         connectionLimit: 10,
-        connectTimeout: 3000,
+        connectTimeout: 4000,
       });
       await mysqlPool.query('SELECT 1 as test');
       isMysqlConnected = true;
       console.log(`[Database] Conectado exitosamente a MySQL: ${DB_NAME} en ${DB_HOST}`);
+      await ensureMysqlTables();
     } catch (err: any) {
       isMysqlConnected = false;
       console.warn(`[Database] MySQL remoto (${DB_HOST}) no disponible o conexiones directas bloqueadas:`, err.message);
@@ -285,6 +336,49 @@ app.post(['/api/auth/login', '/api/security/login'], async (req: Request, res: R
   const identifier = (identificador || phone_number || '').trim().toLowerCase();
   const pass = (password || '').trim();
 
+  // 1. Check direct MySQL database if connected
+  if (isMysqlConnected && mysqlPool) {
+    try {
+      const cleanPhone = identifier.replace(/\D/g, '');
+      const [rows]: any = await mysqlPool.query(
+        'SELECT * FROM users WHERE LOWER(phone_number) = ? OR LOWER(name) = ? OR LOWER(callsign) = ? OR LOWER(correo) = ? OR id = ? LIMIT 1',
+        [cleanPhone || identifier, identifier, identifier, identifier, identifier]
+      );
+      if (Array.isArray(rows) && rows.length > 0) {
+        const user = rows[0];
+        if (user.password_hash && pass && user.password_hash !== pass) {
+          return res.status(401).json({
+            success: false,
+            code: 'INVALID_PASSWORD',
+            message: 'Contraseña o clave táctica incorrecta.',
+          });
+        }
+
+        try {
+          await mysqlPool.query('UPDATE users SET status = "online", updated_at = NOW() WHERE id = ?', [user.id]);
+        } catch {}
+
+        return res.json({
+          success: true,
+          code: 'SUCCESS',
+          message: 'Sesión iniciada con éxito en la base de datos MySQL.',
+          user: {
+            id: user.id,
+            phone_number: user.phone_number,
+            name: user.name,
+            callsign: user.callsign || 'OPERATIVO',
+            unit: user.unit || 'Sector Operativo Hidalgo',
+            avatar_url: user.avatar_url,
+            status: 'online',
+          },
+        });
+      }
+    } catch (err: any) {
+      console.warn('[MySQL Login] Fallback al motor local:', err.message);
+    }
+  }
+
+  // 2. Fallback to local synced database
   const db = loadDatabase();
   const user = db.users.find(
     (u) =>
@@ -378,7 +472,7 @@ app.post(['/api/auth/verify-otp', '/api/security/verify-otp'], (req: Request, re
 });
 
 // 3. Authentication: Register
-app.post(['/api/auth/register', '/api/security/register'], (req: Request, res: Response) => {
+app.post(['/api/auth/register', '/api/security/register'], async (req: Request, res: Response) => {
   const { name, phone_number, correo, email, callsign, unit, password } = req.body;
 
   if (!name || !phone_number) {
@@ -387,20 +481,49 @@ app.post(['/api/auth/register', '/api/security/register'], (req: Request, res: R
 
   const cleanPhone = phone_number.replace(/\D/g, '');
   const cleanEmail = (correo || email || '').trim();
-  const db = loadDatabase();
+  const upperCallsign = (callsign || `PATRULLA-${cleanPhone.slice(-3)}`).toUpperCase();
+  const assignedUnit = unit || 'Sector Operativo Hidalgo';
+  const passToSave = password || '123';
+  const newUserId = `usr-${Date.now()}`;
 
+  // 1. Try MySQL insert if connected
+  if (isMysqlConnected && mysqlPool) {
+    try {
+      const [existing]: any = await mysqlPool.query(
+        'SELECT id, name FROM users WHERE phone_number = ? OR (correo = ? AND correo IS NOT NULL) LIMIT 1',
+        [cleanPhone, cleanEmail || null]
+      );
+      if (Array.isArray(existing) && existing.length > 0) {
+        return res.status(409).json({
+          success: false,
+          message: `Este número ya está registrado (${existing[0].name}).`,
+        });
+      }
+
+      await mysqlPool.query(
+        `INSERT INTO users (id, phone_number, name, correo, password_hash, callsign, unit, status, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 'online', NOW(), NOW())`,
+        [newUserId, cleanPhone, name.trim(), cleanEmail || null, passToSave, upperCallsign, assignedUnit]
+      );
+    } catch (err: any) {
+      console.warn('[MySQL Register] Fallback al motor local:', err.message);
+    }
+  }
+
+  // 2. Also keep local database updated
+  const db = loadDatabase();
   const existingPhone = db.users.find((u) => u.phone_number === cleanPhone);
-  if (existingPhone) {
+  if (existingPhone && (!isMysqlConnected || !mysqlPool)) {
     return res.status(409).json({ success: false, message: `Este número ya está registrado (${existingPhone.name}).` });
   }
 
   const newUser = {
-    id: `usr-${Date.now()}`,
+    id: newUserId,
     phone_number: cleanPhone,
     name: name.trim(),
-    callsign: (callsign || `PATRULLA-${cleanPhone.slice(-3)}`).toUpperCase(),
-    unit: unit || 'Sector Operativo Hidalgo',
-    password_hash: password || '123',
+    callsign: upperCallsign,
+    unit: assignedUnit,
+    password_hash: passToSave,
     avatar_url: null,
     status: 'online' as const,
     created_at: new Date().toISOString(),
@@ -408,12 +531,13 @@ app.post(['/api/auth/register', '/api/security/register'], (req: Request, res: R
     correo: cleanEmail || null,
   };
 
+  db.users = db.users.filter((u) => u.phone_number !== cleanPhone);
   db.users.push(newUser);
   saveDatabase(db);
 
   return res.json({
     success: true,
-    message: 'Oficial registrado exitosamente en la BD.',
+    message: 'Oficial registrado exitosamente en la base de datos.',
     user: newUser,
   });
 });
@@ -492,7 +616,7 @@ app.post(['/api/auth/verify-token', '/api/security/verify-token'], (req: Request
 });
 
 // 3.3 Authentication: Reset Password in DB
-app.post(['/api/auth/reset-password', '/api/security/reset-password'], (req: Request, res: Response) => {
+app.post(['/api/auth/reset-password', '/api/security/reset-password'], async (req: Request, res: Response) => {
   const { identifier, new_password, newPassword, password } = req.body;
   const targetPass = new_password || newPassword || password;
 
@@ -502,8 +626,22 @@ app.post(['/api/auth/reset-password', '/api/security/reset-password'], (req: Req
 
   const clean = String(identifier || '').trim();
   const cleanPhone = clean.replace(/\D/g, '');
-  const db = loadDatabase();
+  const passToSave = String(targetPass).trim();
 
+  // 1. Update MySQL if connected
+  if (isMysqlConnected && mysqlPool) {
+    try {
+      await mysqlPool.query(
+        'UPDATE users SET password_hash = ?, updated_at = NOW() WHERE phone_number = ? OR correo = ? OR callsign = ? OR id = ?',
+        [passToSave, cleanPhone || clean, clean, clean, clean]
+      );
+    } catch (err: any) {
+      console.warn('[MySQL ResetPassword] Error:', err.message);
+    }
+  }
+
+  // 2. Update local database
+  const db = loadDatabase();
   const user = db.users.find((u) => {
     if (cleanPhone.length >= 7 && u.phone_number === cleanPhone) return true;
     if (u.callsign && u.callsign.toLowerCase() === clean.toLowerCase()) return true;
@@ -511,15 +649,16 @@ app.post(['/api/auth/reset-password', '/api/security/reset-password'], (req: Req
     return false;
   });
 
-  if (!user) {
+  if (!user && (!isMysqlConnected || !mysqlPool)) {
     return res.status(404).json({ success: false, message: 'Usuario no encontrado en la base de datos.' });
   }
 
-  user.password_hash = String(targetPass).trim();
-  user.updated_at = new Date().toISOString();
-  saveDatabase(db);
-
-  recoveryTokens.delete(user.phone_number);
+  if (user) {
+    user.password_hash = passToSave;
+    user.updated_at = new Date().toISOString();
+    saveDatabase(db);
+    recoveryTokens.delete(user.phone_number);
+  }
 
   return res.json({
     success: true,
