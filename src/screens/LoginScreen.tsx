@@ -12,6 +12,7 @@ import {
 import { useAuth } from '../context/AuthContext';
 import { C5iLogo } from '../components/C5iLogo';
 import { RegisterModal } from '../components/RegisterModal';
+import { ForgotPasswordModal } from '../components/ForgotPasswordModal';
 
 interface LoginScreenProps {
   onOpenRegister?: () => void;
@@ -379,62 +380,16 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
         }}
       />
 
-      {/* Internal Recover Access Modal */}
-      {internalRecoverOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-fadeIn">
-          <div className="w-full max-w-sm rounded-3xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#121622] shadow-2xl p-6 space-y-4">
-            <div className="flex items-center gap-2.5 text-[#8a1a36] dark:text-rose-400">
-              <KeyRound className="w-5 h-5" />
-              <h3 className="text-sm font-bold text-slate-900 dark:text-white">Recuperar Acceso Operativo</h3>
-            </div>
-            <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
-              Ingresa tu número telefónico registrado para reestablecer tu clave con la central de mando C5i.
-            </p>
-            {recoverSuccess ? (
-              <div className="p-3 text-xs rounded-xl bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300">
-                Se envió un PIN temporal de 4 dígitos a tu terminal operativa (Clave demo: 123).
-              </div>
-            ) : (
-              <input
-                type="tel"
-                value={recoverPhone}
-                onChange={(e) => setRecoverPhone(e.target.value)}
-                placeholder="Teléfono (10 dígitos)"
-                className="w-full px-3.5 py-2.5 text-sm rounded-xl bg-slate-50 dark:bg-[#0b0f19] border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:border-[#8a1a36]"
-              />
-            )}
-            <div className="flex gap-2 pt-1">
-              <button
-                type="button"
-                onClick={() => {
-                  setInternalRecoverOpen(false);
-                  setRecoverSuccess(false);
-                  setRecoverPhone('');
-                }}
-                className="flex-1 py-2 rounded-xl border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 text-xs hover:bg-slate-100 dark:hover:bg-slate-800 font-medium"
-              >
-                Cerrar
-              </button>
-              {!recoverSuccess && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (recoverPhone.replace(/\D/g, '').length >= 7) {
-                      setRecoverSuccess(true);
-                    } else {
-                      setRecoverPhone('7711234567');
-                      setRecoverSuccess(true);
-                    }
-                  }}
-                  className="flex-1 py-2 rounded-xl bg-gradient-to-r from-[#691c32] to-[#8a1a36] hover:opacity-95 text-white text-xs font-bold"
-                >
-                  Solicitar PIN
-                </button>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Forgot Password Modal (Diseño idéntico a Image 1) */}
+      <ForgotPasswordModal
+        isOpen={internalRecoverOpen}
+        onClose={() => setInternalRecoverOpen(false)}
+        onSuccess={(id, msg) => {
+          setIdentifier(id);
+          setSuccessMessage(msg);
+          setInternalRecoverOpen(false);
+        }}
+      />
     </div>
   );
 };

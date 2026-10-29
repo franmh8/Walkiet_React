@@ -377,6 +377,153 @@ export const CheckCircleIcon: React.FC<IconProps> = ({
   );
 };
 
+/**
+ * Minimalist outline Phone icon (matches Lucide Phone)
+ */
+export const PhoneIcon: React.FC<IconProps> = ({
+  size = 16,
+  color = '#94a3b8',
+  strokeWidth = 1.5,
+}) => {
+  return (
+    <View
+      style={[
+        styles.center,
+        {
+          width: size,
+          height: size,
+          transform: [{ rotate: '-25deg' }],
+        },
+      ]}
+    >
+      <View
+        style={{
+          width: Math.round(size * 0.72),
+          height: Math.round(size * 0.72),
+          borderLeftWidth: strokeWidth * 1.5,
+          borderBottomWidth: strokeWidth * 1.5,
+          borderTopWidth: strokeWidth,
+          borderRightWidth: strokeWidth,
+          borderColor: color,
+          borderTopLeftRadius: Math.round(size * 0.35),
+          borderBottomLeftRadius: 4,
+          borderBottomRightRadius: 4,
+          borderTopRightRadius: 2,
+        }}
+      />
+    </View>
+  );
+};
+
+/**
+ * Minimalist outline Mail icon (matches Lucide Mail)
+ */
+export const MailIcon: React.FC<IconProps> = ({
+  size = 16,
+  color = '#94a3b8',
+  strokeWidth = 1.5,
+}) => {
+  const w = Math.round(size * 0.88);
+  const h = Math.round(size * 0.62);
+  return (
+    <View style={[styles.center, { width: size, height: size }]}>
+      <View
+        style={{
+          width: w,
+          height: h,
+          borderRadius: 3,
+          borderWidth: strokeWidth,
+          borderColor: color,
+          alignItems: 'center',
+          overflow: 'hidden',
+        }}
+      >
+        <View
+          style={{
+            width: Math.round(w * 0.7),
+            height: Math.round(w * 0.7),
+            borderBottomWidth: strokeWidth,
+            borderRightWidth: strokeWidth,
+            borderColor: color,
+            transform: [{ rotate: '45deg' }, { translateY: -Math.round(w * 0.35) }],
+          }}
+        />
+      </View>
+    </View>
+  );
+};
+
+/**
+ * Minimalist outline ArrowLeft icon
+ */
+export const ArrowLeftIcon: React.FC<IconProps> = ({
+  size = 14,
+  color = '#64748b',
+  strokeWidth = 1.6,
+}) => {
+  return (
+    <View style={[styles.center, { width: size, height: size }]}>
+      <View style={{ width: Math.round(size * 0.7), height: strokeWidth, backgroundColor: color }} />
+      <View
+        style={{
+          position: 'absolute',
+          left: 1,
+          width: Math.round(size * 0.35),
+          height: Math.round(size * 0.35),
+          borderLeftWidth: strokeWidth,
+          borderBottomWidth: strokeWidth,
+          borderColor: color,
+          transform: [{ rotate: '45deg' }],
+        }}
+      />
+    </View>
+  );
+};
+
+/**
+ * Minimalist outline RotateCw icon
+ */
+export const RotateCwIcon: React.FC<IconProps> = ({
+  size = 14,
+  color = '#64748b',
+  strokeWidth = 1.5,
+}) => {
+  return (
+    <View
+      style={[
+        styles.center,
+        {
+          width: size,
+          height: size,
+          borderRadius: size / 2,
+          borderWidth: strokeWidth,
+          borderTopColor: 'transparent',
+          borderRightColor: color,
+          borderBottomColor: color,
+          borderLeftColor: color,
+        },
+      ]}
+    >
+      <View
+        style={{
+          position: 'absolute',
+          top: -1,
+          right: -1,
+          width: 0,
+          height: 0,
+          borderLeftWidth: 3,
+          borderRightWidth: 3,
+          borderBottomWidth: 4,
+          borderLeftColor: 'transparent',
+          borderRightColor: 'transparent',
+          borderBottomColor: color,
+          transform: [{ rotate: '45deg' }],
+        }}
+      />
+    </View>
+  );
+};
+
 const styles = StyleSheet.create({
   center: {
     alignItems: 'center',

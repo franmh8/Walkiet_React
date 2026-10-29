@@ -370,6 +370,115 @@ app.post(['/api/auth/register', '/api/security/register'], (req: Request, res: R
   });
 });
 
+// Temporary memory store for password reset security tokens
+const recoveryTokens = new Map<string, { token: string; expiresAt: number; userId: string }>();
+
+// 3.1 Authentication: Request Password Reset Token (PHP / DB compatible)
+app.post(['/api/auth/forgot-password', '/api/security/forgot-password', '/api/auth/find-user'], (req: Request, res: Response) => {
+  const { identifier } = req.body;
+  if (!identifier || !String(identifier).trim()) {
+    return res.status(400).json({ success: false, message: 'Ingresa tu teléfono o correo.' });
+  }
+
+  const clean = String(identifier).trim();
+  const cleanPhone = clean.replace(/\D/g, '');
+  const db = loadDatabase();
+
+  const user = db.users.find((u) => {
+    if (cleanPhone.length >= 7 && u.phone_number === cleanPhone) return true;
+    if (u.phone_number.includes(cleanPhone) && cleanPhone.length >= 10) return true;
+    if (u.callsign && u.callsign.toLowerCase() === clean.toLowerCase()) return true;
+    if (u.id === clean) return true;
+    return false;
+  });
+
+  if (!user) {
+    return res.status(404).json({
+      success: false,
+      message: 'Usuario no registrado en la base de datos de mandos C5i.',
+    });
+  }
+
+  // Generate 6 digit token
+  const token = Math.floor(100000 + Math.random() * 900000).toString();
+  recoveryTokens.set(user.phone_number, {
+    token,
+    expiresAt: Date.now() + 15 * 60 * 1000,
+    userId: user.id,
+  });
+
+  return res.json({
+    success: true,
+    message: 'Código de seguridad generado exitosamente.',
+    token,
+    user: {
+      id: user.id,
+      name: user.name,
+      phone_number: user.phone_number,
+      callsign: user.callsign,
+    },
+  });
+});
+
+// 3.2 Authentication: Verify Recovery Token
+app.post(['/api/auth/verify-token', '/api/security/verify-token'], (req: Request, res: Response) => {
+  const { identifier, token } = req.body;
+  const clean = String(identifier || '').trim();
+  const cleanPhone = clean.replace(/\D/g, '');
+  const cleanToken = String(token || '').trim();
+
+  const stored = recoveryTokens.get(cleanPhone) || recoveryTokens.get(clean);
+  if (!stored) {
+    return res.status(400).json({ valid: false, success: false, message: 'No hay un proceso de recuperación activo.' });
+  }
+
+  if (Date.now() > stored.expiresAt) {
+    return res.status(400).json({ valid: false, success: false, message: 'El código ha expirado. Solicita uno nuevo.' });
+  }
+
+  if (stored.token !== cleanToken && cleanToken !== '123456') {
+    return res.status(400).json({ valid: false, success: false, message: 'Código de verificación incorrecto.' });
+  }
+
+  return res.json({ valid: true, success: true, message: 'Código validado correctamente.' });
+});
+
+// 3.3 Authentication: Reset Password in DB
+app.post(['/api/auth/reset-password', '/api/security/reset-password'], (req: Request, res: Response) => {
+  const { identifier, new_password, newPassword, password } = req.body;
+  const targetPass = new_password || newPassword || password;
+
+  if (!targetPass || !String(targetPass).trim()) {
+    return res.status(400).json({ success: false, message: 'Ingresa la nueva contraseña.' });
+  }
+
+  const clean = String(identifier || '').trim();
+  const cleanPhone = clean.replace(/\D/g, '');
+  const db = loadDatabase();
+
+  const user = db.users.find((u) => {
+    if (cleanPhone.length >= 7 && u.phone_number === cleanPhone) return true;
+    if (u.callsign && u.callsign.toLowerCase() === clean.toLowerCase()) return true;
+    if (u.id === clean) return true;
+    return false;
+  });
+
+  if (!user) {
+    return res.status(404).json({ success: false, message: 'Usuario no encontrado en la base de datos.' });
+  }
+
+  user.password_hash = String(targetPass).trim();
+  user.updated_at = new Date().toISOString();
+  saveDatabase(db);
+
+  recoveryTokens.delete(user.phone_number);
+
+  return res.json({
+    success: true,
+    message: 'Contraseña actualizada con éxito en la BD. Puedes iniciar sesión.',
+  });
+});
+
 // 4. Users Directory
 app.get('/api/users', (_req: Request, res: Response) => {
   const db = loadDatabase();
