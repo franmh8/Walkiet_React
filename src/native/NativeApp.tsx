@@ -369,6 +369,22 @@ export default function NativeApp() {
           }, 3500).catch(() => null);
 
           if (!res || res.status === 404) {
+            res = await fetchWithTimeout(`${cleanUrl}/login.php`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ identificador: cleanIdentifier, password: cleanPassword }),
+            }, 3500).catch(() => null);
+          }
+
+          if (!res || res.status === 404) {
+            res = await fetchWithTimeout(`${cleanUrl}/auth/login.php`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ identificador: cleanIdentifier, password: cleanPassword }),
+            }, 3500).catch(() => null);
+          }
+
+          if (!res || res.status === 404) {
             res = await fetchWithTimeout(`${cleanUrl}/api/login.php`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
@@ -516,6 +532,14 @@ export default function NativeApp() {
           }, 3500).catch(() => null);
 
           if (!res || res.status === 404) {
+            res = await fetchWithTimeout(`${cleanUrl}/send-otp.php`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ phone: cleanPhone }),
+            }, 3500).catch(() => null);
+          }
+
+          if (!res || res.status === 404) {
             res = await fetchWithTimeout(`${cleanUrl}/api/send-otp.php`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
@@ -555,6 +579,14 @@ export default function NativeApp() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ phone: cleanPhone }),
           }, 3500).catch(() => null);
+
+          if (!res || res.status === 404) {
+            res = await fetchWithTimeout(`${cleanUrl}/send-otp.php`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ phone: cleanPhone }),
+            }, 3500).catch(() => null);
+          }
 
           if (!res || res.status === 404) {
             res = await fetchWithTimeout(`${cleanUrl}/api/send-otp.php`, {
@@ -611,7 +643,23 @@ export default function NativeApp() {
           }, 3500).catch(() => null);
 
           if (!res || res.status === 404) {
-            await fetchWithTimeout(`${cleanUrl}/api/register.php`, {
+            res = await fetchWithTimeout(`${cleanUrl}/register.php`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                name: cleanName,
+                phone_number: cleanPhone,
+                correo: cleanEmail,
+                callsign: autoCallsign,
+                unit: 'Sector Operativo Hidalgo',
+                password: regPassword.trim(),
+                role: 'Oficial de Radio',
+              }),
+            }, 3500).catch(() => null);
+          }
+
+          if (!res || res.status === 404) {
+            await fetchWithTimeout(`${cleanUrl}/auth/register.php`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
