@@ -1,6 +1,7 @@
+import './src/polyfills/error-guard';
 import React from 'react';
-import AppWeb from './src/App';
+import NativeApp from './src/native/NativeApp';
 
 export default function App() {
-  return <AppWeb />;
+  return <NativeApp />;
 }

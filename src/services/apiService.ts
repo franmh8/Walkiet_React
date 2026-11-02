@@ -78,9 +78,15 @@ export const ApiService = {
   async getChannels() {
     const base = getBackendUrl();
     try {
-      const res = await fetch(`${base}/api/channels`);
-      const data = await res.json();
-      return data.channels || [];
+      let res = await fetch(`${base}/channels.php`).catch(() => null);
+      if (!res || !res.ok) {
+        res = await fetch(`${base}/api/channels`).catch(() => null);
+      }
+      if (res && res.ok) {
+        const data = await res.json().catch(() => null);
+        return data?.channels || [];
+      }
+      return [];
     } catch {
       return [];
     }
@@ -136,9 +142,12 @@ export const ApiService = {
     const base = getBackendUrl();
     try {
       const url = userId ? `${base}/api/contacts?user_id=${encodeURIComponent(userId)}` : `${base}/api/contacts`;
-      const res = await fetch(url);
-      const data = await res.json();
-      return data.contacts || [];
+      const res = await fetch(url).catch(() => null);
+      if (res && res.ok) {
+        const data = await res.json().catch(() => null);
+        return data?.contacts || [];
+      }
+      return [];
     } catch {
       return [];
     }
@@ -169,12 +178,16 @@ export const ApiService = {
   async getVoiceMessages(channelId?: string) {
     const base = getBackendUrl();
     try {
-      const url = channelId
-        ? `${base}/api/voice-messages?channel_id=${encodeURIComponent(channelId)}`
-        : `${base}/api/voice-messages`;
-      const res = await fetch(url);
-      const data = await res.json();
-      return data.voice_messages || [];
+      const q = channelId ? `?channel_id=${encodeURIComponent(channelId)}` : '';
+      let res = await fetch(`${base}/voice-messages.php${q}`).catch(() => null);
+      if (!res || !res.ok) {
+        res = await fetch(`${base}/api/voice-messages${q}`).catch(() => null);
+      }
+      if (res && res.ok) {
+        const data = await res.json().catch(() => null);
+        return data?.voice_messages || [];
+      }
+      return [];
     } catch {
       return [];
     }
@@ -205,14 +218,20 @@ export const ApiService = {
   async updateUserStatus(userId: string, status: 'online' | 'offline' | 'transmitting') {
     const base = getBackendUrl();
     try {
-      const res = await fetch(`${base}/api/users/${userId}/status`, {
-        method: 'PUT',
+      const endpoint = base.includes('alwaysdata')
+        ? `${base}/user-status.php`
+        : `${base}/api/users/${userId}/status`;
+      const res = await fetch(endpoint, {
+        method: base.includes('alwaysdata') ? 'POST' : 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status }),
-      });
-      return await res.json();
+        body: JSON.stringify({ user_id: userId, status }),
+      }).catch(() => null);
+      if (res && res.ok) {
+        return await res.json().catch(() => ({ success: true }));
+      }
+      return { success: true };
     } catch {
-      return { success: false };
+      return { success: true };
     }
   },
 

@@ -36,6 +36,7 @@ import {
   BookOpenIcon,
   WifiIcon,
 } from './icons';
+import { soundEngine } from '../services/soundEngine';
 
 // Silenciar advertencia informativa de SafeAreaView en React Native
 LogBox.ignoreLogs(['SafeAreaView has been deprecated']);
@@ -169,6 +170,7 @@ export default function NativeApp() {
   const [isSosActive, setIsSosActive] = useState(false);
   const [isTestingServer, setIsTestingServer] = useState(false);
   const [serverLatency, setServerLatency] = useState<number | null>(null);
+  const [isMembersModalOpen, setIsMembersModalOpen] = useState(false);
   
   // History & Messages
   const [transmissions, setTransmissions] = useState<Transmission[]>([
@@ -290,6 +292,7 @@ export default function NativeApp() {
   const handlePttPressIn = () => {
     setIsTransmitting(true);
     setTxDuration(0);
+    soundEngine.playPttStart();
     if (Platform.OS !== 'web') {
       try {
         Vibration.vibrate(60);
@@ -303,6 +306,7 @@ export default function NativeApp() {
   const handlePttPressOut = async () => {
     if (!isTransmitting) return;
     setIsTransmitting(false);
+    soundEngine.playRogerBeep();
     if (timerRef.current) clearInterval(timerRef.current);
     
     if (Platform.OS !== 'web') {
@@ -978,6 +982,7 @@ export default function NativeApp() {
           text: 'ACTIVAR SOS',
           style: 'destructive',
           onPress: () => {
+            soundEngine.playEmergencyAlert();
             setIsSosActive(true);
             if (Platform.OS !== 'web') {
               try { Vibration.vibrate([0, 500, 200, 500]); } catch {}
@@ -2039,23 +2044,24 @@ export default function NativeApp() {
               </TouchableOpacity>
 
               <View style={styles.cleanHeaderActions}>
-                {/* Emergency Call / SOS Button */}
+                {/* Emergency Call / SOS Button (ICON-ONLY rounded square matching Image 4) */}
                 <TouchableOpacity
                   style={styles.cleanSosBtn}
                   onPress={handleTriggerSos}
                   activeOpacity={0.85}
+                  accessibilityLabel="Llamada de Emergencia SOS"
                 >
-                  <AlertTriangleIcon size={15} color="#ffffff" strokeWidth={2} />
-                  <Text style={styles.cleanSosBtnText}>SOS</Text>
+                  <AlertTriangleIcon size={18} color="#ffffff" strokeWidth={2.2} />
                 </TouchableOpacity>
 
-                {/* Member count pill */}
+                {/* Member count pill - Opens Channel Members Modal */}
                 <TouchableOpacity
                   style={styles.cleanMembersPill}
-                  onPress={() => setCurrentTab('Grupos')}
+                  onPress={() => setIsMembersModalOpen(true)}
                   activeOpacity={0.8}
+                  accessibilityLabel="Ver usuarios dentro del canal"
                 >
-                  <UsersIcon size={15} color="#64748b" strokeWidth={1.8} />
+                  <UsersIcon size={16} color="#64748b" strokeWidth={1.8} />
                   <Text style={styles.cleanMembersCount}>{memberCount}</Text>
                 </TouchableOpacity>
               </View>
@@ -2082,23 +2088,32 @@ export default function NativeApp() {
                 )}
               </View>
 
-              {/* PTT Concentric Circle Button */}
-              <View style={styles.cleanPttCircleOuter}>
-                <TouchableOpacity
-                  activeOpacity={0.9}
-                  onPressIn={handlePttPressIn}
-                  onPressOut={handlePttPressOut}
-                  style={[
-                    styles.cleanPttCircleInner,
-                    isTransmitting && styles.cleanPttCircleInnerActive,
-                  ]}
-                >
-                  <MicIcon
-                    size={48}
-                    color={isTransmitting ? '#ffffff' : '#334155'}
-                    strokeWidth={2}
-                  />
-                </TouchableOpacity>
+              {/* PTT Concentric Circle Button with Soundwaves */}
+              <View style={styles.pttCircleContainer}>
+                {isTransmitting && (
+                  <>
+                    <View style={styles.cleanPttWaveOuter} />
+                    <View style={styles.cleanPttWaveInner} />
+                  </>
+                )}
+
+                <View style={styles.cleanPttCircleOuter}>
+                  <TouchableOpacity
+                    activeOpacity={0.9}
+                    onPressIn={handlePttPressIn}
+                    onPressOut={handlePttPressOut}
+                    style={[
+                      styles.cleanPttCircleInner,
+                      isTransmitting && styles.cleanPttCircleInnerActive,
+                    ]}
+                  >
+                    <MicIcon
+                      size={48}
+                      color={isTransmitting ? '#ffffff' : '#334155'}
+                      strokeWidth={2}
+                    />
+                  </TouchableOpacity>
+                </View>
               </View>
 
               {/* Connected Dynamic Status Pill */}
@@ -2350,6 +2365,108 @@ export default function NativeApp() {
           </Text>
         </TouchableOpacity>
       </View>
+
+      {/* Floating Channel Members Modal (Matching Image 3) */}
+      <Modal
+        visible={isMembersModalOpen}
+        animationType="fade"
+        transparent
+        onRequestClose={() => setIsMembersModalOpen(false)}
+      >
+        <View style={styles.channelModalOverlay}>
+          <View style={styles.channelModalCard}>
+            {/* Header */}
+            <View style={styles.channelModalHeader}>
+              <View style={styles.channelModalHeaderLeft}>
+                <View style={styles.channelModalIconBox}>
+                  <UsersIcon size={20} color="#8a1a36" strokeWidth={1.8} />
+                </View>
+                <View>
+                  <Text style={styles.channelModalTitle}>
+                    {selectedChannel?.name || 'Canal Táctico'}
+                  </Text>
+                  <Text style={styles.channelModalSubtitle}>
+                    {memberCount} {memberCount === 1 ? 'usuario activo' : 'usuarios activos'} • General
+                  </Text>
+                </View>
+              </View>
+              <TouchableOpacity
+                onPress={() => setIsMembersModalOpen(false)}
+                style={styles.channelModalCloseBtn}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              >
+                <Text style={styles.channelModalCloseIcon}>✕</Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* Member List (Active Officers) */}
+            <View style={styles.channelMemberList}>
+              {/* Current User Card */}
+              <View style={styles.channelMemberCard}>
+                <View style={styles.channelMemberCardLeft}>
+                  {/* Avatar with status green dot */}
+                  <View style={styles.channelMemberAvatarWrap}>
+                    <View style={styles.channelMemberAvatar}>
+                      <Text style={styles.channelMemberAvatarText}>
+                        {(currentUser?.name || 'Francisco').charAt(0).toUpperCase()}
+                      </Text>
+                    </View>
+                    <View style={styles.channelMemberOnlineDot} />
+                  </View>
+
+                  {/* Member Name and Callsign */}
+                  <View style={styles.channelMemberInfo}>
+                    <View style={styles.channelMemberNameRow}>
+                      <Text style={styles.channelMemberName} numberOfLines={1}>
+                        {currentUser?.name || 'Francisco'} (Tú)
+                      </Text>
+                      <View style={styles.channelMemberTuBadge}>
+                        <Text style={styles.channelMemberTuBadgeText}>TÚ</Text>
+                      </View>
+                    </View>
+                    <Text style={styles.channelMemberSubtext} numberOfLines={1}>
+                      <Text style={styles.channelMemberCallsign}>
+                        {currentUser?.callsign || currentUser?.badge || 'RADI0-8448'}
+                      </Text>
+                      {' • '}
+                      {currentUser?.unit || 'Sector Operativo Pachuca'}
+                    </Text>
+                  </View>
+                </View>
+
+                {/* Role Pill on right */}
+                <View style={styles.channelMemberRolePill}>
+                  <Text style={styles.channelMemberRoleText}>
+                    {currentUser?.role || 'Operador'}
+                  </Text>
+                </View>
+              </View>
+            </View>
+
+            {/* Footer matching Image 3: "+ Gestionar Contactos" on left, "Cerrar" on right */}
+            <View style={styles.channelModalFooter}>
+              <TouchableOpacity
+                onPress={() => {
+                  setIsMembersModalOpen(false);
+                  setCurrentTab('Contactos');
+                }}
+                style={styles.channelManageContactsBtn}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.channelManageContactsText}>+ Gestionar Contactos</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                onPress={() => setIsMembersModalOpen(false)}
+                style={styles.channelCloseBtn}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.channelCloseBtnText}>Cerrar</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -2400,24 +2517,17 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   cleanSosBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    width: 42,
+    height: 42,
+    borderRadius: 15,
     backgroundColor: '#e11d48',
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-    borderRadius: 14,
-    gap: 5,
+    alignItems: 'center',
+    justifyContent: 'center',
     shadowColor: '#e11d48',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.3,
-    shadowRadius: 4,
-    elevation: 3,
-  },
-  cleanSosBtnText: {
-    color: '#ffffff',
-    fontSize: 12,
-    fontWeight: '800',
-    letterSpacing: 0.5,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.35,
+    shadowRadius: 8,
+    elevation: 4,
   },
   cleanMembersPill: {
     flexDirection: 'row',
@@ -2425,10 +2535,10 @@ const styles = StyleSheet.create({
     backgroundColor: '#ffffff',
     borderWidth: 1,
     borderColor: '#e2e8f0',
-    paddingHorizontal: 11,
-    paddingVertical: 7,
-    borderRadius: 14,
-    gap: 5,
+    paddingHorizontal: 12,
+    height: 42,
+    borderRadius: 15,
+    gap: 6,
     shadowColor: '#64748b',
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.08,
@@ -2436,6 +2546,211 @@ const styles = StyleSheet.create({
     elevation: 1,
   },
   cleanMembersCount: {
+    color: '#334155',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  pttCircleContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    position: 'relative',
+  },
+  cleanPttWaveOuter: {
+    position: 'absolute',
+    width: 310,
+    height: 310,
+    borderRadius: 155,
+    backgroundColor: 'rgba(225, 29, 72, 0.12)',
+    borderWidth: 1.5,
+    borderColor: 'rgba(225, 29, 72, 0.25)',
+  },
+  cleanPttWaveInner: {
+    position: 'absolute',
+    width: 290,
+    height: 290,
+    borderRadius: 145,
+    backgroundColor: 'rgba(225, 29, 72, 0.18)',
+  },
+  // Floating Channel Members Modal Styles (Matching Image 3)
+  channelModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 16,
+  },
+  channelModalCard: {
+    backgroundColor: '#ffffff',
+    borderRadius: 24,
+    width: '100%',
+    maxWidth: 360,
+    overflow: 'hidden',
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.2,
+    shadowRadius: 25,
+    elevation: 12,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  channelModalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 18,
+    paddingVertical: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f1f5f9',
+  },
+  channelModalHeaderLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    flex: 1,
+  },
+  channelModalIconBox: {
+    width: 40,
+    height: 40,
+    borderRadius: 14,
+    backgroundColor: 'rgba(138, 26, 54, 0.08)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  channelModalTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#0f172a',
+  },
+  channelModalSubtitle: {
+    fontSize: 12,
+    color: '#64748b',
+    marginTop: 1,
+  },
+  channelModalCloseBtn: {
+    padding: 6,
+  },
+  channelModalCloseIcon: {
+    fontSize: 16,
+    color: '#94a3b8',
+    fontWeight: '700',
+  },
+  channelMemberList: {
+    padding: 16,
+  },
+  channelMemberCard: {
+    backgroundColor: 'rgba(225, 29, 72, 0.03)',
+    borderRadius: 18,
+    borderWidth: 1.5,
+    borderColor: '#fecdd3',
+    padding: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  channelMemberCardLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    flex: 1,
+  },
+  channelMemberAvatarWrap: {
+    position: 'relative',
+  },
+  channelMemberAvatar: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#e2e8f0',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  channelMemberAvatarText: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#334155',
+  },
+  channelMemberOnlineDot: {
+    position: 'absolute',
+    bottom: -1,
+    right: -1,
+    width: 11,
+    height: 11,
+    borderRadius: 6,
+    backgroundColor: '#10b981',
+    borderWidth: 2,
+    borderColor: '#ffffff',
+  },
+  channelMemberInfo: {
+    flex: 1,
+  },
+  channelMemberNameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  channelMemberName: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#0f172a',
+  },
+  channelMemberTuBadge: {
+    backgroundColor: '#8a1a36',
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 5,
+  },
+  channelMemberTuBadgeText: {
+    color: '#ffffff',
+    fontSize: 10,
+    fontWeight: '900',
+  },
+  channelMemberSubtext: {
+    fontSize: 11,
+    color: '#64748b',
+    marginTop: 2,
+  },
+  channelMemberCallsign: {
+    color: '#be123c',
+    fontWeight: '700',
+  },
+  channelMemberRolePill: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    backgroundColor: '#ffffff',
+  },
+  channelMemberRoleText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#475569',
+  },
+  channelModalFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 18,
+    paddingVertical: 14,
+    borderTopWidth: 1,
+    borderTopColor: '#f1f5f9',
+    backgroundColor: '#fafbfc',
+  },
+  channelManageContactsBtn: {
+    paddingVertical: 6,
+  },
+  channelManageContactsText: {
+    color: '#8a1a36',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  channelCloseBtn: {
+    backgroundColor: '#f1f5f9',
+    paddingHorizontal: 18,
+    paddingVertical: 8,
+    borderRadius: 14,
+  },
+  channelCloseBtnText: {
     color: '#334155',
     fontSize: 12,
     fontWeight: '700',
