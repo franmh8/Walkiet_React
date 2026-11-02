@@ -68,4 +68,7 @@ export interface Contact {
   unit: string;
   status: 'online' | 'offline' | 'transmitting';
   avatar_url?: string;
+  alias?: string;
+  contact_user?: { name: string };
 }
+

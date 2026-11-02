@@ -524,9 +524,209 @@ export const RotateCwIcon: React.FC<IconProps> = ({
   );
 };
 
+/**
+ * Minimalist outline Mic icon (matches Lucide Mic)
+ */
+export const MicIcon: React.FC<IconProps> = ({
+  size = 24,
+  color = '#334155',
+  strokeWidth = 2,
+}) => {
+  const capsuleW = Math.round(size * 0.38);
+  const capsuleH = Math.round(size * 0.58);
+  return (
+    <View style={[styles.center, { width: size, height: size }]}>
+      {/* Inner capsule */}
+      <View
+        style={{
+          width: capsuleW,
+          height: capsuleH,
+          borderRadius: capsuleW / 2,
+          borderWidth: strokeWidth,
+          borderColor: color,
+          backgroundColor: 'transparent',
+        }}
+      />
+      {/* Outer cradle */}
+      <View
+        style={{
+          position: 'absolute',
+          top: Math.round(size * 0.2),
+          width: Math.round(size * 0.64),
+          height: Math.round(size * 0.44),
+          borderBottomLeftRadius: Math.round(size * 0.32),
+          borderBottomRightRadius: Math.round(size * 0.32),
+          borderWidth: strokeWidth,
+          borderTopWidth: 0,
+          borderColor: color,
+        }}
+      />
+      {/* Stand stem */}
+      <View
+        style={{
+          position: 'absolute',
+          bottom: 2,
+          width: strokeWidth,
+          height: Math.round(size * 0.18),
+          backgroundColor: color,
+        }}
+      />
+      {/* Stand base */}
+      <View
+        style={{
+          position: 'absolute',
+          bottom: 1,
+          width: Math.round(size * 0.4),
+          height: strokeWidth,
+          backgroundColor: color,
+          borderRadius: 1,
+        }}
+      />
+    </View>
+  );
+};
+
+/**
+ * Minimalist outline Users icon (matches Lucide Users)
+ */
+export const UsersIcon: React.FC<IconProps> = ({
+  size = 20,
+  color = '#64748b',
+  strokeWidth = 1.8,
+}) => {
+  return (
+    <View style={[styles.center, { width: size, height: size }]}>
+      <UserIcon size={Math.round(size * 0.85)} color={color} strokeWidth={strokeWidth} />
+    </View>
+  );
+};
+
+/**
+ * Minimalist outline MessageSquare icon
+ */
+export const MessageSquareIcon: React.FC<IconProps> = ({
+  size = 20,
+  color = '#64748b',
+  strokeWidth = 1.8,
+}) => {
+  const w = Math.round(size * 0.85);
+  const h = Math.round(size * 0.72);
+  return (
+    <View style={[styles.center, { width: size, height: size }]}>
+      <View
+        style={{
+          width: w,
+          height: h,
+          borderRadius: 4,
+          borderWidth: strokeWidth,
+          borderColor: color,
+        }}
+      />
+      <View
+        style={{
+          position: 'absolute',
+          bottom: 2,
+          left: Math.round(size * 0.25),
+          width: 0,
+          height: 0,
+          borderTopWidth: 4,
+          borderRightWidth: 4,
+          borderTopColor: color,
+          borderRightColor: 'transparent',
+        }}
+      />
+    </View>
+  );
+};
+
+/**
+ * Minimalist outline BookOpen / Contacts icon
+ */
+export const BookOpenIcon: React.FC<IconProps> = ({
+  size = 20,
+  color = '#64748b',
+  strokeWidth = 1.8,
+}) => {
+  const pageW = Math.round(size * 0.42);
+  const pageH = Math.round(size * 0.65);
+  return (
+    <View style={[styles.center, { width: size, height: size, flexDirection: 'row' }]}>
+      <View
+        style={{
+          width: pageW,
+          height: pageH,
+          borderWidth: strokeWidth,
+          borderRightWidth: strokeWidth / 2,
+          borderColor: color,
+          borderTopLeftRadius: 3,
+          borderBottomLeftRadius: 3,
+        }}
+      />
+      <View
+        style={{
+          width: pageW,
+          height: pageH,
+          borderWidth: strokeWidth,
+          borderLeftWidth: strokeWidth / 2,
+          borderColor: color,
+          borderTopRightRadius: 3,
+          borderBottomRightRadius: 3,
+        }}
+      />
+    </View>
+  );
+};
+
+/**
+ * Minimalist outline Wifi icon
+ */
+export const WifiIcon: React.FC<IconProps> = ({
+  size = 14,
+  color = '#10b981',
+  strokeWidth = 1.8,
+}) => {
+  return (
+    <View style={[styles.center, { width: size, height: size }]}>
+      <View
+        style={{
+          width: Math.round(size * 0.85),
+          height: Math.round(size * 0.42),
+          borderTopLeftRadius: Math.round(size * 0.42),
+          borderTopRightRadius: Math.round(size * 0.42),
+          borderWidth: strokeWidth,
+          borderBottomWidth: 0,
+          borderColor: color,
+        }}
+      />
+      <View
+        style={{
+          width: Math.round(size * 0.45),
+          height: Math.round(size * 0.24),
+          borderTopLeftRadius: Math.round(size * 0.24),
+          borderTopRightRadius: Math.round(size * 0.24),
+          borderWidth: strokeWidth,
+          borderBottomWidth: 0,
+          borderColor: color,
+          marginTop: 1,
+        }}
+      />
+      <View
+        style={{
+          width: strokeWidth * 1.5,
+          height: strokeWidth * 1.5,
+          borderRadius: (strokeWidth * 1.5) / 2,
+          backgroundColor: color,
+          marginTop: 1,
+        }}
+      />
+    </View>
+  );
+};
+
 const styles = StyleSheet.create({
   center: {
     alignItems: 'center',
     justifyContent: 'center',
   },
 });
+

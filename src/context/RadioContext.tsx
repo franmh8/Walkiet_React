@@ -7,7 +7,11 @@ import { useAuth } from './AuthContext';
 export interface RadioContextType {
   channels: Channel[];
   selectedChannel: Channel | null;
+  activeChannel: Channel | null;
   setSelectedChannel: (channel: Channel | null) => void;
+  mode: 'channel' | 'direct';
+  setMode: (m: 'channel' | 'direct') => void;
+  contacts: Contact[];
   createChannel: (
     name: string,
     isPrivate?: boolean,
@@ -29,9 +33,15 @@ export interface RadioContextType {
   clearHistory: () => Promise<void>;
   isTransmitting: boolean;
   transmittingUser: string | null;
+  transmissionDuration: number;
+  isReceiving: boolean;
+  receivingSender: { name: string; callsign?: string } | null;
   startTransmitting: () => Promise<void>;
   stopTransmitting: () => Promise<void>;
+  startTransmission: () => Promise<void>;
+  stopTransmission: () => Promise<void>;
   selectedContact: Contact | null;
+  activeContact: Contact | null;
   setSelectedContact: (c: Contact | null) => void;
   playVoiceMessage: (msg: VoiceMessage) => void;
 }
@@ -47,6 +57,31 @@ export const RadioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [isTransmitting, setIsTransmitting] = useState(false);
   const [transmittingUser, setTransmittingUser] = useState<string | null>(null);
   const [selectedContact, setSelectedContact] = useState<Contact | null>(null);
+  const [mode, setMode] = useState<'channel' | 'direct'>('channel');
+  const [transmissionDuration, setTransmissionDuration] = useState<number>(0);
+  const [isReceiving] = useState<boolean>(false);
+  const [receivingSender] = useState<{ name: string; callsign?: string } | null>(null);
+  const [contacts, setContacts] = useState<Contact[]>([
+    { id: '1', name: 'Oficial Karla Mendoza', phone_number: '7710000001', callsign: 'PATRULLA-04', unit: 'Sector Operativo Pachuca', status: 'online', alias: 'Oficial Mendoza' },
+    { id: '2', name: 'Comandante R. Morales', phone_number: '7710000002', callsign: 'HALCON-01', unit: 'Mando Coordinado C5i', status: 'online', alias: 'Comandante Morales' },
+    { id: '3', name: 'Despacho Central 911', phone_number: '7710000003', callsign: 'CENTRAL-C5I', unit: 'Centro de Comando C5i', status: 'online', alias: 'Central C5i' },
+  ]);
+
+  // Transmission duration timer
+  useEffect(() => {
+    let t: any = null;
+    if (isTransmitting) {
+      setTransmissionDuration(0);
+      t = setInterval(() => {
+        setTransmissionDuration((prev) => prev + 1);
+      }, 1000);
+    } else {
+      setTransmissionDuration(0);
+    }
+    return () => {
+      if (t) clearInterval(t);
+    };
+  }, [isTransmitting]);
 
   // Load channels and voice bursts from the database
   const loadDatabaseData = async () => {
@@ -263,7 +298,11 @@ export const RadioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       value={{
         channels,
         selectedChannel,
+        activeChannel: selectedChannel,
         setSelectedChannel,
+        mode,
+        setMode,
+        contacts,
         createChannel,
         joinChannel,
         joinChannelByCode,
@@ -275,9 +314,15 @@ export const RadioProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         clearHistory,
         isTransmitting,
         transmittingUser,
+        transmissionDuration,
+        isReceiving,
+        receivingSender,
         startTransmitting,
         stopTransmitting,
+        startTransmission: startTransmitting,
+        stopTransmission: stopTransmitting,
         selectedContact,
+        activeContact: selectedContact,
         setSelectedContact,
         playVoiceMessage,
       }}

@@ -30,6 +30,11 @@ import {
   MailIcon,
   ArrowLeftIcon,
   RotateCwIcon,
+  MicIcon,
+  UsersIcon,
+  MessageSquareIcon,
+  BookOpenIcon,
+  WifiIcon,
 } from './icons';
 
 // Silenciar advertencia informativa de SafeAreaView en React Native
@@ -150,7 +155,7 @@ export default function NativeApp() {
     }
   }, [recoverResendCooldown]);
 
-  const [currentTab, setCurrentTab] = useState<'PTT' | 'CANALES' | 'MENSAJES' | 'AJUSTES'>('PTT');
+  const [currentTab, setCurrentTab] = useState<'PTT' | 'Grupos' | 'Chat' | 'Contactos' | 'Perfil'>('PTT');
   
   // Radio & PTT State
   const [channels, setChannels] = useState<Channel[]>(DEFAULT_CHANNELS);
@@ -2002,26 +2007,13 @@ export default function NativeApp() {
     );
   }
 
-  return (
-    <SafeAreaView style={styles.container}>
-      <StatusBar barStyle="light-content" />
-      
-      {/* Tactical Top Bar */}
-      <View style={styles.header}>
-        <View style={styles.headerLeft}>
-          <Text style={styles.headerTitle}>C5i WALKIE-TALKIE</Text>
-          <Text style={styles.headerSubtitle}>
-            {currentUser.badge} • {currentUser.name}
-          </Text>
-        </View>
-        <View style={styles.headerRight}>
-          <View style={styles.statusPill}>
-            <View style={[styles.statusDot, { backgroundColor: dbStatus === 'ONLINE' ? '#10b981' : '#f59e0b' }]} />
-            <Text style={styles.statusText}>{selectedChannel.code}</Text>
-          </View>
-        </View>
-      </View>
+  const memberCount = channels.length === 0 ? 0 : 1;
+  const channelTitle = selectedChannel?.name || (channels.length === 0 ? 'Sin canales (Toca para crear)' : 'Selecciona un canal');
 
+  return (
+    <SafeAreaView style={styles.cleanContainer}>
+      <StatusBar barStyle="dark-content" />
+      
       {/* SOS Active Banner */}
       {isSosActive && (
         <TouchableOpacity style={styles.sosBanner} onPress={() => setIsSosActive(false)}>
@@ -2030,110 +2022,118 @@ export default function NativeApp() {
       )}
 
       {/* Main Tab Content */}
-      <View style={styles.mainContent}>
+      <View style={styles.cleanMainContent}>
         {currentTab === 'PTT' && (
-          <View style={styles.pttContainer}>
-            <View style={styles.radioDisplay}>
-              <View style={styles.displayHeader}>
-                <Text style={styles.channelLabel}>CANAL SINTONIZADO</Text>
-                <Text style={styles.freqLabel}>{selectedChannel.frequency}</Text>
-              </View>
-              <Text style={styles.channelName}>{selectedChannel.name}</Text>
-              
-              <View style={styles.metricsRow}>
-                <Text style={styles.metricItem}>🔒 AES-256</Text>
-                <Text style={styles.metricItem}>📶 SEÑAL {signalStrength}%</Text>
-                <Text style={styles.metricItem}>🔋 BATERÍA {batteryLevel}%</Text>
-              </View>
+          <View style={styles.cleanPttContainer}>
+            {/* TOP BAR: CANAL ACTUAL, SOS & MEMBER BADGE (Matching Image 2) */}
+            <View style={styles.cleanTopBar}>
+              <TouchableOpacity
+                onPress={() => setCurrentTab('Grupos')}
+                style={styles.cleanChannelBox}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.cleanChannelLabel}>CANAL ACTUAL</Text>
+                <Text style={styles.cleanChannelTitle} numberOfLines={1}>
+                  {channelTitle}
+                </Text>
+              </TouchableOpacity>
 
-              {isTransmitting ? (
-                <View style={styles.txAlert}>
-                  <View style={styles.txLiveDot} />
-                  <Text style={styles.txText}>TRANSMITIENDO EN VIVO ({txDuration}s)</Text>
-                </View>
-              ) : (
-                <View style={styles.standbyAlert}>
-                  <Text style={styles.standbyText}>EN ESPERA • CANAL LIBRE</Text>
-                </View>
-              )}
+              <View style={styles.cleanHeaderActions}>
+                {/* Emergency Call / SOS Button */}
+                <TouchableOpacity
+                  style={styles.cleanSosBtn}
+                  onPress={handleTriggerSos}
+                  activeOpacity={0.85}
+                >
+                  <AlertTriangleIcon size={15} color="#ffffff" strokeWidth={2} />
+                  <Text style={styles.cleanSosBtnText}>SOS</Text>
+                </TouchableOpacity>
+
+                {/* Member count pill */}
+                <TouchableOpacity
+                  style={styles.cleanMembersPill}
+                  onPress={() => setCurrentTab('Grupos')}
+                  activeOpacity={0.8}
+                >
+                  <UsersIcon size={15} color="#64748b" strokeWidth={1.8} />
+                  <Text style={styles.cleanMembersCount}>{memberCount}</Text>
+                </TouchableOpacity>
+              </View>
             </View>
 
-            {/* Big PTT Tactile Button */}
-            <View style={styles.pttButtonWrapper}>
-              <TouchableOpacity
-                activeOpacity={0.88}
-                onPressIn={handlePttPressIn}
-                onPressOut={handlePttPressOut}
-                style={[
-                  styles.pttButton,
-                  isTransmitting && styles.pttButtonActive,
-                ]}
-              >
-                <View style={[styles.pttInnerCircle, isTransmitting && styles.pttInnerCircleActive]}>
-                  <Text style={styles.pttMicIcon}>{isTransmitting ? '🎙️' : '📻'}</Text>
-                  <Text style={styles.pttMainText}>{isTransmitting ? 'TRANSMITIENDO' : 'PULSAR PARA HABLAR'}</Text>
-                  <Text style={styles.pttSubText}>{isTransmitting ? 'Suelta para escuchar' : 'PUSH TO TALK (PTT)'}</Text>
-                </View>
-              </TouchableOpacity>
-            </View>
+            {/* CENTER AREA: STATUS, CONCENTRIC PTT & WIFI PILL */}
+            <View style={styles.cleanCenterArea}>
+              {/* Status prompt */}
+              <View style={styles.cleanStatusPrompt}>
+                {isTransmitting ? (
+                  <View style={styles.cleanStatusRow}>
+                    <View style={styles.cleanPulseRedDot} />
+                    <Text style={styles.cleanStatusTextRed}>
+                      Transmitiendo ({txDuration.toString().padStart(2, '0')}s)...
+                    </Text>
+                  </View>
+                ) : (
+                  <View style={styles.cleanStatusRow}>
+                    <View style={styles.cleanGreenDot} />
+                    <Text style={styles.cleanStatusTextIdle}>
+                      Mantén presionado para hablar
+                    </Text>
+                  </View>
+                )}
+              </View>
 
-            {/* Quick Tactical Action Buttons */}
-            <View style={styles.quickActions}>
-              <TouchableOpacity
-                style={styles.sosButton}
-                onPress={handleTriggerSos}
-                activeOpacity={0.8}
-              >
-                <Text style={styles.sosButtonText}>🚨 BOTÓN SOS / PÁNICO (10-33)</Text>
-              </TouchableOpacity>
+              {/* PTT Concentric Circle Button */}
+              <View style={styles.cleanPttCircleOuter}>
+                <TouchableOpacity
+                  activeOpacity={0.9}
+                  onPressIn={handlePttPressIn}
+                  onPressOut={handlePttPressOut}
+                  style={[
+                    styles.cleanPttCircleInner,
+                    isTransmitting && styles.cleanPttCircleInnerActive,
+                  ]}
+                >
+                  <MicIcon
+                    size={48}
+                    color={isTransmitting ? '#ffffff' : '#334155'}
+                    strokeWidth={2}
+                  />
+                </TouchableOpacity>
+              </View>
 
-              <TouchableOpacity
-                style={styles.quickRogerBtn}
-                onPress={() => {
-                  const quickTx: Transmission = {
-                    id: Date.now().toString(),
-                    sender: currentUser.name,
-                    badge: currentUser.badge,
-                    channel: selectedChannel.name,
-                    timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-                    duration: 1,
-                    type: 'text',
-                    text: '10-4 ENTERADO Y COPIADO',
-                  };
-                  setTransmissions((prev) => [quickTx, ...prev]);
-                  Alert.alert('Transmisión Táctica', 'Código 10-4 transmitido al canal ' + selectedChannel.name);
-                }}
-              >
-                <Text style={styles.quickRogerText}>⚡ ENVIAR 10-4 (COPIADO)</Text>
-              </TouchableOpacity>
+              {/* Connected Dynamic Status Pill */}
+              <View style={styles.cleanWifiPill}>
+                <WifiIcon size={14} color="#10b981" strokeWidth={2} />
+                <Text style={styles.cleanWifiPillText}>Conectado (Wi-Fi)</Text>
+              </View>
             </View>
           </View>
         )}
 
-        {currentTab === 'CANALES' && (
-          <ScrollView style={styles.scrollSection}>
-            <Text style={styles.sectionTitle}>CANALES DISPONIBLES EN MALLA C5i</Text>
-            <Text style={styles.sectionSubtitle}>Toca cualquier canal para sintonizar tu frecuencia operativa</Text>
+        {currentTab === 'Grupos' && (
+          <ScrollView style={styles.cleanScrollSection}>
+            <Text style={styles.cleanSectionTitle}>CANALES Y GRUPOS C5i</Text>
+            <Text style={styles.cleanSectionSub}>Toca cualquier canal para sintonizar tu frecuencia operativa</Text>
             {channels.map((ch) => {
               const isSelected = ch.id === selectedChannel.id;
               return (
                 <TouchableOpacity
                   key={ch.id}
-                  style={[styles.channelCard, isSelected && styles.channelCardSelected]}
+                  style={[styles.cleanCard, isSelected && styles.cleanCardSelected]}
                   onPress={() => {
                     setSelectedChannel(ch);
                     Alert.alert('Canal Sintonizado', `Radio enlazado a ${ch.name} (${ch.frequency})`);
                   }}
                 >
                   <View style={styles.channelInfo}>
-                    <Text style={[styles.channelTitleText, isSelected && styles.channelTitleSelected]}>
+                    <Text style={[styles.cleanCardTitle, isSelected && styles.cleanCardTitleSelected]}>
                       {ch.code} - {ch.name}
                     </Text>
-                    <Text style={styles.channelMetaText}>
+                    <Text style={styles.cleanCardMeta}>
                       {ch.frequency} • {ch.category} • {ch.activeUsers} Unidades
                     </Text>
                   </View>
-                  <Text style={styles.channelSelectBadge}>
+                  <Text style={[styles.cleanCardBadge, isSelected && styles.cleanCardBadgeActive]}>
                     {isSelected ? 'ACTIVO' : 'ENLAZAR'}
                   </Text>
                 </TouchableOpacity>
@@ -2142,10 +2142,10 @@ export default function NativeApp() {
           </ScrollView>
         )}
 
-        {currentTab === 'MENSAJES' && (
+        {currentTab === 'Chat' && (
           <View style={styles.messagesContainer}>
             <ScrollView style={styles.transmissionsList}>
-              <Text style={styles.sectionTitle}>REGISTRO TÁCTICO DE TRANSMISIONES</Text>
+              <Text style={styles.cleanSectionTitle}>CHAT Y TRANSMISIONES</Text>
               {transmissions.map((item) => (
                 <View
                   key={item.id}
@@ -2173,7 +2173,7 @@ export default function NativeApp() {
                 style={styles.msgInput}
                 value={messageInput}
                 onChangeText={setMessageInput}
-                placeholder="Escribir mensaje táctico encriptado..."
+                placeholder="Escribir mensaje cifrado..."
                 placeholderTextColor="#64748b"
               />
               <TouchableOpacity style={styles.sendMsgBtn} onPress={handleSendMessage}>
@@ -2183,21 +2183,41 @@ export default function NativeApp() {
           </View>
         )}
 
-        {currentTab === 'AJUSTES' && (
-          <ScrollView style={styles.scrollSection}>
-            <Text style={styles.sectionTitle}>CONFIGURACIÓN Y ENLACE C5i</Text>
+        {currentTab === 'Contactos' && (
+          <ScrollView style={styles.cleanScrollSection}>
+            <Text style={styles.cleanSectionTitle}>CONTACTOS DIRECTOS</Text>
+            <Text style={styles.cleanSectionSub}>Oficiales y mandos enlazados en la red C5i</Text>
+            {[
+              { id: '1', name: 'Oficial Karla Mendoza', callsign: 'PATRULLA-04', unit: 'Sector Operativo Pachuca' },
+              { id: '2', name: 'Comandante R. Morales', callsign: 'HALCON-01', unit: 'Mando Coordinado C5i' },
+              { id: '3', name: 'Despacho Central 911', callsign: 'CENTRAL-C5I', unit: 'Centro de Comando C5i' },
+            ].map((cnt) => (
+              <View key={cnt.id} style={styles.cleanCard}>
+                <View style={styles.channelInfo}>
+                  <Text style={styles.cleanCardTitle}>{cnt.name}</Text>
+                  <Text style={styles.cleanCardMeta}>[{cnt.callsign}] • {cnt.unit}</Text>
+                </View>
+                <View style={styles.cleanOnlineIndicator} />
+              </View>
+            ))}
+          </ScrollView>
+        )}
 
-            <View style={styles.settingsCard}>
-              <Text style={styles.settingsHeader}>SERVIDOR Y BASE DE DATOS</Text>
-              <Text style={styles.settingsSub}>
-                Servidor Activo: Alwaysdata (walkiet_c5i en mysql-walkiet.alwaysdata.net)
+        {currentTab === 'Perfil' && (
+          <ScrollView style={styles.cleanScrollSection}>
+            <Text style={styles.cleanSectionTitle}>PERFIL Y ENLACE ALWAYSDATA</Text>
+
+            <View style={styles.cleanCard}>
+              <Text style={styles.cleanSettingsHeader}>SERVIDOR REMOTO</Text>
+              <Text style={styles.cleanSettingsSub}>
+                Alwaysdata MySQL: walkiet_c5i en mysql-walkiet.alwaysdata.net
               </Text>
               <TextInput
-                style={styles.serverInput}
+                style={styles.cleanServerInput}
                 value={serverUrl}
                 onChangeText={setServerUrl}
-                placeholder="Ej. https://walkiet.alwaysdata.net o http://192.168.1.50:3000"
-                placeholderTextColor="#64748b"
+                placeholder="https://walkiet.alwaysdata.net"
+                placeholderTextColor="#94a3b8"
                 autoCapitalize="none"
                 autoCorrect={false}
               />
@@ -2224,68 +2244,110 @@ export default function NativeApp() {
               </View>
 
               <TouchableOpacity
-                style={styles.testBtn}
+                style={styles.cleanTestBtn}
                 onPress={testServerConnection}
                 disabled={isTestingServer}
               >
                 {isTestingServer ? (
                   <ActivityIndicator size="small" color="#ffffff" />
                 ) : (
-                  <Text style={styles.testBtnText}>
+                  <Text style={styles.cleanTestBtnText}>
                     📡 PROBAR CONEXIÓN AL SERVIDOR {serverLatency ? `(${serverLatency}ms)` : ''}
                   </Text>
                 )}
               </TouchableOpacity>
             </View>
 
-            <View style={styles.settingsCard}>
-              <Text style={styles.settingsHeader}>DATOS DEL OFICIAL</Text>
-              <Text style={styles.settingRow}>Oficial: {currentUser.name}</Text>
-              <Text style={styles.settingRow}>Indicativo / Callsign: {currentUser.badge}</Text>
-              <Text style={styles.settingRow}>Unidad: {currentUser.unit}</Text>
-              <Text style={styles.settingRow}>Rol: {currentUser.role}</Text>
-              <Text style={styles.settingRow}>Dispositivo: Expo en {Platform.OS.toUpperCase()}</Text>
+            <View style={styles.cleanCard}>
+              <Text style={styles.cleanSettingsHeader}>DATOS DEL OFICIAL</Text>
+              <Text style={styles.cleanSettingRow}>Oficial: {currentUser.name}</Text>
+              <Text style={styles.cleanSettingRow}>Indicativo: {currentUser.badge}</Text>
+              <Text style={styles.cleanSettingRow}>Unidad: {currentUser.unit}</Text>
+              <Text style={styles.cleanSettingRow}>Rol: {currentUser.role}</Text>
 
-              <TouchableOpacity style={styles.logoutBtn} onPress={handleLogout}>
-                <Text style={styles.logoutBtnText}>CERRAR SESIÓN</Text>
+              <TouchableOpacity style={styles.cleanLogoutBtn} onPress={handleLogout}>
+                <Text style={styles.cleanLogoutBtnText}>CERRAR SESIÓN</Text>
               </TouchableOpacity>
             </View>
           </ScrollView>
         )}
       </View>
 
-      {/* Bottom Navigation */}
-      <View style={styles.navBar}>
+      {/* 5-Tab Bottom Navigation Bar (Matching Image 2) */}
+      <View style={styles.cleanNavBar}>
         <TouchableOpacity
-          style={[styles.navItem, currentTab === 'PTT' && styles.navItemActive]}
+          style={styles.cleanNavItem}
           onPress={() => setCurrentTab('PTT')}
+          activeOpacity={0.7}
         >
-          <Text style={styles.navIcon}>📻</Text>
-          <Text style={[styles.navLabel, currentTab === 'PTT' && styles.navLabelActive]}>PTT</Text>
+          <MicIcon
+            size={22}
+            color={currentTab === 'PTT' ? '#8a1a36' : '#64748b'}
+            strokeWidth={currentTab === 'PTT' ? 2.4 : 1.8}
+          />
+          <Text style={[styles.cleanNavLabel, currentTab === 'PTT' && styles.cleanNavLabelActive]}>
+            PTT
+          </Text>
         </TouchableOpacity>
 
         <TouchableOpacity
-          style={[styles.navItem, currentTab === 'CANALES' && styles.navItemActive]}
-          onPress={() => setCurrentTab('CANALES')}
+          style={styles.cleanNavItem}
+          onPress={() => setCurrentTab('Grupos')}
+          activeOpacity={0.7}
         >
-          <Text style={styles.navIcon}>📡</Text>
-          <Text style={[styles.navLabel, currentTab === 'CANALES' && styles.navLabelActive]}>CANALES</Text>
+          <UsersIcon
+            size={22}
+            color={currentTab === 'Grupos' ? '#8a1a36' : '#64748b'}
+            strokeWidth={currentTab === 'Grupos' ? 2.4 : 1.8}
+          />
+          <Text style={[styles.cleanNavLabel, currentTab === 'Grupos' && styles.cleanNavLabelActive]}>
+            Grupos
+          </Text>
         </TouchableOpacity>
 
         <TouchableOpacity
-          style={[styles.navItem, currentTab === 'MENSAJES' && styles.navItemActive]}
-          onPress={() => setCurrentTab('MENSAJES')}
+          style={styles.cleanNavItem}
+          onPress={() => setCurrentTab('Chat')}
+          activeOpacity={0.7}
         >
-          <Text style={styles.navIcon}>💬</Text>
-          <Text style={[styles.navLabel, currentTab === 'MENSAJES' && styles.navLabelActive]}>LOGS</Text>
+          <MessageSquareIcon
+            size={22}
+            color={currentTab === 'Chat' ? '#8a1a36' : '#64748b'}
+            strokeWidth={currentTab === 'Chat' ? 2.4 : 1.8}
+          />
+          <Text style={[styles.cleanNavLabel, currentTab === 'Chat' && styles.cleanNavLabelActive]}>
+            Chat
+          </Text>
         </TouchableOpacity>
 
         <TouchableOpacity
-          style={[styles.navItem, currentTab === 'AJUSTES' && styles.navItemActive]}
-          onPress={() => setCurrentTab('AJUSTES')}
+          style={styles.cleanNavItem}
+          onPress={() => setCurrentTab('Contactos')}
+          activeOpacity={0.7}
         >
-          <Text style={styles.navIcon}>⚙️</Text>
-          <Text style={[styles.navLabel, currentTab === 'AJUSTES' && styles.navLabelActive]}>AJUSTES</Text>
+          <BookOpenIcon
+            size={22}
+            color={currentTab === 'Contactos' ? '#8a1a36' : '#64748b'}
+            strokeWidth={currentTab === 'Contactos' ? 2.4 : 1.8}
+          />
+          <Text style={[styles.cleanNavLabel, currentTab === 'Contactos' && styles.cleanNavLabelActive]}>
+            Contactos
+          </Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={styles.cleanNavItem}
+          onPress={() => setCurrentTab('Perfil')}
+          activeOpacity={0.7}
+        >
+          <UserIcon
+            size={22}
+            color={currentTab === 'Perfil' ? '#8a1a36' : '#64748b'}
+            strokeWidth={currentTab === 'Perfil' ? 2.4 : 1.8}
+          />
+          <Text style={[styles.cleanNavLabel, currentTab === 'Perfil' && styles.cleanNavLabelActive]}>
+            Perfil
+          </Text>
         </TouchableOpacity>
       </View>
     </SafeAreaView>
@@ -2293,6 +2355,326 @@ export default function NativeApp() {
 }
 
 const styles = StyleSheet.create({
+  cleanContainer: {
+    flex: 1,
+    backgroundColor: '#f8fafc',
+  },
+  cleanMainContent: {
+    flex: 1,
+    backgroundColor: '#f8fafc',
+  },
+  cleanPttContainer: {
+    flex: 1,
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingTop: 16,
+    paddingBottom: 24,
+  },
+  cleanTopBar: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    width: '100%',
+  },
+  cleanChannelBox: {
+    flex: 1,
+    marginRight: 12,
+  },
+  cleanChannelLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#64748b',
+    letterSpacing: 0.8,
+    textTransform: 'uppercase',
+  },
+  cleanChannelTitle: {
+    fontSize: 22,
+    fontWeight: '800',
+    color: '#0f172a',
+    letterSpacing: -0.5,
+    marginTop: 2,
+  },
+  cleanHeaderActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  cleanSosBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#e11d48',
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 14,
+    gap: 5,
+    shadowColor: '#e11d48',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  cleanSosBtnText: {
+    color: '#ffffff',
+    fontSize: 12,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+  },
+  cleanMembersPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#ffffff',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    paddingHorizontal: 11,
+    paddingVertical: 7,
+    borderRadius: 14,
+    gap: 5,
+    shadowColor: '#64748b',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.08,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  cleanMembersCount: {
+    color: '#334155',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  cleanCenterArea: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginVertical: 16,
+  },
+  cleanStatusPrompt: {
+    marginBottom: 28,
+  },
+  cleanStatusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  cleanGreenDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#10b981',
+  },
+  cleanPulseRedDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: '#e11d48',
+  },
+  cleanStatusTextIdle: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#334155',
+  },
+  cleanStatusTextRed: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#e11d48',
+  },
+  cleanPttCircleOuter: {
+    width: 270,
+    height: 270,
+    borderRadius: 135,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    backgroundColor: 'rgba(255, 255, 255, 0.95)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#64748b',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.12,
+    shadowRadius: 18,
+    elevation: 6,
+  },
+  cleanPttCircleInner: {
+    width: 185,
+    height: 185,
+    borderRadius: 92.5,
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
+    backgroundColor: '#f1f5f9',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.06,
+    shadowRadius: 6,
+    elevation: 3,
+  },
+  cleanPttCircleInnerActive: {
+    backgroundColor: '#be123c',
+    borderColor: '#9f1239',
+  },
+  cleanWifiPill: {
+    marginTop: 32,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#ecfdf5',
+    borderWidth: 1,
+    borderColor: '#a7f3d0',
+    paddingHorizontal: 16,
+    paddingVertical: 7,
+    borderRadius: 20,
+    gap: 8,
+  },
+  cleanWifiPillText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#059669',
+  },
+  cleanNavBar: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    alignItems: 'center',
+    backgroundColor: '#ffffff',
+    borderTopWidth: 1,
+    borderTopColor: '#e2e8f0',
+    paddingVertical: 10,
+    paddingHorizontal: 8,
+  },
+  cleanNavItem: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  cleanNavLabel: {
+    fontSize: 11,
+    fontWeight: '500',
+    color: '#64748b',
+    marginTop: 3,
+  },
+  cleanNavLabelActive: {
+    color: '#8a1a36',
+    fontWeight: '800',
+  },
+  cleanScrollSection: {
+    flex: 1,
+    padding: 16,
+  },
+  cleanSectionTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#0f172a',
+    letterSpacing: 0.5,
+    marginBottom: 4,
+  },
+  cleanSectionSub: {
+    fontSize: 12,
+    color: '#64748b',
+    marginBottom: 16,
+  },
+  cleanCard: {
+    backgroundColor: '#ffffff',
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    padding: 16,
+    marginBottom: 12,
+    shadowColor: '#64748b',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+    elevation: 1,
+  },
+  cleanCardSelected: {
+    borderColor: '#8a1a36',
+    borderWidth: 1.5,
+    backgroundColor: '#fff1f2',
+  },
+  cleanCardTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#0f172a',
+  },
+  cleanCardTitleSelected: {
+    color: '#8a1a36',
+  },
+  cleanCardMeta: {
+    fontSize: 12,
+    color: '#64748b',
+    marginTop: 4,
+  },
+  cleanCardBadge: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#64748b',
+    backgroundColor: '#f1f5f9',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+    overflow: 'hidden',
+    alignSelf: 'flex-start',
+    marginTop: 8,
+  },
+  cleanCardBadgeActive: {
+    color: '#ffffff',
+    backgroundColor: '#8a1a36',
+  },
+  cleanOnlineIndicator: {
+    width: 9,
+    height: 9,
+    borderRadius: 4.5,
+    backgroundColor: '#10b981',
+    alignSelf: 'center',
+  },
+  cleanSettingsHeader: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#334155',
+    marginBottom: 4,
+    letterSpacing: 0.5,
+  },
+  cleanSettingsSub: {
+    fontSize: 11,
+    color: '#64748b',
+    marginBottom: 12,
+  },
+  cleanServerInput: {
+    backgroundColor: '#f8fafc',
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    fontSize: 13,
+    color: '#0f172a',
+    marginBottom: 10,
+  },
+  cleanTestBtn: {
+    backgroundColor: '#8a1a36',
+    borderRadius: 12,
+    paddingVertical: 10,
+    alignItems: 'center',
+    marginTop: 8,
+  },
+  cleanTestBtnText: {
+    color: '#ffffff',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  cleanSettingRow: {
+    fontSize: 13,
+    color: '#334155',
+    marginBottom: 6,
+  },
+  cleanLogoutBtn: {
+    backgroundColor: '#ef4444',
+    borderRadius: 12,
+    paddingVertical: 10,
+    alignItems: 'center',
+    marginTop: 12,
+  },
+  cleanLogoutBtnText: {
+    color: '#ffffff',
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+  },
   container: {
     flex: 1,
     backgroundColor: '#070b13',
