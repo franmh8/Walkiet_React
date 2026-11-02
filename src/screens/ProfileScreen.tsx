@@ -148,13 +148,13 @@ export function ProfileScreen() {
             <div className="flex items-center justify-between">
               <span className="text-xs text-slate-400">BD Servidor:</span>
               <span className="text-xs font-mono font-bold text-emerald-400">
-                {dbStatus?.database_name || 'if0_42687378_walkt'}
+                {dbStatus?.database_name || 'walkiet_c5i'}
               </span>
             </div>
             <div className="flex items-center justify-between">
               <span className="text-xs text-slate-400">Host MySQL:</span>
               <span className="text-xs font-mono text-slate-300">
-                sql206.infinityfree.com:3306
+                {dbStatus?.server_host || 'mysql-walkiet.alwaysdata.net:3306'}
               </span>
             </div>
             <div className="flex items-center justify-between">
@@ -176,7 +176,7 @@ export function ProfileScreen() {
             <div className="grid grid-cols-2 gap-2 text-xs font-mono">
               <div className="p-2.5 rounded-xl bg-slate-900/50 border border-slate-800/80 flex items-center justify-between">
                 <span className="text-slate-300">users</span>
-                <span className="text-rose-400 font-bold">{dbStatus?.tables?.users ?? 4} filas</span>
+                <span className="text-rose-400 font-bold">{dbStatus?.tables?.users ?? 3} filas</span>
               </div>
               <div className="p-2.5 rounded-xl bg-slate-900/50 border border-slate-800/80 flex items-center justify-between">
                 <span className="text-slate-300">channels</span>
@@ -222,6 +222,29 @@ export function ProfileScreen() {
             <button
               type="button"
               onClick={() => {
+                const u = 'https://walkiet.alwaysdata.net';
+                setBackendUrlState(u);
+                setBackendUrl(u);
+                setUrlSavedNotice(true);
+                setTimeout(() => setUrlSavedNotice(false), 2500);
+                fetchDbStatus();
+              }}
+              className={`p-2.5 rounded-xl border text-left transition flex items-center justify-between ${
+                backendUrl === 'https://walkiet.alwaysdata.net'
+                  ? 'border-emerald-500 bg-emerald-950/20 text-emerald-300'
+                  : 'border-slate-800 bg-slate-900/60 text-slate-400 hover:text-white'
+              }`}
+            >
+              <div>
+                <div className="font-bold text-xs text-white">Servidor Remoto Alwaysdata (https://walkiet.alwaysdata.net)</div>
+                <div className="text-[10px] text-emerald-400 font-medium">Recomendado • HTTPS con MySQL walkiet_c5i</div>
+              </div>
+              {backendUrl === 'https://walkiet.alwaysdata.net' && <CheckCircle className="w-4 h-4 text-emerald-400" />}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
                 setBackendUrlState('');
                 setBackendUrl('');
                 setUrlSavedNotice(true);
@@ -235,33 +258,10 @@ export function ProfileScreen() {
               }`}
             >
               <div>
-                <div className="font-bold text-xs">Servidor Full-Stack Local (Recomendado)</div>
-                <div className="text-[10px] text-slate-400">Rutas /api/* gestionadas en puerto 3000 con esquema if0_42687378_walkt</div>
+                <div className="font-bold text-xs">Servidor Full-Stack Local (/api/*)</div>
+                <div className="text-[10px] text-slate-400">Rutas /api/* gestionadas en Node/Express en puerto 3000</div>
               </div>
               {!backendUrl && <CheckCircle className="w-4 h-4 text-emerald-400" />}
-            </button>
-
-            <button
-              type="button"
-              onClick={() => {
-                const u = 'http://walkt.gt.tc';
-                setBackendUrlState(u);
-                setBackendUrl(u);
-                setUrlSavedNotice(true);
-                setTimeout(() => setUrlSavedNotice(false), 2500);
-                fetchDbStatus();
-              }}
-              className={`p-2.5 rounded-xl border text-left transition flex items-center justify-between ${
-                backendUrl === 'http://walkt.gt.tc'
-                  ? 'border-emerald-500 bg-emerald-950/20 text-emerald-300'
-                  : 'border-slate-800 bg-slate-900/60 text-slate-400 hover:text-white'
-              }`}
-            >
-              <div>
-                <div className="font-bold text-xs">Dominio InfinityFree (http://walkt.gt.tc)</div>
-                <div className="text-[10px] text-slate-400">Archivos PHP alojados en walkt.gt.tc/htdocs</div>
-              </div>
-              {backendUrl === 'http://walkt.gt.tc' && <CheckCircle className="w-4 h-4 text-emerald-400" />}
             </button>
           </div>
 

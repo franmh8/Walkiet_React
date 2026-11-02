@@ -159,7 +159,7 @@ export default function NativeApp() {
   const [txDuration, setTxDuration] = useState(0);
   const [signalStrength] = useState(98);
   const [batteryLevel] = useState(91);
-  const [serverUrl, setServerUrl] = useState('http://walkt.gt.tc');
+  const [serverUrl, setServerUrl] = useState('https://walkiet.alwaysdata.net');
   const [dbStatus, setDbStatus] = useState<'ONLINE' | 'STANDBY' | 'CONNECTING'>('ONLINE');
   const [isSosActive, setIsSosActive] = useState(false);
   const [isTestingServer, setIsTestingServer] = useState(false);
@@ -183,14 +183,22 @@ export default function NativeApp() {
         if (savedUser) setCurrentUser(JSON.parse(savedUser));
         
         const savedUrl = await safeStorage.getItem('c5i_native_server_url');
-        if (savedUrl) setServerUrl(savedUrl);
+        if (savedUrl) {
+          // Si el usuario tenía guardado el servidor anterior con fallos, migrar automáticamente a Alwaysdata
+          if (savedUrl.includes('walkt.gt.tc') || savedUrl.includes('infinityfree')) {
+            setServerUrl('https://walkiet.alwaysdata.net');
+            await safeStorage.setItem('c5i_native_server_url', 'https://walkiet.alwaysdata.net');
+          } else {
+            setServerUrl(savedUrl);
+          }
+        }
       } catch (e) {
         console.log('Error reading storage', e);
       }
     })();
   }, []);
 
-  // En navegador web, enviar text/plain evita que Chrome envíe la solicitud previa OPTIONS que InfinityFree bloquea
+  // En navegador web, enviar text/plain evita preflights OPTIONS innecesarios
   const getSafePostHeaders = () => ({
     'Content-Type': Platform.OS === 'web' ? 'text/plain;charset=UTF-8' : 'application/json',
   });
@@ -232,7 +240,7 @@ export default function NativeApp() {
     }
   }, [serverUrl, refreshChannels]);
 
-  // Probar conectividad con el servidor configurado (soporta Node Express y PHP InfinityFree)
+  // Probar conectividad con el servidor configurado (Alwaysdata PHP y Node Express)
   const testServerConnection = async () => {
     setIsTestingServer(true);
     setServerLatency(null);
@@ -252,9 +260,12 @@ export default function NativeApp() {
         const data = await res.json().catch(() => ({}));
         setServerLatency(elapsed);
         setDbStatus('ONLINE');
+        const dbName = data.database_name || data.database || 'walkiet_c5i';
+        const motor = data.engine || (data.database ? 'Alwaysdata MySQL' : 'MySQL Server');
+        const usersCount = data.users_count !== undefined ? data.users_count : (data.tables?.users ?? '3');
         Alert.alert(
           '✅ Conexión Exitosa',
-          `Enlace con servidor C5i establecido (${elapsed}ms).\nBase de datos: ${data.database_name || 'if0_42687378_walkt'}\nMotor: ${data.engine || 'MySQL Server'}`
+          `Enlace con servidor C5i establecido (${elapsed}ms).\nHost: ${cleanUrl.replace('https://', '')}\nBase de datos: ${dbName}\nMotor: ${motor}\nUsuarios registrados: ${usersCount}`
         );
         refreshChannels(serverUrl);
       } else {
@@ -442,11 +453,11 @@ export default function NativeApp() {
 
             loginErrorMsg = msg || 'Credenciales inválidas en el sistema C5i.';
           } else if (rawText.includes('aes.js') || rawText.includes('__test') || rawText.includes('openresty')) {
-            loginErrorMsg = 'InfinityFree bloqueó la app móvil con su filtro anti-bots (TestCookie). En Ajustes ⚙️ usa la URL del servidor backend.';
+            loginErrorMsg = 'El servidor anterior devolvió un bloqueo. Asegúrate de tener https://walkiet.alwaysdata.net en Ajustes ⚙️';
           } else if (res && !res.ok) {
             loginErrorMsg = `El servidor respondió con código HTTP ${res.status}.`;
           } else {
-            loginErrorMsg = 'No fue posible contactar al servidor C5i (error de red o bloqueo de host).';
+            loginErrorMsg = 'No fue posible contactar a walkiet.alwaysdata.net. Verifica tu conexión de red o WiFi.';
           }
         } catch (e: any) {
           loginErrorMsg = e.message || 'Error de conexión con la base de datos C5i.';
@@ -698,12 +709,12 @@ export default function NativeApp() {
             } else if (data && data.message) {
               serverErrorMsg = data.message;
             } else if (rawText.includes('aes.js') || rawText.includes('__test') || rawText.includes('openresty')) {
-              serverErrorMsg = 'InfinityFree bloqueó la app con su filtro anti-bots (TestCookie). En Ajustes ⚙️ cambia la URL al servidor backend.';
+              serverErrorMsg = 'El servidor anterior devolvió un bloqueo. Asegúrate de tener https://walkiet.alwaysdata.net en Ajustes ⚙️';
             } else {
               serverErrorMsg = `El servidor respondió con código HTTP ${res.status}`;
             }
           } else {
-            serverErrorMsg = 'No fue posible contactar al servidor C5i (error de red o bloqueo de host).';
+            serverErrorMsg = 'No fue posible contactar a walkiet.alwaysdata.net (error de red o timeout).';
           }
         } catch (e: any) {
           serverErrorMsg = e.message || 'Error al comunicarse con la base de datos C5i.';
@@ -2179,13 +2190,13 @@ export default function NativeApp() {
             <View style={styles.settingsCard}>
               <Text style={styles.settingsHeader}>SERVIDOR Y BASE DE DATOS</Text>
               <Text style={styles.settingsSub}>
-                Base de datos: if0_42687378_walkt (sql206.infinityfree.com)
+                Servidor Activo: Alwaysdata (walkiet_c5i en mysql-walkiet.alwaysdata.net)
               </Text>
               <TextInput
                 style={styles.serverInput}
                 value={serverUrl}
                 onChangeText={setServerUrl}
-                placeholder="Ej. http://walkt.gt.tc o http://192.168.1.50:3000"
+                placeholder="Ej. https://walkiet.alwaysdata.net o http://192.168.1.50:3000"
                 placeholderTextColor="#64748b"
                 autoCapitalize="none"
                 autoCorrect={false}
@@ -2194,11 +2205,11 @@ export default function NativeApp() {
                 <TouchableOpacity
                   style={styles.presetBtn}
                   onPress={async () => {
-                    setServerUrl('http://walkt.gt.tc');
-                    await safeStorage.setItem('c5i_native_server_url', 'http://walkt.gt.tc');
+                    setServerUrl('https://walkiet.alwaysdata.net');
+                    await safeStorage.setItem('c5i_native_server_url', 'https://walkiet.alwaysdata.net');
                   }}
                 >
-                  <Text style={styles.presetBtnText}>INFINITYFREE</Text>
+                  <Text style={styles.presetBtnText}>ALWAYSDATA (RECOMENDADO)</Text>
                 </TouchableOpacity>
 
                 <TouchableOpacity

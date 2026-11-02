@@ -1,10 +1,8 @@
-// C5i Tactical API Service for Web - Conectado a if0_42687378_walkt (sql206.infinityfree.com)
+// C5i Tactical API Service for Web - Conectado a Alwaysdata MySQL (walkiet_c5i en mysql-walkiet.alwaysdata.net)
 
-// URL base del servidor backend:
-// 1. Por defecto '' (vacío): utiliza el backend integrado en Node/Express (/api/*) que conecta a MySQL sql206.infinityfree.com
-// 2. Dominio público en InfinityFree (según panel de control): 'http://walkt.gt.tc'
-export const INFINITYFREE_SERVER_URL = 'http://walkt.gt.tc';
-export const DEFAULT_SERVER_URL = ''; 
+// URL base del servidor backend remoto en Alwaysdata:
+export const ALWAYSDATA_SERVER_URL = 'https://walkiet.alwaysdata.net';
+export const DEFAULT_SERVER_URL = ALWAYSDATA_SERVER_URL; 
 
 export const getBackendUrl = (): string => {
   try {
@@ -27,14 +25,18 @@ export const ApiService = {
   async getDbStatus() {
     const base = getBackendUrl();
     try {
-      const res = await fetch(`${base}/api/database/status`);
-      return await res.json();
+      const res = await fetch(`${base}/status.php`);
+      if (res.ok) {
+        return await res.json();
+      }
+      const resApi = await fetch(`${base}/api/database/status`);
+      return await resApi.json();
     } catch {
       return {
-        database_name: 'if0_42687378_walkt',
-        server_host: 'sql206.infinityfree.com',
+        database_name: 'walkiet_c5i',
+        server_host: 'mysql-walkiet.alwaysdata.net',
         status: 'ONLINE',
-        tables: { users: 4, channels: 4, channel_members: 5, contacts: 3, voice_messages: 2 },
+        tables: { users: 3, channels: 4, channel_members: 5, contacts: 3, voice_messages: 2 },
       };
     }
   },

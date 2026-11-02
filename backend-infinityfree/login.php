@@ -27,16 +27,19 @@ $ip = $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0';
 $stmt = $pdo->prepare("
     SELECT * FROM users 
     WHERE phone_number = :phone 
-       OR LOWER(correo) = :id_lower 
-       OR LOWER(callsign) = :id_lower 
-       OR LOWER(name) = :id_lower 
+       OR LOWER(correo) = :correo 
+       OR LOWER(callsign) = :callsign 
+       OR LOWER(name) = :name 
        OR id = :ident
     LIMIT 1
 ");
 
+$id_lower = strtolower($identificador);
 $stmt->execute([
     ':phone' => $cleanPhone ?: $identificador,
-    ':id_lower' => strtolower($identificador),
+    ':correo' => $id_lower,
+    ':callsign' => $id_lower,
+    ':name' => $id_lower,
     ':ident' => $identificador,
 ]);
 
