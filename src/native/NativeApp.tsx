@@ -527,13 +527,6 @@ export default function NativeApp() {
       } catch {}
     }
 
-    // 3. Retroalimentación háptica
-    if (Platform.OS !== 'web') {
-      try {
-        Vibration.vibrate(50);
-      } catch {}
-    }
-
     setHasCopiedPin(true);
     setTimeout(() => setHasCopiedPin(false), 2500);
   };
@@ -3074,13 +3067,14 @@ export default function NativeApp() {
         </View>
       </Modal>
 
-      {/* 1. MODAL: UNIRSE A CANAL CON PIN O QR (CON MANEJO ÓPTIMO DE TECLADO EN IPHONE) */}
+      {/* 1. MODAL: UNIRSE A CANAL (PIN O ESCÁNER QR INTEGRADO EN UN SOLO MODAL PARA COMPATIBILIDAD CON IOS) */}
       <Modal
         visible={isJoinModalOpen}
         animationType="fade"
         transparent
         onRequestClose={() => {
           Keyboard.dismiss();
+          setIsJoinScanning(false);
           setIsJoinModalOpen(false);
         }}
       >
@@ -3091,25 +3085,37 @@ export default function NativeApp() {
               keyboardVerticalOffset={Platform.OS === 'ios' ? 30 : 0}
               style={{ width: '100%', alignItems: 'center' }}
             >
-              <TouchableWithoutFeedback onPress={(e) => e.stopPropagation()}>
-                <View style={styles.channelModalCard}>
+              <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+                <View style={[styles.channelModalCard, isJoinScanning && { maxWidth: 390 }]}>
                   {/* Header */}
                   <View style={styles.channelModalHeader}>
                     <View style={styles.channelModalHeaderLeft}>
                       <View style={styles.channelModalIconBox}>
-                        <LogInIcon size={20} color="#8a1a36" strokeWidth={2} />
+                        {isJoinScanning ? (
+                          <CameraIcon size={20} color="#8a1a36" strokeWidth={2} />
+                        ) : (
+                          <LogInIcon size={20} color="#8a1a36" strokeWidth={2} />
+                        )}
                       </View>
                       <View>
-                        <Text style={styles.channelModalTitle}>Unirse a Canal</Text>
+                        <Text style={styles.channelModalTitle}>
+                          {isJoinScanning ? 'Escanear QR de Canal' : 'Unirse a Canal'}
+                        </Text>
                         <Text style={styles.channelModalSubtitle}>
-                          Ingresa el PIN de 4 dígitos o escanea el QR
+                          {isJoinScanning
+                            ? 'Apunta la cámara al código QR táctico'
+                            : 'Ingresa el PIN de 4 dígitos o escanea el QR'}
                         </Text>
                       </View>
                     </View>
                     <TouchableOpacity
                       onPress={() => {
                         Keyboard.dismiss();
-                        setIsJoinModalOpen(false);
+                        if (isJoinScanning) {
+                          setIsJoinScanning(false);
+                        } else {
+                          setIsJoinModalOpen(false);
+                        }
                       }}
                       style={styles.channelModalCloseBtn}
                       hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
@@ -3118,189 +3124,150 @@ export default function NativeApp() {
                     </TouchableOpacity>
                   </View>
 
-                  <ScrollView
-                    style={{ maxHeight: 480 }}
-                    contentContainerStyle={styles.canalesModalBody}
-                    keyboardShouldPersistTaps="handled"
-                  >
-                    {joinError && (
-                      <View style={styles.recoveryErrorBanner}>
-                        <AlertTriangleIcon size={15} color="#be123c" strokeWidth={1.8} />
-                        <Text style={styles.recoveryErrorText}>{joinError}</Text>
+                  {isJoinScanning ? (
+                    /* VISTA ESCÁNER QR (DENTRO DEL MISMO MODAL: 100% FUNCIONAL EN IOS) */
+                    <View style={styles.canalesScannerBody}>
+                      {/* Visor de Cámara con Retícula */}
+                      <View style={styles.canalesCameraFrame}>
+                        <View style={[styles.canalesScannerCorner, styles.cornerTL]} />
+                        <View style={[styles.canalesScannerCorner, styles.cornerTR]} />
+                        <View style={[styles.canalesScannerCorner, styles.cornerBL]} />
+                        <View style={[styles.canalesScannerCorner, styles.cornerBR]} />
+                        <View style={styles.canalesScannerLaser} />
+                        <QrCodeIcon size={72} color="rgba(255, 255, 255, 0.25)" strokeWidth={1} />
+                        <Text style={styles.canalesScannerHint}>Buscando código QR C5i...</Text>
                       </View>
-                    )}
 
-                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <Text style={styles.canalesPinLabel}>PIN O NÚMERO DE ASIGNACIÓN</Text>
+                      {/* Botones de Detección Rápida de Canales */}
+                      <Text style={styles.canalesScanQuickTitle}>CANALES DISPONIBLES EN EL ÁREA:</Text>
+                      <View style={styles.canalesScanQuickList}>
+                        {channels.slice(0, 3).map((ch) => (
+                          <TouchableOpacity
+                            key={ch.id}
+                            style={styles.canalesScanQuickItem}
+                            onPress={() => handleScanQrMock(ch)}
+                            activeOpacity={0.7}
+                          >
+                            <View style={styles.canalesScanQuickRadio}>
+                              <RadioIcon size={14} color="#8a1a36" />
+                            </View>
+                            <View style={{ flex: 1 }}>
+                              <Text style={styles.canalesScanQuickName} numberOfLines={1}>{ch.name}</Text>
+                              <Text style={styles.canalesScanQuickMeta}>PIN: {ch.pin || '1090'} • {ch.frequency}</Text>
+                            </View>
+                            <Text style={styles.canalesScanQuickAction}>Simular Scan</Text>
+                          </TouchableOpacity>
+                        ))}
+                      </View>
+
                       <TouchableOpacity
-                        onPress={Keyboard.dismiss}
-                        style={styles.canalesHideKeyboardBtn}
-                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                        style={styles.channelCloseBtn}
+                        onPress={() => setIsJoinScanning(false)}
+                        activeOpacity={0.8}
                       >
-                        <Text style={styles.canalesHideKeyboardText}>Bajar teclado ▾</Text>
+                        <Text style={styles.channelCloseBtnText}>Volver a ingresar PIN</Text>
                       </TouchableOpacity>
                     </View>
-                    <Text style={styles.canalesPinSub}>
-                      Ingresa el código numérico de 4 dígitos proporcionado por el oficial
-                    </Text>
-
-                    {/* Cajas de dígitos PIN sincronizadas (Misma estructura del Registro) */}
-                    <TouchableOpacity
-                      activeOpacity={1}
-                      onPress={() => joinPinInputRef.current?.focus()}
-                      style={styles.canalesTokenRow}
+                  ) : (
+                    /* VISTA INGRESO DE PIN */
+                    <ScrollView
+                      style={{ maxHeight: 480 }}
+                      contentContainerStyle={styles.canalesModalBody}
+                      keyboardShouldPersistTaps="handled"
                     >
-                      {[0, 1, 2, 3].map((idx) => {
-                        const char = joinPinDigits[idx] || '';
-                        const isCurrent = joinPinDigits.length === idx;
-                        return (
-                          <View
-                            key={idx}
-                            style={[
-                              styles.canalesTokenBox,
-                              Boolean(char) && styles.canalesTokenBoxFilled,
-                              isCurrent && styles.canalesTokenBoxActive,
-                            ]}
-                          >
-                            <Text style={styles.canalesTokenDigit}>{char}</Text>
-                          </View>
-                        );
-                      })}
-                    </TouchableOpacity>
+                      {joinError && (
+                        <View style={styles.recoveryErrorBanner}>
+                          <AlertTriangleIcon size={15} color="#be123c" strokeWidth={1.8} />
+                          <Text style={styles.recoveryErrorText}>{joinError}</Text>
+                        </View>
+                      )}
 
-                    {/* Input nativo oculto (sin autoFocus para no tapar la pantalla de inmediato) */}
-                    <TextInput
-                      ref={joinPinInputRef}
-                      style={styles.hiddenInput}
-                      value={joinPinDigits}
-                      onChangeText={(val) => {
-                        const cleaned = val.replace(/\D/g, '').slice(0, 4);
-                        setJoinPinDigits(cleaned);
-                        if (joinError) setJoinError(null);
-                        if (cleaned.length === 4) {
+                      <Text style={styles.canalesPinLabel}>PIN O NÚMERO DE ASIGNACIÓN</Text>
+                      <Text style={styles.canalesPinSub}>
+                        Ingresa el código numérico de 4 dígitos proporcionado por el oficial
+                      </Text>
+
+                      {/* Cajas de dígitos PIN sincronizadas (Misma estructura del Registro) */}
+                      <TouchableOpacity
+                        activeOpacity={1}
+                        onPress={() => joinPinInputRef.current?.focus()}
+                        style={styles.canalesTokenRow}
+                      >
+                        {[0, 1, 2, 3].map((idx) => {
+                          const char = joinPinDigits[idx] || '';
+                          const isCurrent = joinPinDigits.length === idx;
+                          return (
+                            <View
+                              key={idx}
+                              style={[
+                                styles.canalesTokenBox,
+                                Boolean(char) && styles.canalesTokenBoxFilled,
+                                isCurrent && styles.canalesTokenBoxActive,
+                              ]}
+                            >
+                              <Text style={styles.canalesTokenDigit}>{char}</Text>
+                            </View>
+                          );
+                        })}
+                      </TouchableOpacity>
+
+                      {/* Input nativo oculto (sin autoFocus para no tapar la pantalla de inmediato) */}
+                      <TextInput
+                        ref={joinPinInputRef}
+                        style={styles.hiddenInput}
+                        value={joinPinDigits}
+                        onChangeText={(val) => {
+                          const cleaned = val.replace(/\D/g, '').slice(0, 4);
+                          setJoinPinDigits(cleaned);
+                          if (joinError) setJoinError(null);
+                          if (cleaned.length === 4) {
+                            Keyboard.dismiss();
+                          }
+                        }}
+                        keyboardType="numeric"
+                        maxLength={4}
+                        autoFocus={false}
+                      />
+
+                      {/* Botón de envío */}
+                      <TouchableOpacity
+                        style={[
+                          styles.canalesModalSubmitBtn,
+                          joinPinDigits.length !== 4 && styles.canalesModalSubmitBtnDisabled,
+                        ]}
+                        onPress={handleJoinChannelSubmit}
+                        disabled={joinPinDigits.length !== 4}
+                        activeOpacity={0.88}
+                      >
+                        <Text style={styles.canalesModalSubmitBtnText}>UNIRME AL CANAL</Text>
+                      </TouchableOpacity>
+
+                      {/* Divisor */}
+                      <View style={styles.canalesDividerRow}>
+                        <View style={styles.canalesDividerLine} />
+                        <Text style={styles.canalesDividerText}>O BIEN</Text>
+                        <View style={styles.canalesDividerLine} />
+                      </View>
+
+                      {/* Botón para Escanear Código QR */}
+                      <TouchableOpacity
+                        style={styles.canalesScanQrBtn}
+                        onPress={() => {
                           Keyboard.dismiss();
-                        }
-                      }}
-                      keyboardType="numeric"
-                      maxLength={4}
-                      autoFocus={false}
-                    />
-
-                    {/* Botón de envío */}
-                    <TouchableOpacity
-                      style={[
-                        styles.canalesModalSubmitBtn,
-                        joinPinDigits.length !== 4 && styles.canalesModalSubmitBtnDisabled,
-                      ]}
-                      onPress={handleJoinChannelSubmit}
-                      disabled={joinPinDigits.length !== 4}
-                      activeOpacity={0.88}
-                    >
-                      <Text style={styles.canalesModalSubmitBtnText}>UNIRME AL CANAL</Text>
-                    </TouchableOpacity>
-
-                    {/* Divisor */}
-                    <View style={styles.canalesDividerRow}>
-                      <View style={styles.canalesDividerLine} />
-                      <Text style={styles.canalesDividerText}>O BIEN</Text>
-                      <View style={styles.canalesDividerLine} />
-                    </View>
-
-                    {/* Botón para Escanear Código QR */}
-                    <TouchableOpacity
-                      style={styles.canalesScanQrBtn}
-                      onPress={() => {
-                        Keyboard.dismiss();
-                        setIsJoinScanning(true);
-                      }}
-                      activeOpacity={0.8}
-                    >
-                      <CameraIcon size={18} color="#8a1a36" strokeWidth={2} />
-                      <Text style={styles.canalesScanQrBtnText}>Escanear Código QR del Canal</Text>
-                    </TouchableOpacity>
-                  </ScrollView>
+                          setIsJoinScanning(true);
+                        }}
+                        activeOpacity={0.8}
+                      >
+                        <CameraIcon size={18} color="#8a1a36" strokeWidth={2} />
+                        <Text style={styles.canalesScanQrBtnText}>Escanear Código QR del Canal</Text>
+                      </TouchableOpacity>
+                    </ScrollView>
+                  )}
                 </View>
               </TouchableWithoutFeedback>
             </KeyboardAvoidingView>
           </View>
         </TouchableWithoutFeedback>
-      </Modal>
-
-      {/* 2. MODAL: ESCÁNER QR DE CANAL */}
-      <Modal
-        visible={isJoinScanning}
-        animationType="slide"
-        transparent
-        onRequestClose={() => setIsJoinScanning(false)}
-      >
-        <View style={styles.channelModalOverlay}>
-          <View style={[styles.channelModalCard, { maxWidth: 390 }]}>
-            {/* Header */}
-            <View style={styles.channelModalHeader}>
-              <View style={styles.channelModalHeaderLeft}>
-                <View style={styles.channelModalIconBox}>
-                  <CameraIcon size={20} color="#8a1a36" strokeWidth={2} />
-                </View>
-                <View>
-                  <Text style={styles.channelModalTitle}>Escanear QR de Canal</Text>
-                  <Text style={styles.channelModalSubtitle}>
-                    Apunta la cámara al código QR táctico
-                  </Text>
-                </View>
-              </View>
-              <TouchableOpacity
-                onPress={() => setIsJoinScanning(false)}
-                style={styles.channelModalCloseBtn}
-                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-              >
-                <XIcon size={18} color="#64748b" strokeWidth={2} />
-              </TouchableOpacity>
-            </View>
-
-            <View style={styles.canalesScannerBody}>
-              {/* Visor de Cámara con Retícula */}
-              <View style={styles.canalesCameraFrame}>
-                <View style={[styles.canalesScannerCorner, styles.cornerTL]} />
-                <View style={[styles.canalesScannerCorner, styles.cornerTR]} />
-                <View style={[styles.canalesScannerCorner, styles.cornerBL]} />
-                <View style={[styles.canalesScannerCorner, styles.cornerBR]} />
-                <View style={styles.canalesScannerLaser} />
-                <QrCodeIcon size={72} color="rgba(255, 255, 255, 0.25)" strokeWidth={1} />
-                <Text style={styles.canalesScannerHint}>Buscando código QR C5i...</Text>
-              </View>
-
-              {/* Botones de Detección Rápida de Canales */}
-              <Text style={styles.canalesScanQuickTitle}>CANALES DISPONIBLES EN EL ÁREA:</Text>
-              <View style={styles.canalesScanQuickList}>
-                {channels.slice(0, 3).map((ch) => (
-                  <TouchableOpacity
-                    key={ch.id}
-                    style={styles.canalesScanQuickItem}
-                    onPress={() => handleScanQrMock(ch)}
-                    activeOpacity={0.7}
-                  >
-                    <View style={styles.canalesScanQuickRadio}>
-                      <RadioIcon size={14} color="#8a1a36" />
-                    </View>
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.canalesScanQuickName} numberOfLines={1}>{ch.name}</Text>
-                      <Text style={styles.canalesScanQuickMeta}>PIN: {ch.pin || '1090'} • {ch.frequency}</Text>
-                    </View>
-                    <Text style={styles.canalesScanQuickAction}>Simular Scan</Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-
-              <TouchableOpacity
-                style={styles.channelCloseBtn}
-                onPress={() => setIsJoinScanning(false)}
-                activeOpacity={0.8}
-              >
-                <Text style={styles.channelCloseBtnText}>Cerrar Escáner</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
       </Modal>
 
       {/* 3. MODAL: CREAR CANAL TÁCTICO (SIMPLIFICADO: SOLO NOMBRE Y PIN) */}
