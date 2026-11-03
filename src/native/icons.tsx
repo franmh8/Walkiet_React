@@ -21,6 +21,13 @@ import {
   Wifi as LucideWifi,
   X as LucideX,
   Plus as LucidePlus,
+  Radio as LucideRadio,
+  LogIn as LucideLogIn,
+  Search as LucideSearch,
+  QrCode as LucideQrCode,
+  Camera as LucideCamera,
+  Copy as LucideCopy,
+  Settings as LucideSettings,
 } from 'lucide-react';
 
 export interface IconProps {
@@ -284,6 +291,104 @@ export const PlusIcon: React.FC<IconProps> = ({
       <LucidePlus size={size} color={color} strokeWidth={strokeWidth} />
     ) : (
       <Feather name="plus" size={size} color={color} />
+    )}
+  </View>
+);
+
+export const RadioIcon: React.FC<IconProps> = ({
+  size = 22,
+  color = '#8a1a36',
+  strokeWidth = 2,
+}) => (
+  <View style={[styles.center, { width: size, height: size }]}>
+    {isWeb ? (
+      <LucideRadio size={size} color={color} strokeWidth={strokeWidth} />
+    ) : (
+      <Feather name="radio" size={size} color={color} />
+    )}
+  </View>
+);
+
+export const LogInIcon: React.FC<IconProps> = ({
+  size = 20,
+  color = '#334155',
+  strokeWidth = 2,
+}) => (
+  <View style={[styles.center, { width: size, height: size }]}>
+    {isWeb ? (
+      <LucideLogIn size={size} color={color} strokeWidth={strokeWidth} />
+    ) : (
+      <Feather name="log-in" size={size} color={color} />
+    )}
+  </View>
+);
+
+export const SearchIcon: React.FC<IconProps> = ({
+  size = 18,
+  color = '#94a3b8',
+  strokeWidth = 2,
+}) => (
+  <View style={[styles.center, { width: size, height: size }]}>
+    {isWeb ? (
+      <LucideSearch size={size} color={color} strokeWidth={strokeWidth} />
+    ) : (
+      <Feather name="search" size={size} color={color} />
+    )}
+  </View>
+);
+
+export const QrCodeIcon: React.FC<IconProps> = ({
+  size = 20,
+  color = '#64748b',
+  strokeWidth = 2,
+}) => (
+  <View style={[styles.center, { width: size, height: size }]}>
+    {isWeb ? (
+      <LucideQrCode size={size} color={color} strokeWidth={strokeWidth} />
+    ) : (
+      <Feather name="grid" size={size} color={color} />
+    )}
+  </View>
+);
+
+export const CameraIcon: React.FC<IconProps> = ({
+  size = 18,
+  color = '#64748b',
+  strokeWidth = 2,
+}) => (
+  <View style={[styles.center, { width: size, height: size }]}>
+    {isWeb ? (
+      <LucideCamera size={size} color={color} strokeWidth={strokeWidth} />
+    ) : (
+      <Feather name="camera" size={size} color={color} />
+    )}
+  </View>
+);
+
+export const CopyIcon: React.FC<IconProps> = ({
+  size = 16,
+  color = '#64748b',
+  strokeWidth = 2,
+}) => (
+  <View style={[styles.center, { width: size, height: size }]}>
+    {isWeb ? (
+      <LucideCopy size={size} color={color} strokeWidth={strokeWidth} />
+    ) : (
+      <Feather name="copy" size={size} color={color} />
+    )}
+  </View>
+);
+
+export const SettingsIcon: React.FC<IconProps> = ({
+  size = 18,
+  color = '#64748b',
+  strokeWidth = 2,
+}) => (
+  <View style={[styles.center, { width: size, height: size }]}>
+    {isWeb ? (
+      <LucideSettings size={size} color={color} strokeWidth={strokeWidth} />
+    ) : (
+      <Feather name="settings" size={size} color={color} />
     )}
   </View>
 );

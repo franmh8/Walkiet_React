@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
   StyleSheet,
   Text,
@@ -39,7 +39,15 @@ import {
   WifiIcon,
   XIcon,
   PlusIcon,
+  RadioIcon,
+  LogInIcon,
+  SearchIcon,
+  QrCodeIcon,
+  CameraIcon,
+  CopyIcon,
+  SettingsIcon,
 } from './icons';
+import QRCode from 'qrcode';
 import { soundEngine } from '../services/soundEngine';
 
 // Silenciar advertencia informativa de SafeAreaView en React Native
@@ -64,6 +72,9 @@ interface Channel {
   category: string;
   isEncrypted: boolean;
   activeUsers: number;
+  pin?: string;
+  accessCode?: string;
+  isPrivate?: boolean;
 }
 
 interface Transmission {
@@ -78,10 +89,10 @@ interface Transmission {
 }
 
 const DEFAULT_CHANNELS: Channel[] = [
-  { id: 'chan-01', name: 'OPERACIONES ESPECIALES TÁCTICAS', code: 'CH-10', frequency: '154.800 MHz', category: 'Táctico', isEncrypted: true, activeUsers: 14 },
-  { id: 'chan-02', name: 'DESPACHO EMERGENCIAS 911', code: 'CH-91', frequency: '156.200 MHz', category: 'Emergencia', isEncrypted: true, activeUsers: 22 },
-  { id: 'chan-03', name: 'CENTRAL DE MONITOREO C5I', code: 'CH-50', frequency: '158.450 MHz', category: 'Inteligencia', isEncrypted: true, activeUsers: 9 },
-  { id: 'chan-04', name: 'VIALIDAD Y TRÁNSITO PACHUCA', code: 'CH-44', frequency: '153.950 MHz', category: 'Vialidad', isEncrypted: true, activeUsers: 12 },
+  { id: 'chan-01', name: 'LOLO', code: 'CH-10', frequency: '154.800 MHz', category: 'Táctico', isEncrypted: true, activeUsers: 1, pin: '1090', accessCode: 'C5I-TAC-10' },
+  { id: 'chan-02', name: 'OPERACIONES ESPECIALES TÁCTICAS', code: 'CH-20', frequency: '156.200 MHz', category: 'Táctico', isEncrypted: true, activeUsers: 14, pin: '2040', accessCode: 'C5I-OP-20' },
+  { id: 'chan-03', name: 'DESPACHO EMERGENCIAS 911', code: 'CH-91', frequency: '158.450 MHz', category: 'Emergencia', isEncrypted: true, activeUsers: 22, pin: '9110', accessCode: 'C5I-EM-91' },
+  { id: 'chan-04', name: 'VIALIDAD Y TRÁNSITO PACHUCA', code: 'CH-44', frequency: '153.950 MHz', category: 'Vialidad', isEncrypted: true, activeUsers: 12, pin: '4410', accessCode: 'C5I-VI-44' },
 ];
 
 // Helper con timeout para peticiones en red móvil/wifi
@@ -175,6 +186,33 @@ export default function NativeApp() {
   const [isTestingServer, setIsTestingServer] = useState(false);
   const [serverLatency, setServerLatency] = useState<number | null>(null);
   const [isMembersModalOpen, setIsMembersModalOpen] = useState(false);
+  
+  // Canales Filters, Search & Modals
+  const [channelSearchText, setChannelSearchText] = useState('');
+  const [selectedCategory, setSelectedCategory] = useState<string>('Todos');
+
+  // Modal: Unirse a Canal
+  const [isJoinModalOpen, setIsJoinModalOpen] = useState(false);
+  const [joinPinDigits, setJoinPinDigits] = useState('');
+  const [joinError, setJoinError] = useState<string | null>(null);
+  const [isJoinScanning, setIsJoinScanning] = useState(false);
+  const joinPinInputRef = useRef<any>(null);
+
+  // Modal: Crear Canal
+  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const [createChannelName, setCreateChannelName] = useState('');
+  const [createChannelCategory, setCreateChannelCategory] = useState('Táctico');
+  const [createChannelFrequency, setCreateChannelFrequency] = useState('');
+  const [createChannelPin, setCreateChannelPin] = useState('');
+  const [createChannelIsPrivate, setCreateChannelIsPrivate] = useState(false);
+  const [createChannelError, setCreateChannelError] = useState<string | null>(null);
+  const createChannelPinInputRef = useRef<any>(null);
+
+  // Modal: Configuración y QR del Canal
+  const [isConfigModalOpen, setIsConfigModalOpen] = useState(false);
+  const [configChannel, setConfigChannel] = useState<Channel | null>(null);
+  const [configQrUrl, setConfigQrUrl] = useState<string | null>(null);
+  const [hasCopiedPin, setHasCopiedPin] = useState(false);
   
   // History & Messages
   const [transmissions, setTransmissions] = useState<Transmission[]>([
@@ -295,6 +333,169 @@ export default function NativeApp() {
       );
     } finally {
       setIsTestingServer(false);
+    }
+  };
+
+  // Filtrado de canales por categoría y búsqueda
+  const filteredChannels = useMemo(() => {
+    return channels.filter((ch) => {
+      // Categoría
+      if (selectedCategory !== 'Todos') {
+        if (selectedCategory === 'Privados') {
+          if (!ch.isPrivate && ch.category.toLowerCase() !== 'privado') return false;
+        } else if (ch.category.toLowerCase() !== selectedCategory.toLowerCase()) {
+          return false;
+        }
+      }
+
+      // Búsqueda
+      if (channelSearchText.trim()) {
+        const q = channelSearchText.toLowerCase();
+        const matchesName = ch.name.toLowerCase().includes(q);
+        const matchesCode = ch.code.toLowerCase().includes(q);
+        const matchesFreq = ch.frequency.toLowerCase().includes(q);
+        const matchesPin = ch.pin ? ch.pin.includes(q) : false;
+        return matchesName || matchesCode || matchesFreq || matchesPin;
+      }
+
+      return true;
+    });
+  }, [channels, selectedCategory, channelSearchText]);
+
+  // Abrir modal de configuración y QR de un canal
+  const openChannelConfig = async (ch: Channel) => {
+    setConfigChannel(ch);
+    setHasCopiedPin(false);
+    try {
+      const qrData = JSON.stringify({
+        id: ch.id,
+        name: ch.name,
+        code: ch.code,
+        pin: ch.pin || '1090',
+        frequency: ch.frequency,
+        category: ch.category,
+      });
+      const url = await QRCode.toDataURL(qrData, {
+        width: 240,
+        margin: 2,
+        color: { dark: '#0f172a', light: '#ffffff' },
+      });
+      setConfigQrUrl(url);
+    } catch (e) {
+      console.warn('Error generating QR', e);
+    }
+    setIsConfigModalOpen(true);
+  };
+
+  // Unirse a canal mediante PIN
+  const handleJoinChannelSubmit = () => {
+    setJoinError(null);
+    const pin = joinPinDigits.trim();
+    if (pin.length !== 4) {
+      setJoinError('Ingresa los 4 dígitos del PIN o asignación.');
+      return;
+    }
+
+    const found = channels.find(
+      (c) => (c.pin && c.pin === pin) || (c.code && c.code.toLowerCase().includes(pin.toLowerCase()))
+    );
+
+    if (found) {
+      setSelectedChannel(found);
+      setIsJoinModalOpen(false);
+      setJoinPinDigits('');
+      Alert.alert('✅ Canal Enlazado', `Te has unido exitosamente a ${found.name} (${found.frequency})`);
+    } else {
+      const newLinked: Channel = {
+        id: `chan-pin-${pin}`,
+        name: `CANAL TÁCTICO #${pin}`,
+        code: `CH-${pin}`,
+        frequency: `15${pin.slice(0, 1)}.${pin.slice(1)} MHz`,
+        category: 'Táctico',
+        isEncrypted: true,
+        activeUsers: Math.floor(2 + Math.random() * 8),
+        pin: pin,
+        accessCode: `C5I-TAC-${pin}`,
+      };
+      setChannels((prev) => [newLinked, ...prev]);
+      setSelectedChannel(newLinked);
+      setIsJoinModalOpen(false);
+      setJoinPinDigits('');
+      Alert.alert('✅ Canal Enlazado', `Te has unido exitosamente al canal táctico #${pin}`);
+    }
+  };
+
+  // Simular o procesar escaneo QR
+  const handleScanQrMock = (mockChannel?: Channel) => {
+    const target = mockChannel || channels[0];
+    const targetPin = target?.pin || '1090';
+    setJoinPinDigits(targetPin);
+    setIsJoinScanning(false);
+    setTimeout(() => {
+      setSelectedChannel(target);
+      setIsJoinModalOpen(false);
+      Alert.alert('✅ Código QR Detectado', `Canal reconocido: ${target.name}. Enlazado exitosamente.`);
+    }, 250);
+  };
+
+  // Crear nuevo canal táctico
+  const handleCreateChannelSubmit = () => {
+    setCreateChannelError(null);
+    if (!createChannelName.trim()) {
+      setCreateChannelError('Ingresa un nombre para el canal táctico.');
+      return;
+    }
+
+    const pin = (createChannelPin.trim() || Math.floor(1000 + Math.random() * 9000).toString()).slice(0, 4);
+    const newCh: Channel = {
+      id: `chan-${Date.now()}`,
+      name: createChannelName.trim().toUpperCase(),
+      code: `CH-${(channels.length + 1) * 10}`,
+      frequency: createChannelFrequency.trim() || `15${4 + (channels.length % 5)}.${Math.floor(100 + Math.random() * 800)} MHz`,
+      category: createChannelCategory,
+      isEncrypted: true,
+      activeUsers: 1,
+      pin: pin,
+      accessCode: `C5I-${createChannelCategory.slice(0, 3).toUpperCase()}-${pin}`,
+      isPrivate: createChannelIsPrivate,
+    };
+
+    setChannels((prev) => [newCh, ...prev]);
+    setSelectedChannel(newCh);
+    setIsCreateModalOpen(false);
+    setCreateChannelName('');
+    setCreateChannelPin('');
+    Alert.alert('Canal Creado', `Canal ${newCh.name} creado exitosamente con PIN ${newCh.pin}`);
+
+    if (serverUrl) {
+      try {
+        const cleanUrl = serverUrl.replace(/\/+$/, '');
+        fetchWithTimeout(`${cleanUrl}/api/channels`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: newCh.name,
+            category: newCh.category,
+            frequency: newCh.frequency,
+            pin: newCh.pin,
+            is_private: newCh.isPrivate ? 1 : 0,
+          }),
+        }, 3000).catch(() => {});
+      } catch {}
+    }
+  };
+
+  // Copiar código o PIN al portapapeles
+  const copyToClipboard = async (text: string) => {
+    try {
+      if (typeof navigator !== 'undefined' && navigator.clipboard) {
+        await navigator.clipboard.writeText(text);
+      }
+      setHasCopiedPin(true);
+      setTimeout(() => setHasCopiedPin(false), 2200);
+    } catch {
+      setHasCopiedPin(true);
+      setTimeout(() => setHasCopiedPin(false), 2200);
     }
   };
 
@@ -2276,35 +2477,250 @@ export default function NativeApp() {
         )}
 
         {currentTab === 'Grupos' && (
-          <ScrollView style={styles.cleanScrollSection}>
-            <Text style={styles.cleanSectionTitle}>CANALES Y GRUPOS C5i</Text>
-            <Text style={styles.cleanSectionSub}>Toca cualquier canal para sintonizar tu frecuencia operativa</Text>
-            {channels.map((ch) => {
-              const isSelected = ch.id === selectedChannel.id;
-              return (
+          <View style={styles.canalesMainWrapper}>
+            {/* ENCABEZADO CANALES EXACTO A LA IMAGEN 1 */}
+            <View style={styles.canalesHeader}>
+              <View style={styles.canalesHeaderLeft}>
+                <View style={styles.canalesHeaderIconBox}>
+                  <RadioIcon size={22} color="#8a1a36" strokeWidth={2.2} />
+                </View>
+                <Text style={styles.canalesHeaderTitle}>Canales</Text>
+              </View>
+
+              <View style={styles.canalesHeaderActions}>
+                {/* 1. Botón SOS */}
                 <TouchableOpacity
-                  key={ch.id}
-                  style={[styles.cleanCard, isSelected && styles.cleanCardSelected]}
-                  onPress={() => {
-                    setSelectedChannel(ch);
-                    Alert.alert('Canal Sintonizado', `Radio enlazado a ${ch.name} (${ch.frequency})`);
-                  }}
+                  style={styles.cleanSosBtn}
+                  onPress={handleTriggerSos}
+                  activeOpacity={0.85}
+                  accessibilityLabel="Llamada de Emergencia SOS"
                 >
-                  <View style={styles.channelInfo}>
-                    <Text style={[styles.cleanCardTitle, isSelected && styles.cleanCardTitleSelected]}>
-                      {ch.code} - {ch.name}
-                    </Text>
-                    <Text style={styles.cleanCardMeta}>
-                      {ch.frequency} • {ch.category} • {ch.activeUsers} Unidades
-                    </Text>
-                  </View>
-                  <Text style={[styles.cleanCardBadge, isSelected && styles.cleanCardBadgeActive]}>
-                    {isSelected ? 'ACTIVO' : 'ENLAZAR'}
-                  </Text>
+                  <AlertTriangleIcon size={18} color="#ffffff" strokeWidth={2.2} />
                 </TouchableOpacity>
-              );
-            })}
-          </ScrollView>
+
+                {/* 2. Botón Unirse a Canal */}
+                <TouchableOpacity
+                  style={styles.canalesHeaderActionBtn}
+                  onPress={() => {
+                    setJoinPinDigits('');
+                    setJoinError(null);
+                    setIsJoinModalOpen(true);
+                  }}
+                  activeOpacity={0.8}
+                  accessibilityLabel="Unirse a un canal con PIN o QR"
+                >
+                  <LogInIcon size={20} color="#334155" strokeWidth={2} />
+                </TouchableOpacity>
+
+                {/* 3. Botón Crear Canal */}
+                <TouchableOpacity
+                  style={styles.canalesHeaderCreateBtn}
+                  onPress={() => {
+                    setCreateChannelName('');
+                    setCreateChannelPin('');
+                    setCreateChannelCategory('Táctico');
+                    setCreateChannelError(null);
+                    setIsCreateModalOpen(true);
+                  }}
+                  activeOpacity={0.85}
+                  accessibilityLabel="Crear un nuevo canal táctico"
+                >
+                  <PlusIcon size={20} color="#ffffff" strokeWidth={2.4} />
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            {/* BARRA DE BÚSQUEDA */}
+            <View style={styles.canalesSearchContainer}>
+              <View style={styles.canalesSearchBox}>
+                <SearchIcon size={18} color="#94a3b8" strokeWidth={2} />
+                <TextInput
+                  style={styles.canalesSearchInput}
+                  value={channelSearchText}
+                  onChangeText={setChannelSearchText}
+                  placeholder="Buscar canal o frecuencia..."
+                  placeholderTextColor="#94a3b8"
+                />
+                {channelSearchText.length > 0 && (
+                  <TouchableOpacity
+                    onPress={() => setChannelSearchText('')}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  >
+                    <XIcon size={16} color="#94a3b8" />
+                  </TouchableOpacity>
+                )}
+              </View>
+            </View>
+
+            {/* FILTROS POR CATEGORÍA HORIZONTALES */}
+            <View style={styles.canalesCategoriesContainer}>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.canalesCategoriesScroll}
+              >
+                {['Todos', 'General', 'Emergencia', 'Táctico', 'Vialidad', 'Inteligencia', 'Privados'].map((cat) => {
+                  const isCatActive = selectedCategory === cat;
+                  return (
+                    <TouchableOpacity
+                      key={cat}
+                      style={[
+                        styles.canalesCategoryPill,
+                        isCatActive && styles.canalesCategoryPillActive,
+                      ]}
+                      onPress={() => setSelectedCategory(cat)}
+                      activeOpacity={0.7}
+                    >
+                      <Text
+                        style={[
+                          styles.canalesCategoryText,
+                          isCatActive && styles.canalesCategoryTextActive,
+                        ]}
+                      >
+                        {cat}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+            </View>
+
+            {/* LISTADO DE CANALES O ESTADO VACÍO */}
+            <ScrollView
+              style={styles.canalesListScroll}
+              contentContainerStyle={styles.canalesListContent}
+              showsVerticalScrollIndicator={false}
+            >
+              {filteredChannels.length === 0 ? (
+                /* ESTADO VACÍO EXACTO A LA IMAGEN 1 */
+                <View style={styles.canalesEmptyContainer}>
+                  <View style={styles.canalesEmptyIconBox}>
+                    <RadioIcon size={32} color="#8a1a36" strokeWidth={2} />
+                  </View>
+                  <Text style={styles.canalesEmptyTitle}>No tienes canales creados todavía</Text>
+                  <Text style={styles.canalesEmptySubtext}>
+                    Crea tu propio canal o únete a uno existente en la red táctica C5i.
+                  </Text>
+
+                  <View style={styles.canalesEmptyButtonsRow}>
+                    <TouchableOpacity
+                      style={styles.canalesEmptyCreateBtn}
+                      onPress={() => {
+                        setCreateChannelName('');
+                        setCreateChannelPin('');
+                        setCreateChannelCategory('Táctico');
+                        setCreateChannelError(null);
+                        setIsCreateModalOpen(true);
+                      }}
+                      activeOpacity={0.8}
+                    >
+                      <PlusIcon size={16} color="#ffffff" strokeWidth={2.4} />
+                      <Text style={styles.canalesEmptyCreateBtnText}>Crear Canal</Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={styles.canalesEmptyJoinBtn}
+                      onPress={() => {
+                        setJoinPinDigits('');
+                        setJoinError(null);
+                        setIsJoinModalOpen(true);
+                      }}
+                      activeOpacity={0.8}
+                    >
+                      <LogInIcon size={16} color="#8a1a36" strokeWidth={2} />
+                      <Text style={styles.canalesEmptyJoinBtnText}>Unirse a Canal</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              ) : (
+                /* TARJETAS DE CANALES EXACTAS A LA IMAGEN 2 */
+                filteredChannels.map((ch: Channel) => {
+                  const isSelected = ch.id === selectedChannel.id;
+                  return (
+                    <View
+                      key={ch.id}
+                      style={[
+                        styles.canalesCard,
+                        isSelected && styles.canalesCardSelected,
+                      ]}
+                    >
+                      <TouchableOpacity
+                        style={styles.canalesCardLeft}
+                        onPress={() => {
+                          setSelectedChannel(ch);
+                          Alert.alert('Canal Sintonizado', `Radio enlazado a ${ch.name} (${ch.frequency})`);
+                        }}
+                        activeOpacity={0.7}
+                      >
+                        <View style={styles.canalesCardRadioBadge}>
+                          <RadioIcon size={20} color="#ffffff" strokeWidth={2.2} />
+                        </View>
+
+                        <View style={styles.canalesCardInfo}>
+                          <Text style={styles.canalesCardName} numberOfLines={1}>
+                            {ch.name}
+                          </Text>
+                          <View style={styles.canalesCardMetaRow}>
+                            <View style={styles.canalesCardMembers}>
+                              <UsersIcon size={13} color="#64748b" strokeWidth={1.8} />
+                              <Text style={styles.canalesCardMembersText}>
+                                {ch.activeUsers || 1} activos
+                              </Text>
+                            </View>
+
+                            <View style={styles.canalesCardCategoryBadge}>
+                              <Text style={styles.canalesCardCategoryText}>
+                                {(ch.category || 'TÁCTICO').toUpperCase()}
+                              </Text>
+                            </View>
+
+                            <Text style={styles.canalesCardPinText}>
+                              PIN: {ch.pin || '1090'}
+                            </Text>
+                          </View>
+                        </View>
+                      </TouchableOpacity>
+
+                      <View style={styles.canalesCardRight}>
+                        {/* Botón QR / Configuración */}
+                        <TouchableOpacity
+                          style={styles.canalesCardQrBtn}
+                          onPress={() => openChannelConfig(ch)}
+                          activeOpacity={0.7}
+                          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                          accessibilityLabel="Ver código QR y configuración del canal"
+                        >
+                          <QrCodeIcon size={20} color="#64748b" strokeWidth={1.8} />
+                        </TouchableOpacity>
+
+                        {/* Botón Sintonizado / Sintonizar */}
+                        <TouchableOpacity
+                          style={[
+                            styles.canalesCardSintonizarBtn,
+                            isSelected && styles.canalesCardSintonizarBtnActive,
+                          ]}
+                          onPress={() => {
+                            setSelectedChannel(ch);
+                            Alert.alert('Canal Sintonizado', `Radio enlazado a ${ch.name} (${ch.frequency})`);
+                          }}
+                          activeOpacity={0.8}
+                        >
+                          <Text
+                            style={[
+                              styles.canalesCardSintonizarText,
+                              isSelected && styles.canalesCardSintonizarTextActive,
+                            ]}
+                          >
+                            {isSelected ? 'SINTONIZADO' : 'SINTONIZAR'}
+                          </Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  );
+                })
+              )}
+            </ScrollView>
+          </View>
         )}
 
         {currentTab === 'Chat' && (
@@ -2614,6 +3030,493 @@ export default function NativeApp() {
               >
                 <Text style={styles.channelCloseBtnText}>Cerrar</Text>
               </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* 1. MODAL: UNIRSE A CANAL CON PIN O QR */}
+      <Modal
+        visible={isJoinModalOpen}
+        animationType="fade"
+        transparent
+        onRequestClose={() => setIsJoinModalOpen(false)}
+      >
+        <View style={styles.channelModalOverlay}>
+          <View style={styles.channelModalCard}>
+            {/* Header */}
+            <View style={styles.channelModalHeader}>
+              <View style={styles.channelModalHeaderLeft}>
+                <View style={styles.channelModalIconBox}>
+                  <LogInIcon size={20} color="#8a1a36" strokeWidth={2} />
+                </View>
+                <View>
+                  <Text style={styles.channelModalTitle}>Unirse a Canal</Text>
+                  <Text style={styles.channelModalSubtitle}>
+                    Ingresa el PIN de 4 dígitos o escanea el QR
+                  </Text>
+                </View>
+              </View>
+              <TouchableOpacity
+                onPress={() => setIsJoinModalOpen(false)}
+                style={styles.channelModalCloseBtn}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              >
+                <XIcon size={18} color="#64748b" strokeWidth={2} />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.canalesModalBody}>
+              {joinError && (
+                <View style={styles.recoveryErrorBanner}>
+                  <AlertTriangleIcon size={15} color="#be123c" strokeWidth={1.8} />
+                  <Text style={styles.recoveryErrorText}>{joinError}</Text>
+                </View>
+              )}
+
+              <Text style={styles.canalesPinLabel}>PIN O NÚMERO DE ASIGNACIÓN</Text>
+              <Text style={styles.canalesPinSub}>
+                Ingresa el código numérico de 4 dígitos proporcionado por el oficial
+              </Text>
+
+              {/* Cajas de dígitos PIN sincronizadas (Misma estructura del Registro) */}
+              <TouchableOpacity
+                activeOpacity={1}
+                onPress={() => joinPinInputRef.current?.focus()}
+                style={styles.canalesTokenRow}
+              >
+                {[0, 1, 2, 3].map((idx) => {
+                  const char = joinPinDigits[idx] || '';
+                  const isCurrent = joinPinDigits.length === idx;
+                  return (
+                    <View
+                      key={idx}
+                      style={[
+                        styles.canalesTokenBox,
+                        Boolean(char) && styles.canalesTokenBoxFilled,
+                        isCurrent && styles.canalesTokenBoxActive,
+                      ]}
+                    >
+                      <Text style={styles.canalesTokenDigit}>{char}</Text>
+                    </View>
+                  );
+                })}
+              </TouchableOpacity>
+
+              {/* Input nativo oculto para compatibilidad con iOS y Web */}
+              <TextInput
+                ref={joinPinInputRef}
+                style={styles.hiddenInput}
+                value={joinPinDigits}
+                onChangeText={(val) => {
+                  const cleaned = val.replace(/\D/g, '').slice(0, 4);
+                  setJoinPinDigits(cleaned);
+                  if (joinError) setJoinError(null);
+                }}
+                keyboardType="numeric"
+                maxLength={4}
+                autoFocus
+              />
+
+              {/* Botón de envío */}
+              <TouchableOpacity
+                style={[
+                  styles.canalesModalSubmitBtn,
+                  joinPinDigits.length !== 4 && styles.canalesModalSubmitBtnDisabled,
+                ]}
+                onPress={handleJoinChannelSubmit}
+                disabled={joinPinDigits.length !== 4}
+                activeOpacity={0.88}
+              >
+                <Text style={styles.canalesModalSubmitBtnText}>UNIRME AL CANAL</Text>
+              </TouchableOpacity>
+
+              {/* Divisor */}
+              <View style={styles.canalesDividerRow}>
+                <View style={styles.canalesDividerLine} />
+                <Text style={styles.canalesDividerText}>O BIEN</Text>
+                <View style={styles.canalesDividerLine} />
+              </View>
+
+              {/* Botón para Escanear Código QR */}
+              <TouchableOpacity
+                style={styles.canalesScanQrBtn}
+                onPress={() => setIsJoinScanning(true)}
+                activeOpacity={0.8}
+              >
+                <CameraIcon size={18} color="#8a1a36" strokeWidth={2} />
+                <Text style={styles.canalesScanQrBtnText}>Escanear Código QR del Canal</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* 2. MODAL: ESCÁNER QR DE CANAL */}
+      <Modal
+        visible={isJoinScanning}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setIsJoinScanning(false)}
+      >
+        <View style={styles.channelModalOverlay}>
+          <View style={[styles.channelModalCard, { maxWidth: 390 }]}>
+            {/* Header */}
+            <View style={styles.channelModalHeader}>
+              <View style={styles.channelModalHeaderLeft}>
+                <View style={styles.channelModalIconBox}>
+                  <CameraIcon size={20} color="#8a1a36" strokeWidth={2} />
+                </View>
+                <View>
+                  <Text style={styles.channelModalTitle}>Escanear QR de Canal</Text>
+                  <Text style={styles.channelModalSubtitle}>
+                    Apunta la cámara al código QR táctico
+                  </Text>
+                </View>
+              </View>
+              <TouchableOpacity
+                onPress={() => setIsJoinScanning(false)}
+                style={styles.channelModalCloseBtn}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              >
+                <XIcon size={18} color="#64748b" strokeWidth={2} />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.canalesScannerBody}>
+              {/* Visor de Cámara con Retícula */}
+              <View style={styles.canalesCameraFrame}>
+                <View style={[styles.canalesScannerCorner, styles.cornerTL]} />
+                <View style={[styles.canalesScannerCorner, styles.cornerTR]} />
+                <View style={[styles.canalesScannerCorner, styles.cornerBL]} />
+                <View style={[styles.canalesScannerCorner, styles.cornerBR]} />
+                <View style={styles.canalesScannerLaser} />
+                <QrCodeIcon size={72} color="rgba(255, 255, 255, 0.25)" strokeWidth={1} />
+                <Text style={styles.canalesScannerHint}>Buscando código QR C5i...</Text>
+              </View>
+
+              {/* Botones de Detección Rápida de Canales */}
+              <Text style={styles.canalesScanQuickTitle}>CANALES DISPONIBLES EN EL ÁREA:</Text>
+              <View style={styles.canalesScanQuickList}>
+                {channels.slice(0, 3).map((ch) => (
+                  <TouchableOpacity
+                    key={ch.id}
+                    style={styles.canalesScanQuickItem}
+                    onPress={() => handleScanQrMock(ch)}
+                    activeOpacity={0.7}
+                  >
+                    <View style={styles.canalesScanQuickRadio}>
+                      <RadioIcon size={14} color="#8a1a36" />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.canalesScanQuickName} numberOfLines={1}>{ch.name}</Text>
+                      <Text style={styles.canalesScanQuickMeta}>PIN: {ch.pin || '1090'} • {ch.frequency}</Text>
+                    </View>
+                    <Text style={styles.canalesScanQuickAction}>Simular Scan</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+
+              <TouchableOpacity
+                style={styles.channelCloseBtn}
+                onPress={() => setIsJoinScanning(false)}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.channelCloseBtnText}>Cerrar Escáner</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* 3. MODAL: CREAR CANAL TÁCTICO */}
+      <Modal
+        visible={isCreateModalOpen}
+        animationType="fade"
+        transparent
+        onRequestClose={() => setIsCreateModalOpen(false)}
+      >
+        <View style={styles.channelModalOverlay}>
+          <View style={styles.channelModalCard}>
+            {/* Header */}
+            <View style={styles.channelModalHeader}>
+              <View style={styles.channelModalHeaderLeft}>
+                <View style={[styles.channelModalIconBox, { backgroundColor: '#8a1a36' }]}>
+                  <PlusIcon size={20} color="#ffffff" strokeWidth={2.4} />
+                </View>
+                <View>
+                  <Text style={styles.channelModalTitle}>Crear Canal Táctico</Text>
+                  <Text style={styles.channelModalSubtitle}>
+                    Establece una nueva frecuencia en la red C5i
+                  </Text>
+                </View>
+              </View>
+              <TouchableOpacity
+                onPress={() => setIsCreateModalOpen(false)}
+                style={styles.channelModalCloseBtn}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              >
+                <XIcon size={18} color="#64748b" strokeWidth={2} />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView style={{ maxHeight: 420 }} contentContainerStyle={styles.canalesModalBody}>
+              {createChannelError && (
+                <View style={styles.recoveryErrorBanner}>
+                  <AlertTriangleIcon size={15} color="#be123c" strokeWidth={1.8} />
+                  <Text style={styles.recoveryErrorText}>{createChannelError}</Text>
+                </View>
+              )}
+
+              {/* Nombre del Canal */}
+              <View style={styles.recoveryInputGroup}>
+                <Text style={styles.recoveryInputLabel}>Nombre del Canal</Text>
+                <View style={styles.recoveryInputBox}>
+                  <View style={styles.recoveryInputIconBox}>
+                    <RadioIcon size={16} color="#94a3b8" />
+                  </View>
+                  <TextInput
+                    style={styles.recoveryInput}
+                    value={createChannelName}
+                    onChangeText={setCreateChannelName}
+                    placeholder="Ej. SECTOR PACHUCA SUR"
+                    placeholderTextColor="#94a3b8"
+                    autoCapitalize="characters"
+                  />
+                </View>
+              </View>
+
+              {/* Categoría */}
+              <View style={styles.recoveryInputGroup}>
+                <Text style={styles.recoveryInputLabel}>Categoría Operativa</Text>
+                <View style={styles.canalesCreateCatRow}>
+                  {['Táctico', 'General', 'Emergencia', 'Vialidad', 'Inteligencia'].map((cat) => (
+                    <TouchableOpacity
+                      key={cat}
+                      style={[
+                        styles.canalesCreateCatPill,
+                        createChannelCategory === cat && styles.canalesCreateCatPillActive,
+                      ]}
+                      onPress={() => setCreateChannelCategory(cat)}
+                      activeOpacity={0.7}
+                    >
+                      <Text
+                        style={[
+                          styles.canalesCreateCatText,
+                          createChannelCategory === cat && styles.canalesCreateCatTextActive,
+                        ]}
+                      >
+                        {cat}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </View>
+
+              {/* Frecuencia Estimada */}
+              <View style={styles.recoveryInputGroup}>
+                <Text style={styles.recoveryInputLabel}>Frecuencia (MHz)</Text>
+                <View style={styles.recoveryInputBox}>
+                  <View style={styles.recoveryInputIconBox}>
+                    <WifiIcon size={16} color="#94a3b8" />
+                  </View>
+                  <TextInput
+                    style={styles.recoveryInput}
+                    value={createChannelFrequency}
+                    onChangeText={setCreateChannelFrequency}
+                    placeholder="154.850 MHz"
+                    placeholderTextColor="#94a3b8"
+                  />
+                </View>
+              </View>
+
+              {/* PIN de Acceso (4 dígitos) */}
+              <View style={styles.recoveryInputGroup}>
+                <Text style={styles.recoveryInputLabel}>PIN o Código de Acceso (4 dígitos)</Text>
+                <Text style={styles.canalesPinSub}>
+                  Los oficiales usarán este PIN para sintonizarse
+                </Text>
+
+                <TouchableOpacity
+                  activeOpacity={1}
+                  onPress={() => createChannelPinInputRef.current?.focus()}
+                  style={styles.canalesTokenRow}
+                >
+                  {[0, 1, 2, 3].map((idx) => {
+                    const char = createChannelPin[idx] || '';
+                    const isCurrent = createChannelPin.length === idx;
+                    return (
+                      <View
+                        key={idx}
+                        style={[
+                          styles.canalesTokenBox,
+                          Boolean(char) && styles.canalesTokenBoxFilled,
+                          isCurrent && styles.canalesTokenBoxActive,
+                        ]}
+                      >
+                        <Text style={styles.canalesTokenDigit}>{char}</Text>
+                      </View>
+                    );
+                  })}
+                </TouchableOpacity>
+
+                <TextInput
+                  ref={createChannelPinInputRef}
+                  style={styles.hiddenInput}
+                  value={createChannelPin}
+                  onChangeText={(val) => {
+                    const cleaned = val.replace(/\D/g, '').slice(0, 4);
+                    setCreateChannelPin(cleaned);
+                  }}
+                  keyboardType="numeric"
+                  maxLength={4}
+                />
+              </View>
+
+              {/* Tipo de canal: Público vs Privado */}
+              <View style={styles.canalesPrivateRow}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.canalesPrivateTitle}>Canal Táctico Privado</Text>
+                  <Text style={styles.canalesPrivateSub}>
+                    Requiere PIN obligatorio para que otras patrullas puedan escuchar
+                  </Text>
+                </View>
+                <TouchableOpacity
+                  style={[
+                    styles.canalesPrivateToggle,
+                    createChannelIsPrivate && styles.canalesPrivateToggleActive,
+                  ]}
+                  onPress={() => setCreateChannelIsPrivate((prev) => !prev)}
+                  activeOpacity={0.8}
+                >
+                  <View
+                    style={[
+                      styles.canalesPrivateKnob,
+                      createChannelIsPrivate && styles.canalesPrivateKnobActive,
+                    ]}
+                  />
+                </TouchableOpacity>
+              </View>
+
+              {/* Botón Crear */}
+              <TouchableOpacity
+                style={styles.canalesModalSubmitBtn}
+                onPress={handleCreateChannelSubmit}
+                activeOpacity={0.88}
+              >
+                <Text style={styles.canalesModalSubmitBtnText}>CREAR Y SINTONIZAR CANAL</Text>
+              </TouchableOpacity>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      {/* 4. MODAL: CONFIGURACIÓN Y QR DEL CANAL (MATCHING REQUERIMIENTO) */}
+      <Modal
+        visible={isConfigModalOpen}
+        animationType="fade"
+        transparent
+        onRequestClose={() => setIsConfigModalOpen(false)}
+      >
+        <View style={styles.channelModalOverlay}>
+          <View style={styles.channelModalCard}>
+            {/* Header */}
+            <View style={styles.channelModalHeader}>
+              <View style={styles.channelModalHeaderLeft}>
+                <View style={styles.channelModalIconBox}>
+                  <RadioIcon size={20} color="#8a1a36" strokeWidth={2} />
+                </View>
+                <View>
+                  <Text style={styles.channelModalTitle}>Configuración del Canal</Text>
+                  <Text style={styles.channelModalSubtitle} numberOfLines={1}>
+                    {configChannel?.name || 'Canal Táctico'}
+                  </Text>
+                </View>
+              </View>
+              <TouchableOpacity
+                onPress={() => setIsConfigModalOpen(false)}
+                style={styles.channelModalCloseBtn}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              >
+                <XIcon size={18} color="#64748b" strokeWidth={2} />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.canalesModalBody}>
+              {/* Contenedor del Código QR */}
+              <View style={styles.canalesQrBox}>
+                {configQrUrl ? (
+                  <Image
+                    source={{ uri: configQrUrl }}
+                    style={styles.canalesQrImage}
+                    resizeMode="contain"
+                  />
+                ) : (
+                  <View style={styles.canalesQrPlaceholder}>
+                    <QrCodeIcon size={64} color="#94a3b8" />
+                    <Text style={styles.canalesQrPlaceholderText}>Generando QR...</Text>
+                  </View>
+                )}
+              </View>
+
+              {/* Debajo del QR: PIN y Código del Canal en Grande */}
+              <View style={styles.canalesQrCodeInfo}>
+                <Text style={styles.canalesQrCodeLabel}>PIN DE ASIGNACIÓN:</Text>
+                <Text style={styles.canalesQrPinBig}>
+                  {configChannel?.pin || '1090'}
+                </Text>
+                <Text style={styles.canalesQrCodeSub}>
+                  Código: <Text style={{ fontWeight: '800', color: '#0f172a' }}>{configChannel?.code || 'CH-10'}</Text>
+                  {'  •  '}
+                  Frecuencia: <Text style={{ fontWeight: '800', color: '#0f172a' }}>{configChannel?.frequency}</Text>
+                </Text>
+              </View>
+
+              {/* Botón para Copiar PIN y Código */}
+              <TouchableOpacity
+                style={styles.canalesCopyBtn}
+                onPress={() =>
+                  copyToClipboard(
+                    `Canal C5i: ${configChannel?.name} | PIN: ${configChannel?.pin || '1090'} | Código: ${configChannel?.code}`
+                  )
+                }
+                activeOpacity={0.75}
+              >
+                <CopyIcon size={16} color={hasCopiedPin ? '#059669' : '#8a1a36'} />
+                <Text
+                  style={[
+                    styles.canalesCopyBtnText,
+                    hasCopiedPin && { color: '#059669' },
+                  ]}
+                >
+                  {hasCopiedPin ? '¡PIN y Código Copiados al Portapapeles!' : 'Copiar PIN y Código del Canal'}
+                </Text>
+              </TouchableOpacity>
+
+              {/* Botón Sintonizar / Cerrar */}
+              <View style={{ flexDirection: 'row', gap: 10, marginTop: 8 }}>
+                <TouchableOpacity
+                  style={[styles.canalesModalSubmitBtn, { flex: 1, marginTop: 0 }]}
+                  onPress={() => {
+                    if (configChannel) {
+                      setSelectedChannel(configChannel);
+                      setIsConfigModalOpen(false);
+                      Alert.alert('Canal Sintonizado', `Radio enlazado a ${configChannel.name}`);
+                    }
+                  }}
+                  activeOpacity={0.88}
+                >
+                  <Text style={styles.canalesModalSubmitBtnText}>SINTONIZAR ESTE CANAL</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.channelCloseBtn}
+                  onPress={() => setIsConfigModalOpen(false)}
+                  activeOpacity={0.8}
+                >
+                  <Text style={styles.channelCloseBtnText}>Cerrar</Text>
+                </TouchableOpacity>
+              </View>
             </View>
           </View>
         </View>
@@ -4214,4 +5117,674 @@ const styles = StyleSheet.create({
   colHalf: {
     flex: 1,
   },
+
+  /* ================================================================ */
+  /* CANALES & GRUPOS (MATCHING USER SCREENSHOTS)                      */
+  /* ================================================================ */
+  canalesMainWrapper: {
+    flex: 1,
+    backgroundColor: '#ffffff',
+  },
+  canalesHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingTop: 16,
+    paddingBottom: 14,
+  },
+  canalesHeaderLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  canalesHeaderIconBox: {
+    width: 44,
+    height: 44,
+    borderRadius: 14,
+    backgroundColor: '#faeaed',
+    borderWidth: 1,
+    borderColor: '#f9d2d8',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  canalesHeaderTitle: {
+    fontSize: 22,
+    fontWeight: '800',
+    color: '#0f172a',
+    letterSpacing: -0.5,
+  },
+  canalesHeaderActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  canalesHeaderActionBtn: {
+    width: 42,
+    height: 42,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    backgroundColor: '#ffffff',
+    shadowColor: '#64748b',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.08,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  canalesHeaderCreateBtn: {
+    width: 42,
+    height: 42,
+    borderRadius: 14,
+    backgroundColor: '#691c32',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#691c32',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  canalesSearchContainer: {
+    paddingHorizontal: 20,
+    marginBottom: 12,
+  },
+  canalesSearchBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#ffffff',
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    height: 46,
+    gap: 10,
+  },
+  canalesSearchInput: {
+    flex: 1,
+    fontSize: 14,
+    color: '#0f172a',
+    padding: 0,
+  },
+  canalesCategoriesContainer: {
+    marginBottom: 16,
+  },
+  canalesCategoriesScroll: {
+    paddingHorizontal: 20,
+    gap: 8,
+  },
+  canalesCategoryPill: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 12,
+    backgroundColor: '#ffffff',
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
+  },
+  canalesCategoryPillActive: {
+    backgroundColor: '#691c32',
+    borderColor: '#691c32',
+  },
+  canalesCategoryText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#475569',
+  },
+  canalesCategoryTextActive: {
+    color: '#ffffff',
+    fontWeight: '700',
+  },
+  canalesListScroll: {
+    flex: 1,
+  },
+  canalesListContent: {
+    paddingHorizontal: 20,
+    paddingBottom: 40,
+    gap: 12,
+  },
+
+  /* Empty State */
+  canalesEmptyContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 60,
+    paddingHorizontal: 24,
+  },
+  canalesEmptyIconBox: {
+    width: 72,
+    height: 72,
+    borderRadius: 22,
+    backgroundColor: '#f6e4e7',
+    borderWidth: 1,
+    borderColor: '#f2c8d0',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 18,
+  },
+  canalesEmptyTitle: {
+    fontSize: 17,
+    fontWeight: '800',
+    color: '#0f172a',
+    textAlign: 'center',
+    marginBottom: 6,
+  },
+  canalesEmptySubtext: {
+    fontSize: 13,
+    color: '#64748b',
+    textAlign: 'center',
+    lineHeight: 18,
+    maxWidth: 290,
+    marginBottom: 20,
+  },
+  canalesEmptyButtonsRow: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  canalesEmptyCreateBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#691c32',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 12,
+  },
+  canalesEmptyCreateBtnText: {
+    color: '#ffffff',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  canalesEmptyJoinBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#ffffff',
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 12,
+  },
+  canalesEmptyJoinBtnText: {
+    color: '#334155',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+
+  /* Channel Card (Matching Image 2) */
+  canalesCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#f1e6e9',
+    borderWidth: 1,
+    borderColor: '#e8cbcf',
+    borderRadius: 18,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    shadowColor: '#691c32',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 3,
+    elevation: 1,
+  },
+  canalesCardSelected: {
+    borderColor: '#be123c',
+    borderWidth: 1.5,
+    backgroundColor: '#f3e1e5',
+  },
+  canalesCardLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    flex: 1,
+    marginRight: 10,
+  },
+  canalesCardRadioBadge: {
+    width: 44,
+    height: 44,
+    borderRadius: 14,
+    backgroundColor: '#e11d48',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  canalesCardInfo: {
+    flex: 1,
+  },
+  canalesCardName: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#0f172a',
+    letterSpacing: 0.2,
+    marginBottom: 4,
+  },
+  canalesCardMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flexWrap: 'wrap',
+  },
+  canalesCardMembers: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  canalesCardMembersText: {
+    fontSize: 12,
+    color: '#64748b',
+    fontWeight: '600',
+  },
+  canalesCardCategoryBadge: {
+    backgroundColor: '#64748b',
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  canalesCardCategoryText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#ffffff',
+    letterSpacing: 0.4,
+  },
+  canalesCardPinText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#e11d48',
+    letterSpacing: 0.3,
+  },
+  canalesCardRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  canalesCardQrBtn: {
+    width: 38,
+    height: 38,
+    borderRadius: 12,
+    backgroundColor: 'rgba(255, 255, 255, 0.7)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  canalesCardSintonizarBtn: {
+    backgroundColor: '#ffffff',
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+    borderRadius: 12,
+  },
+  canalesCardSintonizarBtnActive: {
+    backgroundColor: '#8a1a36',
+    borderColor: '#8a1a36',
+  },
+  canalesCardSintonizarText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#475569',
+    letterSpacing: 0.6,
+  },
+  canalesCardSintonizarTextActive: {
+    color: '#ffffff',
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.6,
+  },
+
+  /* Modals: PIN & Inputs */
+  canalesModalBody: {
+    padding: 20,
+    gap: 14,
+  },
+  canalesPinLabel: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#0f172a',
+    textAlign: 'center',
+  },
+  canalesPinSub: {
+    fontSize: 12,
+    color: '#64748b',
+    textAlign: 'center',
+    marginTop: -8,
+    marginBottom: 4,
+  },
+  canalesTokenRow: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: 10,
+    marginVertical: 4,
+  },
+  canalesTokenBox: {
+    width: 52,
+    height: 58,
+    borderRadius: 14,
+    borderWidth: 1.5,
+    borderColor: '#e2e8f0',
+    backgroundColor: '#f8fafc',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  canalesTokenBoxFilled: {
+    borderColor: '#691c32',
+    backgroundColor: '#ffffff',
+  },
+  canalesTokenBoxActive: {
+    borderColor: '#691c32',
+    borderWidth: 2,
+    backgroundColor: '#ffffff',
+  },
+  canalesTokenDigit: {
+    fontSize: 22,
+    fontWeight: '800',
+    color: '#0f172a',
+  },
+  canalesModalSubmitBtn: {
+    backgroundColor: '#691c32',
+    borderRadius: 14,
+    height: 48,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 4,
+  },
+  canalesModalSubmitBtnDisabled: {
+    backgroundColor: '#cbd5e1',
+  },
+  canalesModalSubmitBtnText: {
+    color: '#ffffff',
+    fontSize: 13,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+  },
+  canalesDividerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginVertical: 4,
+  },
+  canalesDividerLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: '#e2e8f0',
+  },
+  canalesDividerText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#94a3b8',
+    textTransform: 'uppercase',
+  },
+  canalesScanQrBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: '#f8fafc',
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
+    borderRadius: 14,
+    height: 48,
+  },
+  canalesScanQrBtnText: {
+    color: '#334155',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+
+  /* Scanner Mockup */
+  canalesScannerBody: {
+    padding: 20,
+    alignItems: 'center',
+  },
+  canalesCameraFrame: {
+    width: 220,
+    height: 220,
+    borderRadius: 20,
+    backgroundColor: '#0f172a',
+    position: 'relative',
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
+    marginBottom: 16,
+  },
+  canalesScannerCorner: {
+    position: 'absolute',
+    width: 28,
+    height: 28,
+    borderColor: '#e11d48',
+  },
+  cornerTL: {
+    top: 14,
+    left: 14,
+    borderTopWidth: 3,
+    borderLeftWidth: 3,
+  },
+  cornerTR: {
+    top: 14,
+    right: 14,
+    borderTopWidth: 3,
+    borderRightWidth: 3,
+  },
+  cornerBL: {
+    bottom: 14,
+    left: 14,
+    borderBottomWidth: 3,
+    borderLeftWidth: 3,
+  },
+  cornerBR: {
+    bottom: 14,
+    right: 14,
+    borderBottomWidth: 3,
+    borderRightWidth: 3,
+  },
+  canalesScannerLaser: {
+    position: 'absolute',
+    left: 20,
+    right: 20,
+    height: 2,
+    backgroundColor: '#e11d48',
+    shadowColor: '#e11d48',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 1,
+    shadowRadius: 6,
+  },
+  canalesScannerHint: {
+    fontSize: 12,
+    color: '#64748b',
+    textAlign: 'center',
+    marginBottom: 16,
+  },
+  canalesScanQuickTitle: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#64748b',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    alignSelf: 'flex-start',
+    marginBottom: 8,
+  },
+  canalesScanQuickList: {
+    width: '100%',
+    gap: 8,
+    marginBottom: 16,
+  },
+  canalesScanQuickItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#f8fafc',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    borderRadius: 12,
+    padding: 10,
+    gap: 10,
+  },
+  canalesScanQuickRadio: {
+    width: 28,
+    height: 28,
+    borderRadius: 8,
+    backgroundColor: '#faeaed',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  canalesScanQuickName: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#0f172a',
+  },
+  canalesScanQuickMeta: {
+    fontSize: 10,
+    color: '#64748b',
+    fontWeight: '600',
+  },
+  canalesScanQuickAction: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#8a1a36',
+  },
+
+  /* Create Channel Modal Elements */
+  canalesCreateCatRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  canalesCreateCatPill: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 10,
+    backgroundColor: '#f8fafc',
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
+  },
+  canalesCreateCatPillActive: {
+    backgroundColor: '#691c32',
+    borderColor: '#691c32',
+  },
+  canalesCreateCatText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#475569',
+  },
+  canalesCreateCatTextActive: {
+    color: '#ffffff',
+    fontWeight: '700',
+  },
+  canalesPrivateRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#f8fafc',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    borderRadius: 14,
+    padding: 12,
+    gap: 12,
+  },
+  canalesPrivateTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#0f172a',
+  },
+  canalesPrivateSub: {
+    fontSize: 11,
+    color: '#64748b',
+    marginTop: 2,
+  },
+  canalesPrivateToggle: {
+    width: 48,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: '#cbd5e1',
+    padding: 2,
+    justifyContent: 'center',
+  },
+  canalesPrivateToggleActive: {
+    backgroundColor: '#691c32',
+  },
+  canalesPrivateKnob: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: '#ffffff',
+  },
+  canalesPrivateKnobActive: {
+    alignSelf: 'flex-end',
+  },
+
+  /* Config & QR Modal Elements */
+  canalesQrBox: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 16,
+    backgroundColor: '#ffffff',
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    alignSelf: 'center',
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 6,
+    elevation: 2,
+  },
+  canalesQrImage: {
+    width: 190,
+    height: 190,
+  },
+  canalesQrPlaceholder: {
+    width: 190,
+    height: 190,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#f8fafc',
+    borderRadius: 16,
+    gap: 8,
+  },
+  canalesQrPlaceholderText: {
+    fontSize: 12,
+    color: '#64748b',
+    fontWeight: '600',
+  },
+  canalesQrCodeInfo: {
+    alignItems: 'center',
+    paddingVertical: 4,
+  },
+  canalesQrCodeLabel: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#64748b',
+    letterSpacing: 0.8,
+  },
+  canalesQrPinBig: {
+    fontSize: 34,
+    fontWeight: '900',
+    color: '#691c32',
+    letterSpacing: 4,
+    marginVertical: 4,
+  },
+  canalesQrCodeSub: {
+    fontSize: 12,
+    color: '#64748b',
+    fontWeight: '500',
+  },
+  canalesCopyBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: '#faeaed',
+    borderWidth: 1,
+    borderColor: '#f9d2d8',
+    borderRadius: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+  },
+  canalesCopyBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#691c32',
+  },
 });
+
