@@ -1,5 +1,6 @@
 import React from 'react';
-import { View, StyleSheet } from 'react-native';
+import { View, StyleSheet, Platform } from 'react-native';
+import { Feather } from '@expo/vector-icons';
 import {
   User as LucideUser,
   Lock as LucideLock,
@@ -28,13 +29,19 @@ export interface IconProps {
   strokeWidth?: number;
 }
 
+const isWeb = Platform.OS === 'web';
+
 export const UserIcon: React.FC<IconProps> = ({
   size = 18,
   color = '#94a3b8',
   strokeWidth = 1.8,
 }) => (
   <View style={[styles.center, { width: size, height: size }]}>
-    <LucideUser size={size} color={color} strokeWidth={strokeWidth} />
+    {isWeb ? (
+      <LucideUser size={size} color={color} strokeWidth={strokeWidth} />
+    ) : (
+      <Feather name="user" size={size} color={color} />
+    )}
   </View>
 );
 
@@ -44,7 +51,11 @@ export const LockIcon: React.FC<IconProps> = ({
   strokeWidth = 1.8,
 }) => (
   <View style={[styles.center, { width: size, height: size }]}>
-    <LucideLock size={size} color={color} strokeWidth={strokeWidth} />
+    {isWeb ? (
+      <LucideLock size={size} color={color} strokeWidth={strokeWidth} />
+    ) : (
+      <Feather name="lock" size={size} color={color} />
+    )}
   </View>
 );
 
@@ -55,10 +66,14 @@ export const EyeIcon: React.FC<IconProps & { off?: boolean }> = ({
   off = false,
 }) => (
   <View style={[styles.center, { width: size, height: size }]}>
-    {off ? (
-      <LucideEyeOff size={size} color={color} strokeWidth={strokeWidth} />
+    {isWeb ? (
+      off ? (
+        <LucideEyeOff size={size} color={color} strokeWidth={strokeWidth} />
+      ) : (
+        <LucideEye size={size} color={color} strokeWidth={strokeWidth} />
+      )
     ) : (
-      <LucideEye size={size} color={color} strokeWidth={strokeWidth} />
+      <Feather name={off ? 'eye-off' : 'eye'} size={size} color={color} />
     )}
   </View>
 );
@@ -69,7 +84,11 @@ export const KeyIcon: React.FC<IconProps> = ({
   strokeWidth = 1.8,
 }) => (
   <View style={[styles.center, { width: size, height: size }]}>
-    <LucideKeyRound size={size} color={color} strokeWidth={strokeWidth} />
+    {isWeb ? (
+      <LucideKeyRound size={size} color={color} strokeWidth={strokeWidth} />
+    ) : (
+      <Feather name="key" size={size} color={color} />
+    )}
   </View>
 );
 
@@ -79,7 +98,11 @@ export const UserPlusIcon: React.FC<IconProps> = ({
   strokeWidth = 1.8,
 }) => (
   <View style={[styles.center, { width: size, height: size }]}>
-    <LucideUserPlus size={size} color={color} strokeWidth={strokeWidth} />
+    {isWeb ? (
+      <LucideUserPlus size={size} color={color} strokeWidth={strokeWidth} />
+    ) : (
+      <Feather name="user-plus" size={size} color={color} />
+    )}
   </View>
 );
 
@@ -89,7 +112,11 @@ export const AlertTriangleIcon: React.FC<IconProps> = ({
   strokeWidth = 2,
 }) => (
   <View style={[styles.center, { width: size, height: size }]}>
-    <LucideAlertTriangle size={size} color={color} strokeWidth={strokeWidth} />
+    {isWeb ? (
+      <LucideAlertTriangle size={size} color={color} strokeWidth={strokeWidth} />
+    ) : (
+      <Feather name="alert-triangle" size={size} color={color} />
+    )}
   </View>
 );
 
@@ -99,7 +126,11 @@ export const CheckCircleIcon: React.FC<IconProps> = ({
   strokeWidth = 2,
 }) => (
   <View style={[styles.center, { width: size, height: size }]}>
-    <LucideCheckCircle2 size={size} color={color} strokeWidth={strokeWidth} />
+    {isWeb ? (
+      <LucideCheckCircle2 size={size} color={color} strokeWidth={strokeWidth} />
+    ) : (
+      <Feather name="check-circle" size={size} color={color} />
+    )}
   </View>
 );
 
@@ -109,7 +140,11 @@ export const PhoneIcon: React.FC<IconProps> = ({
   strokeWidth = 1.8,
 }) => (
   <View style={[styles.center, { width: size, height: size }]}>
-    <LucidePhone size={size} color={color} strokeWidth={strokeWidth} />
+    {isWeb ? (
+      <LucidePhone size={size} color={color} strokeWidth={strokeWidth} />
+    ) : (
+      <Feather name="phone" size={size} color={color} />
+    )}
   </View>
 );
 
@@ -119,7 +154,11 @@ export const MailIcon: React.FC<IconProps> = ({
   strokeWidth = 1.8,
 }) => (
   <View style={[styles.center, { width: size, height: size }]}>
-    <LucideMail size={size} color={color} strokeWidth={strokeWidth} />
+    {isWeb ? (
+      <LucideMail size={size} color={color} strokeWidth={strokeWidth} />
+    ) : (
+      <Feather name="mail" size={size} color={color} />
+    )}
   </View>
 );
 
@@ -129,7 +168,11 @@ export const ArrowLeftIcon: React.FC<IconProps> = ({
   strokeWidth = 2,
 }) => (
   <View style={[styles.center, { width: size, height: size }]}>
-    <LucideArrowLeft size={size} color={color} strokeWidth={strokeWidth} />
+    {isWeb ? (
+      <LucideArrowLeft size={size} color={color} strokeWidth={strokeWidth} />
+    ) : (
+      <Feather name="arrow-left" size={size} color={color} />
+    )}
   </View>
 );
 
@@ -139,7 +182,11 @@ export const RotateCwIcon: React.FC<IconProps> = ({
   strokeWidth = 1.8,
 }) => (
   <View style={[styles.center, { width: size, height: size }]}>
-    <LucideRotateCw size={size} color={color} strokeWidth={strokeWidth} />
+    {isWeb ? (
+      <LucideRotateCw size={size} color={color} strokeWidth={strokeWidth} />
+    ) : (
+      <Feather name="rotate-cw" size={size} color={color} />
+    )}
   </View>
 );
 
@@ -149,7 +196,11 @@ export const MicIcon: React.FC<IconProps> = ({
   strokeWidth = 2,
 }) => (
   <View style={[styles.center, { width: size, height: size }]}>
-    <LucideMic size={size} color={color} strokeWidth={strokeWidth} />
+    {isWeb ? (
+      <LucideMic size={size} color={color} strokeWidth={strokeWidth} />
+    ) : (
+      <Feather name="mic" size={size} color={color} />
+    )}
   </View>
 );
 
@@ -159,7 +210,11 @@ export const UsersIcon: React.FC<IconProps> = ({
   strokeWidth = 1.8,
 }) => (
   <View style={[styles.center, { width: size, height: size }]}>
-    <LucideUsers size={size} color={color} strokeWidth={strokeWidth} />
+    {isWeb ? (
+      <LucideUsers size={size} color={color} strokeWidth={strokeWidth} />
+    ) : (
+      <Feather name="users" size={size} color={color} />
+    )}
   </View>
 );
 
@@ -169,7 +224,11 @@ export const MessageSquareIcon: React.FC<IconProps> = ({
   strokeWidth = 1.8,
 }) => (
   <View style={[styles.center, { width: size, height: size }]}>
-    <LucideMessageSquare size={size} color={color} strokeWidth={strokeWidth} />
+    {isWeb ? (
+      <LucideMessageSquare size={size} color={color} strokeWidth={strokeWidth} />
+    ) : (
+      <Feather name="message-square" size={size} color={color} />
+    )}
   </View>
 );
 
@@ -179,7 +238,11 @@ export const BookOpenIcon: React.FC<IconProps> = ({
   strokeWidth = 1.8,
 }) => (
   <View style={[styles.center, { width: size, height: size }]}>
-    <LucideBookOpen size={size} color={color} strokeWidth={strokeWidth} />
+    {isWeb ? (
+      <LucideBookOpen size={size} color={color} strokeWidth={strokeWidth} />
+    ) : (
+      <Feather name="book-open" size={size} color={color} />
+    )}
   </View>
 );
 
@@ -189,7 +252,11 @@ export const WifiIcon: React.FC<IconProps> = ({
   strokeWidth = 2,
 }) => (
   <View style={[styles.center, { width: size, height: size }]}>
-    <LucideWifi size={size} color={color} strokeWidth={strokeWidth} />
+    {isWeb ? (
+      <LucideWifi size={size} color={color} strokeWidth={strokeWidth} />
+    ) : (
+      <Feather name="wifi" size={size} color={color} />
+    )}
   </View>
 );
 
@@ -199,7 +266,11 @@ export const XIcon: React.FC<IconProps> = ({
   strokeWidth = 2,
 }) => (
   <View style={[styles.center, { width: size, height: size }]}>
-    <LucideX size={size} color={color} strokeWidth={strokeWidth} />
+    {isWeb ? (
+      <LucideX size={size} color={color} strokeWidth={strokeWidth} />
+    ) : (
+      <Feather name="x" size={size} color={color} />
+    )}
   </View>
 );
 
@@ -209,7 +280,11 @@ export const PlusIcon: React.FC<IconProps> = ({
   strokeWidth = 2,
 }) => (
   <View style={[styles.center, { width: size, height: size }]}>
-    <LucidePlus size={size} color={color} strokeWidth={strokeWidth} />
+    {isWeb ? (
+      <LucidePlus size={size} color={color} strokeWidth={strokeWidth} />
+    ) : (
+      <Feather name="plus" size={size} color={color} />
+    )}
   </View>
 );
 
