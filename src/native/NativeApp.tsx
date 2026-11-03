@@ -51,8 +51,20 @@ import {
   SettingsIcon,
 } from './icons';
 import QRCode from 'qrcode';
-import jsQR from 'jsqr';
 import { soundEngine } from '../services/soundEngine';
+
+// Cargador web dinámico en runtime (evita que Metro bundler falle en terminal local)
+function ensureWebQrScannerLoaded() {
+  if (typeof window === 'undefined' || typeof document === 'undefined') return;
+  if ((window as any).jsQR || document.getElementById('c5i-qr-decoder-script')) return;
+  try {
+    const s = document.createElement('script');
+    s.id = 'c5i-qr-decoder-script';
+    s.src = 'https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js';
+    s.async = true;
+    document.head.appendChild(s);
+  } catch {}
+}
 
 // Silenciar advertencia informativa de SafeAreaView en React Native
 LogBox.ignoreLogs(['SafeAreaView has been deprecated']);
@@ -437,6 +449,7 @@ export default function NativeApp() {
       animLoop.start();
 
       if (Platform.OS === 'web') {
+        ensureWebQrScannerLoaded();
         if (typeof navigator !== 'undefined' && navigator.mediaDevices?.getUserMedia) {
           navigator.mediaDevices
             .getUserMedia({
@@ -482,8 +495,9 @@ export default function NativeApp() {
             } catch {}
           }
 
-          // 2. Decodificación de fotogramas mediante jsQR (funciona en 100% de navegadores)
-          if (offscreenCtx && offscreenCanvas) {
+          // 2. Decodificación de fotogramas mediante jsQR cargado dinámicamente en el navegador
+          const webJsQr = typeof window !== 'undefined' ? (window as any).jsQR : null;
+          if (webJsQr && offscreenCtx && offscreenCanvas) {
             try {
               const vw = video.videoWidth;
               const vh = video.videoHeight;
@@ -492,7 +506,7 @@ export default function NativeApp() {
                 offscreenCanvas.height = vh;
                 offscreenCtx.drawImage(video, 0, 0, vw, vh);
                 const imgData = offscreenCtx.getImageData(0, 0, vw, vh);
-                const qrCode = jsQR(imgData.data, imgData.width, imgData.height, {
+                const qrCode = webJsQr(imgData.data, imgData.width, imgData.height, {
                   inversionAttempts: 'dontInvert',
                 });
                 if (qrCode && qrCode.data) {
