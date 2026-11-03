@@ -308,12 +308,14 @@ function saveDatabase(db: DbSchema) {
 // -------------------------------------------------------------
 
 // 1. Health & Database Status
-app.get('/api/database/status', async (_req: Request, res: Response) => {
+app.get(['/api/database/status', '/status.php', '/api/status.php'], async (_req: Request, res: Response) => {
   const db = loadDatabase();
   res.json({
     database_name: DB_NAME,
+    database: isMysqlConnected ? 'Alwaysdata MySQL' : 'C5i Local Engine (Synced)',
     engine: isMysqlConnected ? 'MySQL Server' : 'C5i Local Engine (Synced)',
     is_mysql_connected: isMysqlConnected,
+    users_count: db.users.length,
     tables: {
       users: db.users.length,
       channels: db.channels.length,
@@ -331,7 +333,7 @@ app.get('/api/security/status', (_req: Request, res: Response) => {
 });
 
 // 2. Authentication: Login
-app.post(['/api/auth/login', '/api/security/login'], async (req: Request, res: Response) => {
+app.post(['/api/auth/login', '/api/security/login', '/login.php', '/api/login.php'], async (req: Request, res: Response) => {
   const { identificador, phone_number, password } = req.body;
   const identifier = (identificador || phone_number || '').trim().toLowerCase();
   const pass = (password || '').trim();
@@ -429,7 +431,7 @@ app.post(['/api/auth/login', '/api/security/login'], async (req: Request, res: R
 const otpTokens = new Map<string, { code: string; expiresAt: number }>();
 
 // 2.9 Authentication: Send SMS OTP for Registration
-app.post(['/api/auth/send-otp', '/api/security/send-otp'], (req: Request, res: Response) => {
+app.post(['/api/auth/send-otp', '/api/security/send-otp', '/send-otp.php', '/api/send-otp.php'], (req: Request, res: Response) => {
   const { phone, phone_number } = req.body;
   const target = String(phone || phone_number || '').replace(/\D/g, '');
   if (!target || target.length < 7) {
@@ -447,7 +449,7 @@ app.post(['/api/auth/send-otp', '/api/security/send-otp'], (req: Request, res: R
 });
 
 // 2.10 Authentication: Verify SMS OTP
-app.post(['/api/auth/verify-otp', '/api/security/verify-otp'], (req: Request, res: Response) => {
+app.post(['/api/auth/verify-otp', '/api/security/verify-otp', '/verify-otp.php', '/api/verify-otp.php'], (req: Request, res: Response) => {
   const { phone, phone_number, code } = req.body;
   const target = String(phone || phone_number || '').replace(/\D/g, '');
   const cleanCode = String(code || '').trim();
@@ -472,7 +474,7 @@ app.post(['/api/auth/verify-otp', '/api/security/verify-otp'], (req: Request, re
 });
 
 // 3. Authentication: Register
-app.post(['/api/auth/register', '/api/security/register'], async (req: Request, res: Response) => {
+app.post(['/api/auth/register', '/api/security/register', '/register.php', '/api/register.php'], async (req: Request, res: Response) => {
   const { name, phone_number, correo, email, callsign, unit, password } = req.body;
 
   if (!name || !phone_number) {
@@ -616,7 +618,7 @@ app.post(['/api/auth/verify-token', '/api/security/verify-token'], (req: Request
 });
 
 // 3.3 Authentication: Reset Password in DB
-app.post(['/api/auth/reset-password', '/api/security/reset-password'], async (req: Request, res: Response) => {
+app.post(['/api/auth/reset-password', '/api/security/reset-password', '/reset-password.php', '/api/reset-password.php'], async (req: Request, res: Response) => {
   const { identifier, new_password, newPassword, password } = req.body;
   const targetPass = new_password || newPassword || password;
 
@@ -694,15 +696,17 @@ app.put('/api/users/:id/status', (req: Request, res: Response) => {
 });
 
 // 6. Channels: List Channels (with member counts)
-app.get('/api/channels', (_req: Request, res: Response) => {
+app.get(['/api/channels', '/channels.php', '/api/channels.php'], (_req: Request, res: Response) => {
   const db = loadDatabase();
-  const channelsWithCounts = db.channels.map((chan) => {
+  const channelsWithCounts = db.channels.map((chan, idx) => {
     const memberCount = db.channel_members.filter((cm) => cm.channel_id === chan.id).length;
     const creator = db.users.find((u) => u.id === chan.created_by);
     return {
       ...chan,
       member_count: Math.max(memberCount, 1),
       admin_name: creator ? creator.name : 'Administrador C5i',
+      pin: chan.access_code || '1090',
+      frequency: `15${4 + (idx % 5)}.${((idx * 175) % 800) || '800'} MHz`,
       is_encrypted: true,
     };
   });
@@ -711,7 +715,7 @@ app.get('/api/channels', (_req: Request, res: Response) => {
 });
 
 // 7. Channels: Create Channel
-app.post('/api/channels', (req: Request, res: Response) => {
+app.post(['/api/channels', '/channels.php'], (req: Request, res: Response) => {
   const { name, is_private, access_code, created_by, category } = req.body;
 
   if (!name || !name.trim()) {
@@ -796,8 +800,8 @@ app.post('/api/channels/:id/join', (req: Request, res: Response) => {
 });
 
 // 9. Channels: Delete Channel
-app.delete('/api/channels/:id', (req: Request, res: Response) => {
-  const id = req.params.id as string;
+app.delete(['/api/channels/:id', '/api/channels', '/channels.php'], (req: Request, res: Response) => {
+  const id = (req.params.id || req.body?.id || req.query?.id) as string;
   const db = loadDatabase();
 
   db.channels = db.channels.filter((c) => c.id !== id);
@@ -809,7 +813,7 @@ app.delete('/api/channels/:id', (req: Request, res: Response) => {
 });
 
 // 10. Contacts: List Contacts for User
-app.get('/api/contacts', (req: Request, res: Response) => {
+app.get(['/api/contacts', '/contacts.php'], (req: Request, res: Response) => {
   const userId = (req.query.user_id as string) || 'usr-c5i-01';
   const db = loadDatabase();
 
@@ -854,7 +858,7 @@ app.get('/api/contacts', (req: Request, res: Response) => {
 });
 
 // 11. Contacts: Add Contact
-app.post('/api/contacts', (req: Request, res: Response) => {
+app.post(['/api/contacts', '/contacts.php'], (req: Request, res: Response) => {
   const { user_id, contact_user_id, name, phone_number, alias, callsign, unit } = req.body;
   const db = loadDatabase();
   const userId = user_id || 'usr-c5i-01';
@@ -910,7 +914,7 @@ app.post('/api/contacts', (req: Request, res: Response) => {
 });
 
 // 12. Voice Messages: List for Channel
-app.get('/api/voice-messages', (req: Request, res: Response) => {
+app.get(['/api/voice-messages', '/voice-messages.php', '/api/voice-messages.php'], (req: Request, res: Response) => {
   const channel_id = req.query.channel_id as string | undefined;
   const db = loadDatabase();
 
@@ -935,7 +939,7 @@ app.get('/api/voice-messages', (req: Request, res: Response) => {
 });
 
 // 13. Voice Messages: Record/Transmit Voice Message
-app.post(['/api/voice-messages', '/api/security/transmit'], (req: Request, res: Response) => {
+app.post(['/api/voice-messages', '/api/security/transmit', '/voice-messages.php', '/api/voice-messages.php'], (req: Request, res: Response) => {
   const { sender_id, channel_id, receiver_id, audio_url, duration_seconds, is_emergency, text, text_content } = req.body;
 
   const db = loadDatabase();
