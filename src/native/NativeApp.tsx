@@ -18,6 +18,9 @@ import {
   KeyboardAvoidingView,
   Animated,
   Easing,
+  Clipboard,
+  Keyboard,
+  TouchableWithoutFeedback,
 } from 'react-native';
 import { safeStorage } from './storage';
 import {
@@ -212,6 +215,7 @@ export default function NativeApp() {
   const [isConfigModalOpen, setIsConfigModalOpen] = useState(false);
   const [configChannel, setConfigChannel] = useState<Channel | null>(null);
   const [configQrUrl, setConfigQrUrl] = useState<string | null>(null);
+  const [configQrMatrix, setConfigQrMatrix] = useState<boolean[][]>([]);
   const [hasCopiedPin, setHasCopiedPin] = useState(false);
   
   // History & Messages
@@ -362,33 +366,49 @@ export default function NativeApp() {
     });
   }, [channels, selectedCategory, channelSearchText]);
 
-  // Abrir modal de configuración y QR de un canal
-  const openChannelConfig = async (ch: Channel) => {
+  // Abrir modal de configuración y QR de un canal (Seguro para iPhone y Web sin error de canvas)
+  const openChannelConfig = (ch: Channel) => {
     setConfigChannel(ch);
     setHasCopiedPin(false);
+    const pin = ch.pin || '1090';
+    const qrText = `C5I-CANAL:${ch.code || 'CH-10'}:PIN-${pin}`;
+
     try {
-      const qrData = JSON.stringify({
-        id: ch.id,
-        name: ch.name,
-        code: ch.code,
-        pin: ch.pin || '1090',
-        frequency: ch.frequency,
-        category: ch.category,
-      });
-      const url = await QRCode.toDataURL(qrData, {
-        width: 240,
-        margin: 2,
-        color: { dark: '#0f172a', light: '#ffffff' },
-      });
-      setConfigQrUrl(url);
+      // Generación de matriz pura en memoria sin requerir elemento HTML5 <canvas>
+      const qr = QRCode.create(qrText, { errorCorrectionLevel: 'M' });
+      const size = qr.modules.size;
+      const matrix: boolean[][] = [];
+      for (let r = 0; r < size; r++) {
+        const row: boolean[] = [];
+        for (let c = 0; c < size; c++) {
+          row.push(Boolean(qr.modules.get(r, c)));
+        }
+        matrix.push(row);
+      }
+      setConfigQrMatrix(matrix);
     } catch (e) {
-      console.warn('Error generating QR', e);
+      console.warn('Error generating QR matrix', e);
     }
+
+    // En navegador web se puede generar dataURL opcionalmente
+    if (Platform.OS === 'web') {
+      try {
+        QRCode.toDataURL(qrText, {
+          width: 240,
+          margin: 1,
+          color: { dark: '#0f172a', light: '#ffffff' },
+        })
+          .then((url) => setConfigQrUrl(url))
+          .catch(() => {});
+      } catch {}
+    }
+
     setIsConfigModalOpen(true);
   };
 
   // Unirse a canal mediante PIN
   const handleJoinChannelSubmit = () => {
+    Keyboard.dismiss();
     setJoinError(null);
     const pin = joinPinDigits.trim();
     if (pin.length !== 4) {
@@ -427,6 +447,7 @@ export default function NativeApp() {
 
   // Simular o procesar escaneo QR
   const handleScanQrMock = (mockChannel?: Channel) => {
+    Keyboard.dismiss();
     const target = mockChannel || channels[0];
     const targetPin = target?.pin || '1090';
     setJoinPinDigits(targetPin);
@@ -438,8 +459,9 @@ export default function NativeApp() {
     }, 250);
   };
 
-  // Crear nuevo canal táctico
+  // Crear nuevo canal táctico (Simplificado: Solo Nombre y PIN de 4 dígitos)
   const handleCreateChannelSubmit = () => {
+    Keyboard.dismiss();
     setCreateChannelError(null);
     if (!createChannelName.trim()) {
       setCreateChannelError('Ingresa un nombre para el canal táctico.');
@@ -451,13 +473,13 @@ export default function NativeApp() {
       id: `chan-${Date.now()}`,
       name: createChannelName.trim().toUpperCase(),
       code: `CH-${(channels.length + 1) * 10}`,
-      frequency: createChannelFrequency.trim() || `15${4 + (channels.length % 5)}.${Math.floor(100 + Math.random() * 800)} MHz`,
-      category: createChannelCategory,
+      frequency: `15${4 + (channels.length % 5)}.${Math.floor(100 + Math.random() * 800)} MHz`,
+      category: 'Táctico',
       isEncrypted: true,
       activeUsers: 1,
       pin: pin,
-      accessCode: `C5I-${createChannelCategory.slice(0, 3).toUpperCase()}-${pin}`,
-      isPrivate: createChannelIsPrivate,
+      accessCode: `C5I-TAC-${pin}`,
+      isPrivate: false,
     };
 
     setChannels((prev) => [newCh, ...prev]);
@@ -478,25 +500,42 @@ export default function NativeApp() {
             category: newCh.category,
             frequency: newCh.frequency,
             pin: newCh.pin,
-            is_private: newCh.isPrivate ? 1 : 0,
+            is_private: 0,
           }),
         }, 3000).catch(() => {});
       } catch {}
     }
   };
 
-  // Copiar código o PIN al portapapeles
-  const copyToClipboard = async (text: string) => {
+  // Copiar ÚNICAMENTE el PIN al portapapeles (compatible nativo con iPhone y Web)
+  const copyToClipboard = async (pinText: string) => {
+    const pinOnly = String(pinText || '1090').trim();
+
+    // 1. Portapapeles Nativo de iOS y Android en React Native
     try {
-      if (typeof navigator !== 'undefined' && navigator.clipboard) {
-        await navigator.clipboard.writeText(text);
+      if (Clipboard && typeof Clipboard.setString === 'function') {
+        Clipboard.setString(pinOnly);
       }
-      setHasCopiedPin(true);
-      setTimeout(() => setHasCopiedPin(false), 2200);
-    } catch {
-      setHasCopiedPin(true);
-      setTimeout(() => setHasCopiedPin(false), 2200);
+    } catch (e) {
+      console.warn('Clipboard setString failed', e);
     }
+
+    // 2. Portapapeles Web si se ejecuta en navegador
+    if (Platform.OS === 'web' && typeof navigator !== 'undefined' && navigator.clipboard) {
+      try {
+        await navigator.clipboard.writeText(pinOnly);
+      } catch {}
+    }
+
+    // 3. Retroalimentación háptica
+    if (Platform.OS !== 'web') {
+      try {
+        Vibration.vibrate(50);
+      } catch {}
+    }
+
+    setHasCopiedPin(true);
+    setTimeout(() => setHasCopiedPin(false), 2500);
   };
 
   const handlePttPressIn = () => {
@@ -3035,121 +3074,156 @@ export default function NativeApp() {
         </View>
       </Modal>
 
-      {/* 1. MODAL: UNIRSE A CANAL CON PIN O QR */}
+      {/* 1. MODAL: UNIRSE A CANAL CON PIN O QR (CON MANEJO ÓPTIMO DE TECLADO EN IPHONE) */}
       <Modal
         visible={isJoinModalOpen}
         animationType="fade"
         transparent
-        onRequestClose={() => setIsJoinModalOpen(false)}
+        onRequestClose={() => {
+          Keyboard.dismiss();
+          setIsJoinModalOpen(false);
+        }}
       >
-        <View style={styles.channelModalOverlay}>
-          <View style={styles.channelModalCard}>
-            {/* Header */}
-            <View style={styles.channelModalHeader}>
-              <View style={styles.channelModalHeaderLeft}>
-                <View style={styles.channelModalIconBox}>
-                  <LogInIcon size={20} color="#8a1a36" strokeWidth={2} />
-                </View>
-                <View>
-                  <Text style={styles.channelModalTitle}>Unirse a Canal</Text>
-                  <Text style={styles.channelModalSubtitle}>
-                    Ingresa el PIN de 4 dígitos o escanea el QR
-                  </Text>
-                </View>
-              </View>
-              <TouchableOpacity
-                onPress={() => setIsJoinModalOpen(false)}
-                style={styles.channelModalCloseBtn}
-                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-              >
-                <XIcon size={18} color="#64748b" strokeWidth={2} />
-              </TouchableOpacity>
-            </View>
-
-            <View style={styles.canalesModalBody}>
-              {joinError && (
-                <View style={styles.recoveryErrorBanner}>
-                  <AlertTriangleIcon size={15} color="#be123c" strokeWidth={1.8} />
-                  <Text style={styles.recoveryErrorText}>{joinError}</Text>
-                </View>
-              )}
-
-              <Text style={styles.canalesPinLabel}>PIN O NÚMERO DE ASIGNACIÓN</Text>
-              <Text style={styles.canalesPinSub}>
-                Ingresa el código numérico de 4 dígitos proporcionado por el oficial
-              </Text>
-
-              {/* Cajas de dígitos PIN sincronizadas (Misma estructura del Registro) */}
-              <TouchableOpacity
-                activeOpacity={1}
-                onPress={() => joinPinInputRef.current?.focus()}
-                style={styles.canalesTokenRow}
-              >
-                {[0, 1, 2, 3].map((idx) => {
-                  const char = joinPinDigits[idx] || '';
-                  const isCurrent = joinPinDigits.length === idx;
-                  return (
-                    <View
-                      key={idx}
-                      style={[
-                        styles.canalesTokenBox,
-                        Boolean(char) && styles.canalesTokenBoxFilled,
-                        isCurrent && styles.canalesTokenBoxActive,
-                      ]}
-                    >
-                      <Text style={styles.canalesTokenDigit}>{char}</Text>
+        <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+          <View style={styles.channelModalOverlay}>
+            <KeyboardAvoidingView
+              behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+              keyboardVerticalOffset={Platform.OS === 'ios' ? 30 : 0}
+              style={{ width: '100%', alignItems: 'center' }}
+            >
+              <TouchableWithoutFeedback onPress={(e) => e.stopPropagation()}>
+                <View style={styles.channelModalCard}>
+                  {/* Header */}
+                  <View style={styles.channelModalHeader}>
+                    <View style={styles.channelModalHeaderLeft}>
+                      <View style={styles.channelModalIconBox}>
+                        <LogInIcon size={20} color="#8a1a36" strokeWidth={2} />
+                      </View>
+                      <View>
+                        <Text style={styles.channelModalTitle}>Unirse a Canal</Text>
+                        <Text style={styles.channelModalSubtitle}>
+                          Ingresa el PIN de 4 dígitos o escanea el QR
+                        </Text>
+                      </View>
                     </View>
-                  );
-                })}
-              </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={() => {
+                        Keyboard.dismiss();
+                        setIsJoinModalOpen(false);
+                      }}
+                      style={styles.channelModalCloseBtn}
+                      hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                    >
+                      <XIcon size={18} color="#64748b" strokeWidth={2} />
+                    </TouchableOpacity>
+                  </View>
 
-              {/* Input nativo oculto para compatibilidad con iOS y Web */}
-              <TextInput
-                ref={joinPinInputRef}
-                style={styles.hiddenInput}
-                value={joinPinDigits}
-                onChangeText={(val) => {
-                  const cleaned = val.replace(/\D/g, '').slice(0, 4);
-                  setJoinPinDigits(cleaned);
-                  if (joinError) setJoinError(null);
-                }}
-                keyboardType="numeric"
-                maxLength={4}
-                autoFocus
-              />
+                  <ScrollView
+                    style={{ maxHeight: 480 }}
+                    contentContainerStyle={styles.canalesModalBody}
+                    keyboardShouldPersistTaps="handled"
+                  >
+                    {joinError && (
+                      <View style={styles.recoveryErrorBanner}>
+                        <AlertTriangleIcon size={15} color="#be123c" strokeWidth={1.8} />
+                        <Text style={styles.recoveryErrorText}>{joinError}</Text>
+                      </View>
+                    )}
 
-              {/* Botón de envío */}
-              <TouchableOpacity
-                style={[
-                  styles.canalesModalSubmitBtn,
-                  joinPinDigits.length !== 4 && styles.canalesModalSubmitBtnDisabled,
-                ]}
-                onPress={handleJoinChannelSubmit}
-                disabled={joinPinDigits.length !== 4}
-                activeOpacity={0.88}
-              >
-                <Text style={styles.canalesModalSubmitBtnText}>UNIRME AL CANAL</Text>
-              </TouchableOpacity>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <Text style={styles.canalesPinLabel}>PIN O NÚMERO DE ASIGNACIÓN</Text>
+                      <TouchableOpacity
+                        onPress={Keyboard.dismiss}
+                        style={styles.canalesHideKeyboardBtn}
+                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                      >
+                        <Text style={styles.canalesHideKeyboardText}>Bajar teclado ▾</Text>
+                      </TouchableOpacity>
+                    </View>
+                    <Text style={styles.canalesPinSub}>
+                      Ingresa el código numérico de 4 dígitos proporcionado por el oficial
+                    </Text>
 
-              {/* Divisor */}
-              <View style={styles.canalesDividerRow}>
-                <View style={styles.canalesDividerLine} />
-                <Text style={styles.canalesDividerText}>O BIEN</Text>
-                <View style={styles.canalesDividerLine} />
-              </View>
+                    {/* Cajas de dígitos PIN sincronizadas (Misma estructura del Registro) */}
+                    <TouchableOpacity
+                      activeOpacity={1}
+                      onPress={() => joinPinInputRef.current?.focus()}
+                      style={styles.canalesTokenRow}
+                    >
+                      {[0, 1, 2, 3].map((idx) => {
+                        const char = joinPinDigits[idx] || '';
+                        const isCurrent = joinPinDigits.length === idx;
+                        return (
+                          <View
+                            key={idx}
+                            style={[
+                              styles.canalesTokenBox,
+                              Boolean(char) && styles.canalesTokenBoxFilled,
+                              isCurrent && styles.canalesTokenBoxActive,
+                            ]}
+                          >
+                            <Text style={styles.canalesTokenDigit}>{char}</Text>
+                          </View>
+                        );
+                      })}
+                    </TouchableOpacity>
 
-              {/* Botón para Escanear Código QR */}
-              <TouchableOpacity
-                style={styles.canalesScanQrBtn}
-                onPress={() => setIsJoinScanning(true)}
-                activeOpacity={0.8}
-              >
-                <CameraIcon size={18} color="#8a1a36" strokeWidth={2} />
-                <Text style={styles.canalesScanQrBtnText}>Escanear Código QR del Canal</Text>
-              </TouchableOpacity>
-            </View>
+                    {/* Input nativo oculto (sin autoFocus para no tapar la pantalla de inmediato) */}
+                    <TextInput
+                      ref={joinPinInputRef}
+                      style={styles.hiddenInput}
+                      value={joinPinDigits}
+                      onChangeText={(val) => {
+                        const cleaned = val.replace(/\D/g, '').slice(0, 4);
+                        setJoinPinDigits(cleaned);
+                        if (joinError) setJoinError(null);
+                        if (cleaned.length === 4) {
+                          Keyboard.dismiss();
+                        }
+                      }}
+                      keyboardType="numeric"
+                      maxLength={4}
+                      autoFocus={false}
+                    />
+
+                    {/* Botón de envío */}
+                    <TouchableOpacity
+                      style={[
+                        styles.canalesModalSubmitBtn,
+                        joinPinDigits.length !== 4 && styles.canalesModalSubmitBtnDisabled,
+                      ]}
+                      onPress={handleJoinChannelSubmit}
+                      disabled={joinPinDigits.length !== 4}
+                      activeOpacity={0.88}
+                    >
+                      <Text style={styles.canalesModalSubmitBtnText}>UNIRME AL CANAL</Text>
+                    </TouchableOpacity>
+
+                    {/* Divisor */}
+                    <View style={styles.canalesDividerRow}>
+                      <View style={styles.canalesDividerLine} />
+                      <Text style={styles.canalesDividerText}>O BIEN</Text>
+                      <View style={styles.canalesDividerLine} />
+                    </View>
+
+                    {/* Botón para Escanear Código QR */}
+                    <TouchableOpacity
+                      style={styles.canalesScanQrBtn}
+                      onPress={() => {
+                        Keyboard.dismiss();
+                        setIsJoinScanning(true);
+                      }}
+                      activeOpacity={0.8}
+                    >
+                      <CameraIcon size={18} color="#8a1a36" strokeWidth={2} />
+                      <Text style={styles.canalesScanQrBtnText}>Escanear Código QR del Canal</Text>
+                    </TouchableOpacity>
+                  </ScrollView>
+                </View>
+              </TouchableWithoutFeedback>
+            </KeyboardAvoidingView>
           </View>
-        </View>
+        </TouchableWithoutFeedback>
       </Modal>
 
       {/* 2. MODAL: ESCÁNER QR DE CANAL */}
@@ -3229,189 +3303,152 @@ export default function NativeApp() {
         </View>
       </Modal>
 
-      {/* 3. MODAL: CREAR CANAL TÁCTICO */}
+      {/* 3. MODAL: CREAR CANAL TÁCTICO (SIMPLIFICADO: SOLO NOMBRE Y PIN) */}
       <Modal
         visible={isCreateModalOpen}
         animationType="fade"
         transparent
-        onRequestClose={() => setIsCreateModalOpen(false)}
+        onRequestClose={() => {
+          Keyboard.dismiss();
+          setIsCreateModalOpen(false);
+        }}
       >
-        <View style={styles.channelModalOverlay}>
-          <View style={styles.channelModalCard}>
-            {/* Header */}
-            <View style={styles.channelModalHeader}>
-              <View style={styles.channelModalHeaderLeft}>
-                <View style={[styles.channelModalIconBox, { backgroundColor: '#8a1a36' }]}>
-                  <PlusIcon size={20} color="#ffffff" strokeWidth={2.4} />
-                </View>
-                <View>
-                  <Text style={styles.channelModalTitle}>Crear Canal Táctico</Text>
-                  <Text style={styles.channelModalSubtitle}>
-                    Establece una nueva frecuencia en la red C5i
-                  </Text>
-                </View>
-              </View>
-              <TouchableOpacity
-                onPress={() => setIsCreateModalOpen(false)}
-                style={styles.channelModalCloseBtn}
-                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-              >
-                <XIcon size={18} color="#64748b" strokeWidth={2} />
-              </TouchableOpacity>
-            </View>
-
-            <ScrollView style={{ maxHeight: 420 }} contentContainerStyle={styles.canalesModalBody}>
-              {createChannelError && (
-                <View style={styles.recoveryErrorBanner}>
-                  <AlertTriangleIcon size={15} color="#be123c" strokeWidth={1.8} />
-                  <Text style={styles.recoveryErrorText}>{createChannelError}</Text>
-                </View>
-              )}
-
-              {/* Nombre del Canal */}
-              <View style={styles.recoveryInputGroup}>
-                <Text style={styles.recoveryInputLabel}>Nombre del Canal</Text>
-                <View style={styles.recoveryInputBox}>
-                  <View style={styles.recoveryInputIconBox}>
-                    <RadioIcon size={16} color="#94a3b8" />
-                  </View>
-                  <TextInput
-                    style={styles.recoveryInput}
-                    value={createChannelName}
-                    onChangeText={setCreateChannelName}
-                    placeholder="Ej. SECTOR PACHUCA SUR"
-                    placeholderTextColor="#94a3b8"
-                    autoCapitalize="characters"
-                  />
-                </View>
-              </View>
-
-              {/* Categoría */}
-              <View style={styles.recoveryInputGroup}>
-                <Text style={styles.recoveryInputLabel}>Categoría Operativa</Text>
-                <View style={styles.canalesCreateCatRow}>
-                  {['Táctico', 'General', 'Emergencia', 'Vialidad', 'Inteligencia'].map((cat) => (
-                    <TouchableOpacity
-                      key={cat}
-                      style={[
-                        styles.canalesCreateCatPill,
-                        createChannelCategory === cat && styles.canalesCreateCatPillActive,
-                      ]}
-                      onPress={() => setCreateChannelCategory(cat)}
-                      activeOpacity={0.7}
-                    >
-                      <Text
-                        style={[
-                          styles.canalesCreateCatText,
-                          createChannelCategory === cat && styles.canalesCreateCatTextActive,
-                        ]}
-                      >
-                        {cat}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-              </View>
-
-              {/* Frecuencia Estimada */}
-              <View style={styles.recoveryInputGroup}>
-                <Text style={styles.recoveryInputLabel}>Frecuencia (MHz)</Text>
-                <View style={styles.recoveryInputBox}>
-                  <View style={styles.recoveryInputIconBox}>
-                    <WifiIcon size={16} color="#94a3b8" />
-                  </View>
-                  <TextInput
-                    style={styles.recoveryInput}
-                    value={createChannelFrequency}
-                    onChangeText={setCreateChannelFrequency}
-                    placeholder="154.850 MHz"
-                    placeholderTextColor="#94a3b8"
-                  />
-                </View>
-              </View>
-
-              {/* PIN de Acceso (4 dígitos) */}
-              <View style={styles.recoveryInputGroup}>
-                <Text style={styles.recoveryInputLabel}>PIN o Código de Acceso (4 dígitos)</Text>
-                <Text style={styles.canalesPinSub}>
-                  Los oficiales usarán este PIN para sintonizarse
-                </Text>
-
-                <TouchableOpacity
-                  activeOpacity={1}
-                  onPress={() => createChannelPinInputRef.current?.focus()}
-                  style={styles.canalesTokenRow}
-                >
-                  {[0, 1, 2, 3].map((idx) => {
-                    const char = createChannelPin[idx] || '';
-                    const isCurrent = createChannelPin.length === idx;
-                    return (
-                      <View
-                        key={idx}
-                        style={[
-                          styles.canalesTokenBox,
-                          Boolean(char) && styles.canalesTokenBoxFilled,
-                          isCurrent && styles.canalesTokenBoxActive,
-                        ]}
-                      >
-                        <Text style={styles.canalesTokenDigit}>{char}</Text>
+        <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+          <View style={styles.channelModalOverlay}>
+            <KeyboardAvoidingView
+              behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+              keyboardVerticalOffset={Platform.OS === 'ios' ? 30 : 0}
+              style={{ width: '100%', alignItems: 'center' }}
+            >
+              <TouchableWithoutFeedback onPress={(e) => e.stopPropagation()}>
+                <View style={styles.channelModalCard}>
+                  {/* Header */}
+                  <View style={styles.channelModalHeader}>
+                    <View style={styles.channelModalHeaderLeft}>
+                      <View style={[styles.channelModalIconBox, { backgroundColor: '#8a1a36' }]}>
+                        <PlusIcon size={20} color="#ffffff" strokeWidth={2.4} />
                       </View>
-                    );
-                  })}
-                </TouchableOpacity>
+                      <View>
+                        <Text style={styles.channelModalTitle}>Crear Canal Táctico</Text>
+                        <Text style={styles.channelModalSubtitle}>
+                          Establece una nueva frecuencia en la red C5i
+                        </Text>
+                      </View>
+                    </View>
+                    <TouchableOpacity
+                      onPress={() => {
+                        Keyboard.dismiss();
+                        setIsCreateModalOpen(false);
+                      }}
+                      style={styles.channelModalCloseBtn}
+                      hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                    >
+                      <XIcon size={18} color="#64748b" strokeWidth={2} />
+                    </TouchableOpacity>
+                  </View>
 
-                <TextInput
-                  ref={createChannelPinInputRef}
-                  style={styles.hiddenInput}
-                  value={createChannelPin}
-                  onChangeText={(val) => {
-                    const cleaned = val.replace(/\D/g, '').slice(0, 4);
-                    setCreateChannelPin(cleaned);
-                  }}
-                  keyboardType="numeric"
-                  maxLength={4}
-                />
-              </View>
+                  <ScrollView
+                    style={{ maxHeight: 420 }}
+                    contentContainerStyle={styles.canalesModalBody}
+                    keyboardShouldPersistTaps="handled"
+                  >
+                    {createChannelError && (
+                      <View style={styles.recoveryErrorBanner}>
+                        <AlertTriangleIcon size={15} color="#be123c" strokeWidth={1.8} />
+                        <Text style={styles.recoveryErrorText}>{createChannelError}</Text>
+                      </View>
+                    )}
 
-              {/* Tipo de canal: Público vs Privado */}
-              <View style={styles.canalesPrivateRow}>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.canalesPrivateTitle}>Canal Táctico Privado</Text>
-                  <Text style={styles.canalesPrivateSub}>
-                    Requiere PIN obligatorio para que otras patrullas puedan escuchar
-                  </Text>
+                    {/* Nombre del Canal */}
+                    <View style={styles.recoveryInputGroup}>
+                      <Text style={styles.recoveryInputLabel}>Nombre del Canal</Text>
+                      <View style={styles.recoveryInputBox}>
+                        <View style={styles.recoveryInputIconBox}>
+                          <RadioIcon size={16} color="#94a3b8" />
+                        </View>
+                        <TextInput
+                          style={styles.recoveryInput}
+                          value={createChannelName}
+                          onChangeText={setCreateChannelName}
+                          placeholder="Ej. SECTOR PACHUCA SUR"
+                          placeholderTextColor="#94a3b8"
+                          autoCapitalize="characters"
+                        />
+                      </View>
+                    </View>
+
+                    {/* PIN de Acceso (4 dígitos) */}
+                    <View style={styles.recoveryInputGroup}>
+                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <Text style={styles.recoveryInputLabel}>PIN o Código de Acceso (4 dígitos)</Text>
+                        <TouchableOpacity
+                          onPress={Keyboard.dismiss}
+                          style={styles.canalesHideKeyboardBtn}
+                          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                        >
+                          <Text style={styles.canalesHideKeyboardText}>Bajar teclado ▾</Text>
+                        </TouchableOpacity>
+                      </View>
+                      <Text style={styles.canalesPinSub}>
+                        Los oficiales usarán este PIN para sintonizarse
+                      </Text>
+
+                      <TouchableOpacity
+                        activeOpacity={1}
+                        onPress={() => createChannelPinInputRef.current?.focus()}
+                        style={styles.canalesTokenRow}
+                      >
+                        {[0, 1, 2, 3].map((idx) => {
+                          const char = createChannelPin[idx] || '';
+                          const isCurrent = createChannelPin.length === idx;
+                          return (
+                            <View
+                              key={idx}
+                              style={[
+                                styles.canalesTokenBox,
+                                Boolean(char) && styles.canalesTokenBoxFilled,
+                                isCurrent && styles.canalesTokenBoxActive,
+                              ]}
+                            >
+                              <Text style={styles.canalesTokenDigit}>{char}</Text>
+                            </View>
+                          );
+                        })}
+                      </TouchableOpacity>
+
+                      <TextInput
+                        ref={createChannelPinInputRef}
+                        style={styles.hiddenInput}
+                        value={createChannelPin}
+                        onChangeText={(val) => {
+                          const cleaned = val.replace(/\D/g, '').slice(0, 4);
+                          setCreateChannelPin(cleaned);
+                          if (cleaned.length === 4) {
+                            Keyboard.dismiss();
+                          }
+                        }}
+                        keyboardType="numeric"
+                        maxLength={4}
+                      />
+                    </View>
+
+                    {/* Botón Crear */}
+                    <TouchableOpacity
+                      style={styles.canalesModalSubmitBtn}
+                      onPress={handleCreateChannelSubmit}
+                      activeOpacity={0.88}
+                    >
+                      <Text style={styles.canalesModalSubmitBtnText}>CREAR Y SINTONIZAR CANAL</Text>
+                    </TouchableOpacity>
+                  </ScrollView>
                 </View>
-                <TouchableOpacity
-                  style={[
-                    styles.canalesPrivateToggle,
-                    createChannelIsPrivate && styles.canalesPrivateToggleActive,
-                  ]}
-                  onPress={() => setCreateChannelIsPrivate((prev) => !prev)}
-                  activeOpacity={0.8}
-                >
-                  <View
-                    style={[
-                      styles.canalesPrivateKnob,
-                      createChannelIsPrivate && styles.canalesPrivateKnobActive,
-                    ]}
-                  />
-                </TouchableOpacity>
-              </View>
-
-              {/* Botón Crear */}
-              <TouchableOpacity
-                style={styles.canalesModalSubmitBtn}
-                onPress={handleCreateChannelSubmit}
-                activeOpacity={0.88}
-              >
-                <Text style={styles.canalesModalSubmitBtnText}>CREAR Y SINTONIZAR CANAL</Text>
-              </TouchableOpacity>
-            </ScrollView>
+              </TouchableWithoutFeedback>
+            </KeyboardAvoidingView>
           </View>
-        </View>
+        </TouchableWithoutFeedback>
       </Modal>
 
-      {/* 4. MODAL: CONFIGURACIÓN Y QR DEL CANAL (MATCHING REQUERIMIENTO) */}
+      {/* 4. MODAL: CONFIGURACIÓN Y QR DEL CANAL (QR COMPATIBLE NATIVO + SOLO PIN) */}
       <Modal
         visible={isConfigModalOpen}
         animationType="fade"
@@ -3443,9 +3480,26 @@ export default function NativeApp() {
             </View>
 
             <View style={styles.canalesModalBody}>
-              {/* Contenedor del Código QR */}
+              {/* Contenedor del Código QR (Matriz pura en Views para iPhone y Web) */}
               <View style={styles.canalesQrBox}>
-                {configQrUrl ? (
+                {configQrMatrix.length > 0 ? (
+                  <View style={styles.canalesQrMatrixBox}>
+                    {configQrMatrix.map((row, rIdx) => (
+                      <View key={rIdx} style={{ flexDirection: 'row' }}>
+                        {row.map((dark, cIdx) => (
+                          <View
+                            key={cIdx}
+                            style={{
+                              width: Math.max(5, Math.floor(180 / configQrMatrix.length)),
+                              height: Math.max(5, Math.floor(180 / configQrMatrix.length)),
+                              backgroundColor: dark ? '#0f172a' : '#ffffff',
+                            }}
+                          />
+                        ))}
+                      </View>
+                    ))}
+                  </View>
+                ) : configQrUrl ? (
                   <Image
                     source={{ uri: configQrUrl }}
                     style={styles.canalesQrImage}
@@ -3459,27 +3513,18 @@ export default function NativeApp() {
                 )}
               </View>
 
-              {/* Debajo del QR: PIN y Código del Canal en Grande */}
+              {/* Debajo del QR: PIN de Asignación en Grande (Sin código ni frecuencia) */}
               <View style={styles.canalesQrCodeInfo}>
-                <Text style={styles.canalesQrCodeLabel}>PIN DE ASIGNACIÓN:</Text>
+                <Text style={styles.canalesQrCodeLabel}>PIN DE ASIGNACIÓN</Text>
                 <Text style={styles.canalesQrPinBig}>
                   {configChannel?.pin || '1090'}
                 </Text>
-                <Text style={styles.canalesQrCodeSub}>
-                  Código: <Text style={{ fontWeight: '800', color: '#0f172a' }}>{configChannel?.code || 'CH-10'}</Text>
-                  {'  •  '}
-                  Frecuencia: <Text style={{ fontWeight: '800', color: '#0f172a' }}>{configChannel?.frequency}</Text>
-                </Text>
               </View>
 
-              {/* Botón para Copiar PIN y Código */}
+              {/* Botón para Copiar ÚNICAMENTE el PIN del Canal */}
               <TouchableOpacity
                 style={styles.canalesCopyBtn}
-                onPress={() =>
-                  copyToClipboard(
-                    `Canal C5i: ${configChannel?.name} | PIN: ${configChannel?.pin || '1090'} | Código: ${configChannel?.code}`
-                  )
-                }
+                onPress={() => copyToClipboard(configChannel?.pin || '1090')}
                 activeOpacity={0.75}
               >
                 <CopyIcon size={16} color={hasCopiedPin ? '#059669' : '#8a1a36'} />
@@ -3489,7 +3534,7 @@ export default function NativeApp() {
                     hasCopiedPin && { color: '#059669' },
                   ]}
                 >
-                  {hasCopiedPin ? '¡PIN y Código Copiados al Portapapeles!' : 'Copiar PIN y Código del Canal'}
+                  {hasCopiedPin ? '¡PIN Copiado al Portapapeles!' : 'Copiar PIN del Canal'}
                 </Text>
               </TouchableOpacity>
 
@@ -5768,6 +5813,25 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#64748b',
     fontWeight: '500',
+  },
+  canalesHideKeyboardBtn: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+    backgroundColor: '#f1f5f9',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  canalesHideKeyboardText: {
+    fontSize: 11,
+    color: '#64748b',
+    fontWeight: '700',
+  },
+  canalesQrMatrixBox: {
+    padding: 6,
+    backgroundColor: '#ffffff',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   canalesCopyBtn: {
     flexDirection: 'row',
