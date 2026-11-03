@@ -1,5 +1,26 @@
 import React from 'react';
 import { View, StyleSheet } from 'react-native';
+import {
+  User as LucideUser,
+  Lock as LucideLock,
+  Eye as LucideEye,
+  EyeOff as LucideEyeOff,
+  KeyRound as LucideKeyRound,
+  UserPlus as LucideUserPlus,
+  AlertTriangle as LucideAlertTriangle,
+  CheckCircle2 as LucideCheckCircle2,
+  Phone as LucidePhone,
+  Mail as LucideMail,
+  ArrowLeft as LucideArrowLeft,
+  RotateCw as LucideRotateCw,
+  Mic as LucideMic,
+  Users as LucideUsers,
+  MessageSquare as LucideMessageSquare,
+  BookOpen as LucideBookOpen,
+  Wifi as LucideWifi,
+  X as LucideX,
+  Plus as LucidePlus,
+} from 'lucide-react';
 
 export interface IconProps {
   size?: number;
@@ -7,721 +28,190 @@ export interface IconProps {
   strokeWidth?: number;
 }
 
-/**
- * Minimalist outline User icon (matches Lucide User line aesthetic)
- */
 export const UserIcon: React.FC<IconProps> = ({
   size = 18,
   color = '#94a3b8',
-  strokeWidth = 1.6,
-}) => {
-  const headSize = Math.round(size * 0.44);
-  const bodyWidth = Math.round(size * 0.78);
-  const bodyHeight = Math.round(size * 0.38);
+  strokeWidth = 1.8,
+}) => (
+  <View style={[styles.center, { width: size, height: size }]}>
+    <LucideUser size={size} color={color} strokeWidth={strokeWidth} />
+  </View>
+);
 
-  return (
-    <View style={[styles.center, { width: size, height: size }]}>
-      {/* Head */}
-      <View
-        style={{
-          width: headSize,
-          height: headSize,
-          borderRadius: headSize / 2,
-          borderWidth: strokeWidth,
-          borderColor: color,
-          marginBottom: 1,
-        }}
-      />
-      {/* Shoulders outline arch */}
-      <View
-        style={{
-          width: bodyWidth,
-          height: bodyHeight,
-          borderTopLeftRadius: bodyWidth / 2,
-          borderTopRightRadius: bodyWidth / 2,
-          borderWidth: strokeWidth,
-          borderBottomWidth: 0,
-          borderColor: color,
-        }}
-      />
-    </View>
-  );
-};
-
-/**
- * Minimalist outline Padlock icon (matches Lucide Lock line aesthetic)
- */
 export const LockIcon: React.FC<IconProps> = ({
   size = 18,
   color = '#94a3b8',
-  strokeWidth = 1.6,
-}) => {
-  const shackleWidth = Math.round(size * 0.48);
-  const shackleHeight = Math.round(size * 0.38);
-  const bodyWidth = Math.round(size * 0.75);
-  const bodyHeight = Math.round(size * 0.48);
+  strokeWidth = 1.8,
+}) => (
+  <View style={[styles.center, { width: size, height: size }]}>
+    <LucideLock size={size} color={color} strokeWidth={strokeWidth} />
+  </View>
+);
 
-  return (
-    <View style={[styles.center, { width: size, height: size }]}>
-      {/* Shackle */}
-      <View
-        style={{
-          width: shackleWidth,
-          height: shackleHeight,
-          borderTopLeftRadius: shackleWidth / 2,
-          borderTopRightRadius: shackleWidth / 2,
-          borderWidth: strokeWidth,
-          borderBottomWidth: 0,
-          borderColor: color,
-          marginBottom: -1,
-        }}
-      />
-      {/* Body */}
-      <View
-        style={{
-          width: bodyWidth,
-          height: bodyHeight,
-          borderRadius: 3.5,
-          borderWidth: strokeWidth,
-          borderColor: color,
-          alignItems: 'center',
-          justifyContent: 'center',
-        }}
-      >
-        {/* Keyhole dot */}
-        <View
-          style={{
-            width: strokeWidth * 1.3,
-            height: strokeWidth * 2,
-            borderRadius: 1,
-            backgroundColor: color,
-          }}
-        />
-      </View>
-    </View>
-  );
-};
-
-/**
- * Minimalist outline Eye / EyeOff icon (matches Lucide Eye & EyeOff)
- */
 export const EyeIcon: React.FC<IconProps & { off?: boolean }> = ({
   size = 18,
   color = '#94a3b8',
-  strokeWidth = 1.6,
+  strokeWidth = 1.8,
   off = false,
-}) => {
-  const eyeWidth = Math.round(size * 0.92);
-  const eyeHeight = Math.round(size * 0.54);
-  const pupilSize = Math.round(size * 0.26);
+}) => (
+  <View style={[styles.center, { width: size, height: size }]}>
+    {off ? (
+      <LucideEyeOff size={size} color={color} strokeWidth={strokeWidth} />
+    ) : (
+      <LucideEye size={size} color={color} strokeWidth={strokeWidth} />
+    )}
+  </View>
+);
 
-  return (
-    <View style={[styles.center, { width: size, height: size }]}>
-      {/* Almond eye contour */}
-      <View
-        style={{
-          width: eyeWidth,
-          height: eyeHeight,
-          borderTopLeftRadius: eyeWidth * 0.5,
-          borderTopRightRadius: eyeWidth * 0.5,
-          borderBottomLeftRadius: eyeWidth * 0.5,
-          borderBottomRightRadius: eyeWidth * 0.5,
-          borderWidth: strokeWidth,
-          borderColor: color,
-          alignItems: 'center',
-          justifyContent: 'center',
-        }}
-      >
-        {/* Pupil */}
-        <View
-          style={{
-            width: pupilSize,
-            height: pupilSize,
-            borderRadius: pupilSize / 2,
-            borderWidth: strokeWidth,
-            borderColor: color,
-          }}
-        />
-      </View>
-      {/* Diagonal slash when off */}
-      {off && (
-        <View
-          style={{
-            position: 'absolute',
-            width: strokeWidth,
-            height: size * 0.95,
-            backgroundColor: color,
-            transform: [{ rotate: '45deg' }],
-          }}
-        />
-      )}
-    </View>
-  );
-};
-
-/**
- * Minimalist outline Key icon (matches Lucide KeyRound line aesthetic)
- */
 export const KeyIcon: React.FC<IconProps> = ({
   size = 16,
   color = '#64748b',
-  strokeWidth = 1.6,
-}) => {
-  const bowSize = Math.round(size * 0.44);
-  const shaftLength = Math.round(size * 0.42);
+  strokeWidth = 1.8,
+}) => (
+  <View style={[styles.center, { width: size, height: size }]}>
+    <LucideKeyRound size={size} color={color} strokeWidth={strokeWidth} />
+  </View>
+);
 
-  return (
-    <View
-      style={[
-        styles.center,
-        {
-          width: size,
-          height: size,
-          transform: [{ rotate: '-45deg' }],
-        },
-      ]}
-    >
-      <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-        {/* Bow (circular head) */}
-        <View
-          style={{
-            width: bowSize,
-            height: bowSize,
-            borderRadius: bowSize / 2,
-            borderWidth: strokeWidth,
-            borderColor: color,
-          }}
-        />
-        {/* Key shaft */}
-        <View
-          style={{
-            width: shaftLength,
-            height: strokeWidth,
-            backgroundColor: color,
-            marginLeft: -1,
-          }}
-        />
-        {/* Teeth */}
-        <View
-          style={{
-            position: 'absolute',
-            right: 2,
-            top: bowSize / 2,
-            width: strokeWidth,
-            height: 3,
-            backgroundColor: color,
-          }}
-        />
-      </View>
-    </View>
-  );
-};
-
-/**
- * Minimalist outline UserPlus icon (matches Lucide UserPlus line aesthetic)
- */
 export const UserPlusIcon: React.FC<IconProps> = ({
   size = 16,
   color = '#691c32',
-  strokeWidth = 1.5,
-}) => {
-  const headSize = Math.round(size * 0.34);
-  const bodyWidth = Math.round(size * 0.58);
-  const bodyHeight = Math.round(size * 0.28);
-  const plusSize = Math.round(size * 0.32);
+  strokeWidth = 1.8,
+}) => (
+  <View style={[styles.center, { width: size, height: size }]}>
+    <LucideUserPlus size={size} color={color} strokeWidth={strokeWidth} />
+  </View>
+);
 
-  return (
-    <View style={{ width: size, height: size, justifyContent: 'center' }}>
-      {/* Mini user bust outline */}
-      <View style={{ position: 'absolute', left: 0, top: 1, alignItems: 'center' }}>
-        <View
-          style={{
-            width: headSize,
-            height: headSize,
-            borderRadius: headSize / 2,
-            borderWidth: strokeWidth,
-            borderColor: color,
-            marginBottom: 1,
-          }}
-        />
-        <View
-          style={{
-            width: bodyWidth,
-            height: bodyHeight,
-            borderTopLeftRadius: bodyWidth / 2,
-            borderTopRightRadius: bodyWidth / 2,
-            borderWidth: strokeWidth,
-            borderBottomWidth: 0,
-            borderColor: color,
-          }}
-        />
-      </View>
-      {/* Plus symbol */}
-      <View
-        style={{
-          position: 'absolute',
-          right: 0,
-          top: Math.round(size * 0.22),
-          width: plusSize,
-          height: plusSize,
-          alignItems: 'center',
-          justifyContent: 'center',
-        }}
-      >
-        <View
-          style={{
-            position: 'absolute',
-            width: plusSize,
-            height: strokeWidth,
-            backgroundColor: color,
-            borderRadius: 1,
-          }}
-        />
-        <View
-          style={{
-            position: 'absolute',
-            width: strokeWidth,
-            height: plusSize,
-            backgroundColor: color,
-            borderRadius: 1,
-          }}
-        />
-      </View>
-    </View>
-  );
-};
-
-/**
- * Minimalist outline Alert Triangle icon (matches Lucide AlertTriangle)
- */
 export const AlertTriangleIcon: React.FC<IconProps> = ({
   size = 16,
   color = '#be123c',
-  strokeWidth = 1.5,
-}) => {
-  return (
-    <View style={[styles.center, { width: size, height: size }]}>
-      {/* Triangle outer */}
-      <View
-        style={{
-          width: 0,
-          height: 0,
-          backgroundColor: 'transparent',
-          borderStyle: 'solid',
-          borderLeftWidth: Math.round(size * 0.46),
-          borderRightWidth: Math.round(size * 0.46),
-          borderBottomWidth: Math.round(size * 0.8),
-          borderLeftColor: 'transparent',
-          borderRightColor: 'transparent',
-          borderBottomColor: color,
-        }}
-      />
-      {/* Triangle inner cutout */}
-      <View
-        style={{
-          position: 'absolute',
-          top: Math.round(size * 0.22),
-          width: 0,
-          height: 0,
-          backgroundColor: 'transparent',
-          borderStyle: 'solid',
-          borderLeftWidth: Math.round(size * 0.3),
-          borderRightWidth: Math.round(size * 0.3),
-          borderBottomWidth: Math.round(size * 0.52),
-          borderLeftColor: 'transparent',
-          borderRightColor: 'transparent',
-          borderBottomColor: '#fff1f2',
-        }}
-      />
-      {/* Exclamation mark */}
-      <View style={{ position: 'absolute', top: Math.round(size * 0.36), alignItems: 'center' }}>
-        <View style={{ width: strokeWidth, height: Math.round(size * 0.22), backgroundColor: color, borderRadius: 1 }} />
-        <View style={{ width: strokeWidth, height: strokeWidth, backgroundColor: color, borderRadius: strokeWidth / 2, marginTop: 1.5 }} />
-      </View>
-    </View>
-  );
-};
+  strokeWidth = 2,
+}) => (
+  <View style={[styles.center, { width: size, height: size }]}>
+    <LucideAlertTriangle size={size} color={color} strokeWidth={strokeWidth} />
+  </View>
+);
 
-/**
- * Minimalist outline Check Circle icon (matches Lucide CheckCircle2)
- */
 export const CheckCircleIcon: React.FC<IconProps> = ({
   size = 16,
   color = '#059669',
-  strokeWidth = 1.6,
-}) => {
-  return (
-    <View
-      style={[
-        styles.center,
-        {
-          width: size,
-          height: size,
-          borderRadius: size / 2,
-          borderWidth: strokeWidth,
-          borderColor: color,
-        },
-      ]}
-    >
-      <View
-        style={{
-          width: Math.round(size * 0.44),
-          height: Math.round(size * 0.24),
-          borderBottomWidth: strokeWidth,
-          borderLeftWidth: strokeWidth,
-          borderColor: color,
-          transform: [{ rotate: '-45deg' }, { translateY: -1 }],
-        }}
-      />
-    </View>
-  );
-};
+  strokeWidth = 2,
+}) => (
+  <View style={[styles.center, { width: size, height: size }]}>
+    <LucideCheckCircle2 size={size} color={color} strokeWidth={strokeWidth} />
+  </View>
+);
 
-/**
- * Minimalist outline Phone icon (matches Lucide Phone)
- */
 export const PhoneIcon: React.FC<IconProps> = ({
   size = 16,
   color = '#94a3b8',
-  strokeWidth = 1.5,
-}) => {
-  return (
-    <View
-      style={[
-        styles.center,
-        {
-          width: size,
-          height: size,
-          transform: [{ rotate: '-25deg' }],
-        },
-      ]}
-    >
-      <View
-        style={{
-          width: Math.round(size * 0.72),
-          height: Math.round(size * 0.72),
-          borderLeftWidth: strokeWidth * 1.5,
-          borderBottomWidth: strokeWidth * 1.5,
-          borderTopWidth: strokeWidth,
-          borderRightWidth: strokeWidth,
-          borderColor: color,
-          borderTopLeftRadius: Math.round(size * 0.35),
-          borderBottomLeftRadius: 4,
-          borderBottomRightRadius: 4,
-          borderTopRightRadius: 2,
-        }}
-      />
-    </View>
-  );
-};
+  strokeWidth = 1.8,
+}) => (
+  <View style={[styles.center, { width: size, height: size }]}>
+    <LucidePhone size={size} color={color} strokeWidth={strokeWidth} />
+  </View>
+);
 
-/**
- * Minimalist outline Mail icon (matches Lucide Mail)
- */
 export const MailIcon: React.FC<IconProps> = ({
   size = 16,
   color = '#94a3b8',
-  strokeWidth = 1.5,
-}) => {
-  const w = Math.round(size * 0.88);
-  const h = Math.round(size * 0.62);
-  return (
-    <View style={[styles.center, { width: size, height: size }]}>
-      <View
-        style={{
-          width: w,
-          height: h,
-          borderRadius: 3,
-          borderWidth: strokeWidth,
-          borderColor: color,
-          alignItems: 'center',
-          overflow: 'hidden',
-        }}
-      >
-        <View
-          style={{
-            width: Math.round(w * 0.7),
-            height: Math.round(w * 0.7),
-            borderBottomWidth: strokeWidth,
-            borderRightWidth: strokeWidth,
-            borderColor: color,
-            transform: [{ rotate: '45deg' }, { translateY: -Math.round(w * 0.35) }],
-          }}
-        />
-      </View>
-    </View>
-  );
-};
+  strokeWidth = 1.8,
+}) => (
+  <View style={[styles.center, { width: size, height: size }]}>
+    <LucideMail size={size} color={color} strokeWidth={strokeWidth} />
+  </View>
+);
 
-/**
- * Minimalist outline ArrowLeft icon
- */
 export const ArrowLeftIcon: React.FC<IconProps> = ({
   size = 14,
   color = '#64748b',
-  strokeWidth = 1.6,
-}) => {
-  return (
-    <View style={[styles.center, { width: size, height: size }]}>
-      <View style={{ width: Math.round(size * 0.7), height: strokeWidth, backgroundColor: color }} />
-      <View
-        style={{
-          position: 'absolute',
-          left: 1,
-          width: Math.round(size * 0.35),
-          height: Math.round(size * 0.35),
-          borderLeftWidth: strokeWidth,
-          borderBottomWidth: strokeWidth,
-          borderColor: color,
-          transform: [{ rotate: '45deg' }],
-        }}
-      />
-    </View>
-  );
-};
+  strokeWidth = 2,
+}) => (
+  <View style={[styles.center, { width: size, height: size }]}>
+    <LucideArrowLeft size={size} color={color} strokeWidth={strokeWidth} />
+  </View>
+);
 
-/**
- * Minimalist outline RotateCw icon
- */
 export const RotateCwIcon: React.FC<IconProps> = ({
   size = 14,
   color = '#64748b',
-  strokeWidth = 1.5,
-}) => {
-  return (
-    <View
-      style={[
-        styles.center,
-        {
-          width: size,
-          height: size,
-          borderRadius: size / 2,
-          borderWidth: strokeWidth,
-          borderTopColor: 'transparent',
-          borderRightColor: color,
-          borderBottomColor: color,
-          borderLeftColor: color,
-        },
-      ]}
-    >
-      <View
-        style={{
-          position: 'absolute',
-          top: -1,
-          right: -1,
-          width: 0,
-          height: 0,
-          borderLeftWidth: 3,
-          borderRightWidth: 3,
-          borderBottomWidth: 4,
-          borderLeftColor: 'transparent',
-          borderRightColor: 'transparent',
-          borderBottomColor: color,
-          transform: [{ rotate: '45deg' }],
-        }}
-      />
-    </View>
-  );
-};
+  strokeWidth = 1.8,
+}) => (
+  <View style={[styles.center, { width: size, height: size }]}>
+    <LucideRotateCw size={size} color={color} strokeWidth={strokeWidth} />
+  </View>
+);
 
-/**
- * Minimalist outline Mic icon (matches Lucide Mic)
- */
 export const MicIcon: React.FC<IconProps> = ({
   size = 24,
   color = '#334155',
   strokeWidth = 2,
-}) => {
-  const capsuleW = Math.round(size * 0.38);
-  const capsuleH = Math.round(size * 0.58);
-  return (
-    <View style={[styles.center, { width: size, height: size }]}>
-      {/* Inner capsule */}
-      <View
-        style={{
-          width: capsuleW,
-          height: capsuleH,
-          borderRadius: capsuleW / 2,
-          borderWidth: strokeWidth,
-          borderColor: color,
-          backgroundColor: 'transparent',
-        }}
-      />
-      {/* Outer cradle */}
-      <View
-        style={{
-          position: 'absolute',
-          top: Math.round(size * 0.2),
-          width: Math.round(size * 0.64),
-          height: Math.round(size * 0.44),
-          borderBottomLeftRadius: Math.round(size * 0.32),
-          borderBottomRightRadius: Math.round(size * 0.32),
-          borderWidth: strokeWidth,
-          borderTopWidth: 0,
-          borderColor: color,
-        }}
-      />
-      {/* Stand stem */}
-      <View
-        style={{
-          position: 'absolute',
-          bottom: 2,
-          width: strokeWidth,
-          height: Math.round(size * 0.18),
-          backgroundColor: color,
-        }}
-      />
-      {/* Stand base */}
-      <View
-        style={{
-          position: 'absolute',
-          bottom: 1,
-          width: Math.round(size * 0.4),
-          height: strokeWidth,
-          backgroundColor: color,
-          borderRadius: 1,
-        }}
-      />
-    </View>
-  );
-};
+}) => (
+  <View style={[styles.center, { width: size, height: size }]}>
+    <LucideMic size={size} color={color} strokeWidth={strokeWidth} />
+  </View>
+);
 
-/**
- * Minimalist outline Users icon (matches Lucide Users)
- */
 export const UsersIcon: React.FC<IconProps> = ({
   size = 20,
   color = '#64748b',
   strokeWidth = 1.8,
-}) => {
-  return (
-    <View style={[styles.center, { width: size, height: size }]}>
-      <UserIcon size={Math.round(size * 0.85)} color={color} strokeWidth={strokeWidth} />
-    </View>
-  );
-};
+}) => (
+  <View style={[styles.center, { width: size, height: size }]}>
+    <LucideUsers size={size} color={color} strokeWidth={strokeWidth} />
+  </View>
+);
 
-/**
- * Minimalist outline MessageSquare icon
- */
 export const MessageSquareIcon: React.FC<IconProps> = ({
   size = 20,
   color = '#64748b',
   strokeWidth = 1.8,
-}) => {
-  const w = Math.round(size * 0.85);
-  const h = Math.round(size * 0.72);
-  return (
-    <View style={[styles.center, { width: size, height: size }]}>
-      <View
-        style={{
-          width: w,
-          height: h,
-          borderRadius: 4,
-          borderWidth: strokeWidth,
-          borderColor: color,
-        }}
-      />
-      <View
-        style={{
-          position: 'absolute',
-          bottom: 2,
-          left: Math.round(size * 0.25),
-          width: 0,
-          height: 0,
-          borderTopWidth: 4,
-          borderRightWidth: 4,
-          borderTopColor: color,
-          borderRightColor: 'transparent',
-        }}
-      />
-    </View>
-  );
-};
+}) => (
+  <View style={[styles.center, { width: size, height: size }]}>
+    <LucideMessageSquare size={size} color={color} strokeWidth={strokeWidth} />
+  </View>
+);
 
-/**
- * Minimalist outline BookOpen / Contacts icon
- */
 export const BookOpenIcon: React.FC<IconProps> = ({
   size = 20,
   color = '#64748b',
   strokeWidth = 1.8,
-}) => {
-  const pageW = Math.round(size * 0.42);
-  const pageH = Math.round(size * 0.65);
-  return (
-    <View style={[styles.center, { width: size, height: size, flexDirection: 'row' }]}>
-      <View
-        style={{
-          width: pageW,
-          height: pageH,
-          borderWidth: strokeWidth,
-          borderRightWidth: strokeWidth / 2,
-          borderColor: color,
-          borderTopLeftRadius: 3,
-          borderBottomLeftRadius: 3,
-        }}
-      />
-      <View
-        style={{
-          width: pageW,
-          height: pageH,
-          borderWidth: strokeWidth,
-          borderLeftWidth: strokeWidth / 2,
-          borderColor: color,
-          borderTopRightRadius: 3,
-          borderBottomRightRadius: 3,
-        }}
-      />
-    </View>
-  );
-};
+}) => (
+  <View style={[styles.center, { width: size, height: size }]}>
+    <LucideBookOpen size={size} color={color} strokeWidth={strokeWidth} />
+  </View>
+);
 
-/**
- * Minimalist outline Wifi icon
- */
 export const WifiIcon: React.FC<IconProps> = ({
   size = 14,
   color = '#10b981',
-  strokeWidth = 1.8,
-}) => {
-  return (
-    <View style={[styles.center, { width: size, height: size }]}>
-      <View
-        style={{
-          width: Math.round(size * 0.85),
-          height: Math.round(size * 0.42),
-          borderTopLeftRadius: Math.round(size * 0.42),
-          borderTopRightRadius: Math.round(size * 0.42),
-          borderWidth: strokeWidth,
-          borderBottomWidth: 0,
-          borderColor: color,
-        }}
-      />
-      <View
-        style={{
-          width: Math.round(size * 0.45),
-          height: Math.round(size * 0.24),
-          borderTopLeftRadius: Math.round(size * 0.24),
-          borderTopRightRadius: Math.round(size * 0.24),
-          borderWidth: strokeWidth,
-          borderBottomWidth: 0,
-          borderColor: color,
-          marginTop: 1,
-        }}
-      />
-      <View
-        style={{
-          width: strokeWidth * 1.5,
-          height: strokeWidth * 1.5,
-          borderRadius: (strokeWidth * 1.5) / 2,
-          backgroundColor: color,
-          marginTop: 1,
-        }}
-      />
-    </View>
-  );
-};
+  strokeWidth = 2,
+}) => (
+  <View style={[styles.center, { width: size, height: size }]}>
+    <LucideWifi size={size} color={color} strokeWidth={strokeWidth} />
+  </View>
+);
+
+export const XIcon: React.FC<IconProps> = ({
+  size = 18,
+  color = '#94a3b8',
+  strokeWidth = 2,
+}) => (
+  <View style={[styles.center, { width: size, height: size }]}>
+    <LucideX size={size} color={color} strokeWidth={strokeWidth} />
+  </View>
+);
+
+export const PlusIcon: React.FC<IconProps> = ({
+  size = 16,
+  color = '#691c32',
+  strokeWidth = 2,
+}) => (
+  <View style={[styles.center, { width: size, height: size }]}>
+    <LucidePlus size={size} color={color} strokeWidth={strokeWidth} />
+  </View>
+);
 
 const styles = StyleSheet.create({
   center: {
@@ -729,4 +219,3 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
 });
-

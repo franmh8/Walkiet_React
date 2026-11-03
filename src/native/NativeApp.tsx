@@ -37,6 +37,8 @@ import {
   MessageSquareIcon,
   BookOpenIcon,
   WifiIcon,
+  XIcon,
+  PlusIcon,
 } from './icons';
 import { soundEngine } from '../services/soundEngine';
 
@@ -1342,7 +1344,7 @@ export default function NativeApp() {
                   style={styles.modalCloseBtn}
                   hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                 >
-                  <Text style={styles.modalCloseIcon}>✕</Text>
+                  <XIcon size={18} color="#64748b" strokeWidth={2} />
                 </TouchableOpacity>
               </View>
 
@@ -1736,7 +1738,7 @@ export default function NativeApp() {
                   style={styles.modalCloseBtn}
                   hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                 >
-                  <Text style={styles.modalCloseIcon}>✕</Text>
+                  <XIcon size={18} color="#64748b" strokeWidth={2} />
                 </TouchableOpacity>
               </View>
 
@@ -2543,7 +2545,7 @@ export default function NativeApp() {
                 style={styles.channelModalCloseBtn}
                 hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
               >
-                <Text style={styles.channelModalCloseIcon}>✕</Text>
+                <XIcon size={18} color="#64748b" strokeWidth={2} />
               </TouchableOpacity>
             </View>
 
@@ -2601,7 +2603,8 @@ export default function NativeApp() {
                 style={styles.channelManageContactsBtn}
                 activeOpacity={0.7}
               >
-                <Text style={styles.channelManageContactsText}>+ Gestionar Contactos</Text>
+                <PlusIcon size={15} color="#8a1a36" strokeWidth={2.4} />
+                <Text style={styles.channelManageContactsText}>Gestionar Contactos</Text>
               </TouchableOpacity>
 
               <TouchableOpacity
@@ -2878,6 +2881,9 @@ const styles = StyleSheet.create({
     backgroundColor: '#fafbfc',
   },
   channelManageContactsBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
     paddingVertical: 6,
   },
   channelManageContactsText: {
