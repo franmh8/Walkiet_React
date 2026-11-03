@@ -461,12 +461,26 @@ export default function NativeApp() {
     }
 
     if (serverUrl && channel.id) {
-      try {
-        const cleanUrl = serverUrl.replace(/\/+$/, '');
-        fetchWithTimeout(`${cleanUrl}/api/channels/${channel.id}`, {
-          method: 'DELETE',
-        }, 3000).catch(() => {});
-      } catch {}
+      (async () => {
+        try {
+          const cleanUrl = serverUrl.replace(/\/+$/, '');
+          let res = await fetchWithTimeout(`${cleanUrl}/channels.php?id=${encodeURIComponent(channel.id)}`, {
+            method: 'DELETE',
+          }, 3000).catch(() => null);
+
+          if (!res || !res.ok) {
+            res = await fetchWithTimeout(`${cleanUrl}/api/channels/${encodeURIComponent(channel.id)}`, {
+              method: 'DELETE',
+            }, 3000).catch(() => null);
+          }
+
+          if (!res || !res.ok) {
+            await fetchWithTimeout(`${cleanUrl}/api/channels.php?id=${encodeURIComponent(channel.id)}`, {
+              method: 'DELETE',
+            }, 3000).catch(() => null);
+          }
+        } catch {}
+      })();
     }
 
     try {
@@ -897,20 +911,46 @@ export default function NativeApp() {
     });
 
     if (serverUrl) {
-      try {
-        const cleanUrl = serverUrl.replace(/\/+$/, '');
-        fetchWithTimeout(`${cleanUrl}/api/channels`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
+      (async () => {
+        try {
+          const cleanUrl = serverUrl.replace(/\/+$/, '');
+          const payload = JSON.stringify({
             name: newCh.name,
             category: newCh.category,
             frequency: newCh.frequency,
             pin: newCh.pin,
+            access_code: newCh.pin,
             is_private: 0,
-          }),
-        }, 3000).catch(() => {});
-      } catch {}
+          });
+
+          // 1. Intentar directamente channels.php (Alwaysdata / PHP)
+          let res = await fetchWithTimeout(`${cleanUrl}/channels.php`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: payload,
+          }, 4000).catch(() => null);
+
+          // 2. Si falla o no existe, intentar /api/channels
+          if (!res || !res.ok) {
+            res = await fetchWithTimeout(`${cleanUrl}/api/channels`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: payload,
+            }, 4000).catch(() => null);
+          }
+
+          // 3. Si aún no responde, intentar /api/channels.php
+          if (!res || !res.ok) {
+            await fetchWithTimeout(`${cleanUrl}/api/channels.php`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: payload,
+            }, 4000).catch(() => null);
+          }
+        } catch (err) {
+          console.warn('Error al sincronizar canal con servidor C5i:', err);
+        }
+      })();
     }
   };
 
@@ -977,20 +1017,32 @@ export default function NativeApp() {
 
       // Enviar burst al backend en background si existe URL
       if (serverUrl) {
-        try {
-          const cleanUrl = serverUrl.replace(/\/+$/, '');
-          fetchWithTimeout(`${cleanUrl}/api/voice-messages`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
+        (async () => {
+          try {
+            const cleanUrl = serverUrl.replace(/\/+$/, '');
+            const payload = JSON.stringify({
               sender_id: currentUser.id,
               channel_id: selectedChannel.id,
               audio_url: `burst-${Date.now()}`,
               duration_seconds: txDuration,
               text: `Ráfaga PTT de ${currentUser.badge} (${txDuration}s)`,
-            }),
-          }, 3000).catch(() => {});
-        } catch {}
+            });
+
+            let res = await fetchWithTimeout(`${cleanUrl}/voice-messages.php`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: payload,
+            }, 3000).catch(() => null);
+
+            if (!res || !res.ok) {
+              await fetchWithTimeout(`${cleanUrl}/api/voice-messages`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: payload,
+              }, 3000).catch(() => null);
+            }
+          } catch {}
+        })();
       }
     }
 

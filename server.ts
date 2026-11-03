@@ -716,18 +716,20 @@ app.get(['/api/channels', '/channels.php', '/api/channels.php'], (_req: Request,
 
 // 7. Channels: Create Channel
 app.post(['/api/channels', '/channels.php'], (req: Request, res: Response) => {
-  const { name, is_private, access_code, created_by, category } = req.body;
+  const { name, is_private, access_code, pin, created_by, category } = req.body;
 
   if (!name || !name.trim()) {
     return res.status(400).json({ success: false, message: 'El nombre del canal es requerido' });
   }
 
+  const resolvedPin = (pin || access_code) ? String(pin || access_code).trim() : '1090';
   const db = loadDatabase();
   const newChan = {
     id: `chan-${Date.now()}`,
     name: name.trim().toUpperCase(),
     is_private: is_private ? 1 : 0,
-    access_code: access_code ? String(access_code).trim() : null,
+    access_code: resolvedPin,
+    pin: resolvedPin,
     created_by: created_by || 'usr-c5i-01',
     category: category || 'tactico',
     created_at: new Date().toISOString(),

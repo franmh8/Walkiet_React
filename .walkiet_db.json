@@ -85,6 +85,15 @@
       "created_by": "usr-c5i-03",
       "category": "vialidad",
       "created_at": "2026-10-01T08:00:00Z"
+    },
+    {
+      "id": "chan-1793734185093",
+      "name": "TELE",
+      "is_private": 0,
+      "access_code": null,
+      "created_by": "usr-c5i-01",
+      "category": "Táctico",
+      "created_at": "2026-11-03T19:29:45.093Z"
     }
   ],
   "channel_members": [
@@ -117,6 +126,12 @@
       "channel_id": "chan-02",
       "user_id": "usr-c5i-04",
       "joined_at": "2026-10-01T08:00:00Z"
+    },
+    {
+      "id": "cm-1793734185093",
+      "channel_id": "chan-1793734185093",
+      "user_id": "usr-c5i-01",
+      "joined_at": "2026-11-03T19:29:45.093Z"
     }
   ],
   "contacts": [
