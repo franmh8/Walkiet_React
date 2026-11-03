@@ -222,8 +222,9 @@ export const RadioMainScreen: React.FC<RadioMainScreenProps> = ({
           {/* Animated concentric soundwave ripple rings during transmission */}
           {isTransmitting && (
             <>
-              <div className="absolute w-72 h-72 sm:w-84 sm:h-84 rounded-full bg-rose-500/15 animate-ping pointer-events-none" />
-              <div className="absolute w-80 h-80 sm:w-96 sm:h-96 rounded-full border border-rose-500/20 animate-pulse pointer-events-none" />
+              <div className="absolute w-72 h-72 sm:w-84 sm:h-84 rounded-full bg-rose-500/15 border border-rose-500/40 animate-ping pointer-events-none" />
+              <div className="absolute w-84 h-84 sm:w-96 sm:h-96 rounded-full border-2 border-rose-500/30 animate-pulse pointer-events-none" />
+              <div className="absolute w-96 h-96 sm:w-[420px] sm:h-[420px] rounded-full border border-rose-500/20 animate-pulse pointer-events-none" />
             </>
           )}
 

@@ -16,6 +16,8 @@ import {
   LogBox,
   Modal,
   KeyboardAvoidingView,
+  Animated,
+  Easing,
 } from 'react-native';
 import { safeStorage } from './storage';
 import {
@@ -182,6 +184,11 @@ export default function NativeApp() {
 
   const timerRef = useRef<any>(null);
 
+  // Concentric animated soundwave rings for PTT (expanding circles)
+  const waveAnim1 = useRef(new Animated.Value(0)).current;
+  const waveAnim2 = useRef(new Animated.Value(0)).current;
+  const waveAnim3 = useRef(new Animated.Value(0)).current;
+
   // Carga inicial de preferencias guardadas en dispositivo
   useEffect(() => {
     (async () => {
@@ -290,9 +297,9 @@ export default function NativeApp() {
   };
 
   const handlePttPressIn = () => {
+    soundEngine.playPttStart();
     setIsTransmitting(true);
     setTxDuration(0);
-    soundEngine.playPttStart();
     if (Platform.OS !== 'web') {
       try {
         Vibration.vibrate(60);
@@ -306,7 +313,6 @@ export default function NativeApp() {
   const handlePttPressOut = async () => {
     if (!isTransmitting) return;
     setIsTransmitting(false);
-    soundEngine.playRogerBeep();
     if (timerRef.current) clearInterval(timerRef.current);
     
     if (Platform.OS !== 'web') {
@@ -345,7 +351,86 @@ export default function NativeApp() {
         } catch {}
       }
     }
+
+    soundEngine.playRogerBeep();
   };
+
+  // Looping expanding concentric circles soundwave animation while transmitting
+  useEffect(() => {
+    if (!isTransmitting) {
+      waveAnim1.setValue(0);
+      waveAnim2.setValue(0);
+      waveAnim3.setValue(0);
+      return;
+    }
+
+    const createWaveLoop = (anim: Animated.Value) => {
+      anim.setValue(0);
+      return Animated.loop(
+        Animated.timing(anim, {
+          toValue: 1,
+          duration: 1800,
+          easing: Easing.bezier(0.2, 0.6, 0.35, 1),
+          useNativeDriver: Platform.OS !== 'web',
+        })
+      );
+    };
+
+    const anim1 = createWaveLoop(waveAnim1);
+    const anim2 = createWaveLoop(waveAnim2);
+    const anim3 = createWaveLoop(waveAnim3);
+
+    anim1.start();
+    const t2 = setTimeout(() => anim2.start(), 600);
+    const t3 = setTimeout(() => anim3.start(), 1200);
+
+    return () => {
+      clearTimeout(t2);
+      clearTimeout(t3);
+      anim1.stop();
+      anim2.stop();
+      anim3.stop();
+      waveAnim1.setValue(0);
+      waveAnim2.setValue(0);
+      waveAnim3.setValue(0);
+    };
+  }, [isTransmitting]);
+
+  // Spacebar Push-To-Talk shortcut on web desktop
+  useEffect(() => {
+    if (Platform.OS !== 'web' || !currentUser) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (
+        e.code === 'Space' &&
+        !e.repeat &&
+        !(e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement)
+      ) {
+        e.preventDefault();
+        if (!isTransmitting) {
+          handlePttPressIn();
+        }
+      }
+    };
+
+    const handleKeyUp = (e: KeyboardEvent) => {
+      if (
+        e.code === 'Space' &&
+        !(e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement)
+      ) {
+        e.preventDefault();
+        if (isTransmitting) {
+          handlePttPressOut();
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keyup', handleKeyUp);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keyup', handleKeyUp);
+    };
+  }, [isTransmitting, currentUser]);
 
   const handleLogin = async () => {
     setIdentifierError(null);
@@ -2092,12 +2177,75 @@ export default function NativeApp() {
               <View style={styles.pttCircleContainer}>
                 {isTransmitting && (
                   <>
-                    <View style={styles.cleanPttWaveOuter} />
-                    <View style={styles.cleanPttWaveInner} />
+                    <Animated.View
+                      pointerEvents="none"
+                      style={[
+                        styles.cleanPttExpandingWave,
+                        {
+                          transform: [
+                            {
+                              scale: waveAnim1.interpolate({
+                                inputRange: [0, 1],
+                                outputRange: [1, 1.55],
+                              }),
+                            },
+                          ],
+                          opacity: waveAnim1.interpolate({
+                            inputRange: [0, 0.25, 0.75, 1],
+                            outputRange: [0.65, 0.5, 0.2, 0],
+                          }),
+                        },
+                      ]}
+                    />
+                    <Animated.View
+                      pointerEvents="none"
+                      style={[
+                        styles.cleanPttExpandingWave,
+                        {
+                          transform: [
+                            {
+                              scale: waveAnim2.interpolate({
+                                inputRange: [0, 1],
+                                outputRange: [1, 1.55],
+                              }),
+                            },
+                          ],
+                          opacity: waveAnim2.interpolate({
+                            inputRange: [0, 0.25, 0.75, 1],
+                            outputRange: [0.65, 0.5, 0.2, 0],
+                          }),
+                        },
+                      ]}
+                    />
+                    <Animated.View
+                      pointerEvents="none"
+                      style={[
+                        styles.cleanPttExpandingWave,
+                        {
+                          transform: [
+                            {
+                              scale: waveAnim3.interpolate({
+                                inputRange: [0, 1],
+                                outputRange: [1, 1.55],
+                              }),
+                            },
+                          ],
+                          opacity: waveAnim3.interpolate({
+                            inputRange: [0, 0.25, 0.75, 1],
+                            outputRange: [0.65, 0.5, 0.2, 0],
+                          }),
+                        },
+                      ]}
+                    />
                   </>
                 )}
 
-                <View style={styles.cleanPttCircleOuter}>
+                <View
+                  style={[
+                    styles.cleanPttCircleOuter,
+                    isTransmitting && styles.cleanPttCircleOuterActive,
+                  ]}
+                >
                   <TouchableOpacity
                     activeOpacity={0.9}
                     onPressIn={handlePttPressIn}
@@ -2555,21 +2703,14 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     position: 'relative',
   },
-  cleanPttWaveOuter: {
+  cleanPttExpandingWave: {
     position: 'absolute',
-    width: 310,
-    height: 310,
-    borderRadius: 155,
+    width: 270,
+    height: 270,
+    borderRadius: 135,
+    borderWidth: 2,
+    borderColor: 'rgba(225, 29, 72, 0.45)',
     backgroundColor: 'rgba(225, 29, 72, 0.12)',
-    borderWidth: 1.5,
-    borderColor: 'rgba(225, 29, 72, 0.25)',
-  },
-  cleanPttWaveInner: {
-    position: 'absolute',
-    width: 290,
-    height: 290,
-    borderRadius: 145,
-    backgroundColor: 'rgba(225, 29, 72, 0.18)',
   },
   // Floating Channel Members Modal Styles (Matching Image 3)
   channelModalOverlay: {
@@ -2805,6 +2946,14 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.12,
     shadowRadius: 18,
     elevation: 6,
+  },
+  cleanPttCircleOuterActive: {
+    borderColor: 'rgba(225, 29, 72, 0.35)',
+    backgroundColor: '#fff1f2',
+    shadowColor: '#e11d48',
+    shadowOpacity: 0.3,
+    shadowRadius: 24,
+    elevation: 8,
   },
   cleanPttCircleInner: {
     width: 185,
