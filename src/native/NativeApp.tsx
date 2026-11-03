@@ -743,9 +743,9 @@ export default function NativeApp() {
     }
   };
 
-  // Filtrado de canales por categoría y búsqueda
+  // Filtrado de canales por categoría y búsqueda, posicionando el canal activo al principio
   const filteredChannels = useMemo(() => {
-    return channels.filter((ch) => {
+    const list = channels.filter((ch) => {
       // Categoría
       if (selectedCategory !== 'Todos') {
         if (selectedCategory === 'Privados') {
@@ -767,7 +767,14 @@ export default function NativeApp() {
 
       return true;
     });
-  }, [channels, selectedCategory, channelSearchText]);
+
+    // Posicionar el canal actualmente sintonizado/activo en la parte superior de la lista
+    return list.slice().sort((a, b) => {
+      const aIsActive = a.id === selectedChannel.id ? 1 : 0;
+      const bIsActive = b.id === selectedChannel.id ? 1 : 0;
+      return bIsActive - aIsActive;
+    });
+  }, [channels, selectedCategory, channelSearchText, selectedChannel.id]);
 
   // Abrir modal de configuración y QR de un canal (Seguro para iPhone y Web sin error de canvas)
   const openChannelConfig = (ch: Channel) => {
@@ -3081,14 +3088,33 @@ export default function NativeApp() {
                         onPress={() => handleTuneChannel(ch)}
                         activeOpacity={0.7}
                       >
-                        <View style={styles.canalesCardRadioBadge}>
+                        <View
+                          style={[
+                            styles.canalesCardRadioBadge,
+                            isSelected && styles.canalesCardRadioBadgeActive,
+                          ]}
+                        >
                           <RadioIcon size={20} color="#ffffff" strokeWidth={2.2} />
                         </View>
 
                         <View style={styles.canalesCardInfo}>
-                          <Text style={styles.canalesCardName} numberOfLines={1}>
-                            {ch.name}
-                          </Text>
+                          <View style={styles.canalesCardTitleRow}>
+                            <Text
+                              style={[
+                                styles.canalesCardName,
+                                isSelected && styles.canalesCardNameActive,
+                              ]}
+                              numberOfLines={1}
+                            >
+                              {ch.name}
+                            </Text>
+                            {isSelected && (
+                              <View style={styles.canalesActivePill}>
+                                <View style={styles.canalesActiveDot} />
+                                <Text style={styles.canalesActivePillText}>ACTIVO</Text>
+                              </View>
+                            )}
+                          </View>
                           <View style={styles.canalesCardMetaRow}>
                             <View style={styles.canalesCardMembers}>
                               <UsersIcon size={13} color="#64748b" strokeWidth={1.8} />
@@ -5988,15 +6014,57 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  canalesCardRadioBadgeActive: {
+    backgroundColor: '#8a1a36',
+    borderWidth: 1.5,
+    borderColor: '#e11d48',
+    shadowColor: '#8a1a36',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 3,
+  },
   canalesCardInfo: {
     flex: 1,
+  },
+  canalesCardTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 4,
   },
   canalesCardName: {
     fontSize: 15,
     fontWeight: '800',
     color: '#0f172a',
     letterSpacing: 0.2,
-    marginBottom: 4,
+    flexShrink: 1,
+  },
+  canalesCardNameActive: {
+    color: '#691c32',
+  },
+  canalesActivePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#ecfdf5',
+    borderWidth: 1,
+    borderColor: '#a7f3d0',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  canalesActiveDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#10b981',
+  },
+  canalesActivePillText: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: '#059669',
+    letterSpacing: 0.5,
   },
   canalesCardMetaRow: {
     flexDirection: 'row',
