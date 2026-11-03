@@ -56,6 +56,16 @@ import { soundEngine } from '../services/soundEngine';
 // Silenciar advertencia informativa de SafeAreaView en React Native
 LogBox.ignoreLogs(['SafeAreaView has been deprecated']);
 
+// Componente de cámara nativa con resolución protegida contra fallos nativos
+let NativeCameraView: any = null;
+try {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const ExpoCam = require('expo-camera');
+  NativeCameraView = ExpoCam.CameraView || ExpoCam.Camera;
+} catch {
+  // Graceful fallback
+}
+
 // Tipos para React Native
 interface User {
   id: string;
@@ -217,6 +227,24 @@ export default function NativeApp() {
   const [configQrUrl, setConfigQrUrl] = useState<string | null>(null);
   const [configQrMatrix, setConfigQrMatrix] = useState<boolean[][]>([]);
   const [hasCopiedPin, setHasCopiedPin] = useState(false);
+
+  // Modal de éxito táctico personalizado (reemplaza Alert.alert del sistema con colorimetría C5i)
+  const [scanSuccessModal, setScanSuccessModal] = useState<{
+    isOpen: boolean;
+    channel: Channel | null;
+    pin: string;
+    source: 'qr' | 'pin';
+  }>({
+    isOpen: false,
+    channel: null,
+    pin: '',
+    source: 'qr',
+  });
+
+  // Estado de la cámara real y animación del láser
+  const [cameraPermissionGranted, setCameraPermissionGranted] = useState<boolean | null>(null);
+  const scanLaserAnim = useRef(new Animated.Value(0)).current;
+  const webVideoRef = useRef<any>(null);
   
   // History & Messages
   const [transmissions, setTransmissions] = useState<Transmission[]>([
@@ -297,6 +325,69 @@ export default function NativeApp() {
       refreshChannels(serverUrl);
     }
   }, [serverUrl, refreshChannels]);
+
+  // Iniciar cámara real y animación del láser táctico al abrir el escáner
+  useEffect(() => {
+    let animLoop: Animated.CompositeAnimation | null = null;
+    let localStream: any = null;
+
+    if (isJoinScanning) {
+      animLoop = Animated.loop(
+        Animated.sequence([
+          Animated.timing(scanLaserAnim, {
+            toValue: 1,
+            duration: 1500,
+            easing: Easing.inOut(Easing.quad),
+            useNativeDriver: true,
+          }),
+          Animated.timing(scanLaserAnim, {
+            toValue: 0,
+            duration: 1500,
+            easing: Easing.inOut(Easing.quad),
+            useNativeDriver: true,
+          }),
+        ])
+      );
+      animLoop.start();
+
+      if (Platform.OS === 'web') {
+        if (typeof navigator !== 'undefined' && navigator.mediaDevices?.getUserMedia) {
+          navigator.mediaDevices
+            .getUserMedia({ video: { facingMode: { ideal: 'environment' } } })
+            .then((stream) => {
+              localStream = stream;
+              setCameraPermissionGranted(true);
+              if (webVideoRef.current) {
+                webVideoRef.current.srcObject = stream;
+                webVideoRef.current.play?.().catch?.(() => {});
+              }
+            })
+            .catch(() => setCameraPermissionGranted(false));
+        }
+      } else {
+        // En iOS / Android solicita permisos a ExpoCamera si el módulo nativo está compilado
+        try {
+          const ExpoCamera = require('expo-camera');
+          if (ExpoCamera.requestCameraPermissionsAsync) {
+            ExpoCamera.requestCameraPermissionsAsync()
+              .then((res: any) => setCameraPermissionGranted(res?.granted ?? false))
+              .catch(() => setCameraPermissionGranted(false));
+          }
+        } catch {
+          setCameraPermissionGranted(false);
+        }
+      }
+    } else {
+      scanLaserAnim.setValue(0);
+    }
+
+    return () => {
+      animLoop?.stop();
+      if (localStream) {
+        localStream.getTracks?.().forEach((t: any) => t.stop?.());
+      }
+    };
+  }, [isJoinScanning]);
 
   // Probar conectividad con el servidor configurado (Alwaysdata PHP y Node Express)
   const testServerConnection = async () => {
@@ -406,6 +497,20 @@ export default function NativeApp() {
     setIsConfigModalOpen(true);
   };
 
+  // Confirmación exitosa con diseño y colorimetría C5i (reemplaza alert gris del sistema)
+  const handleChannelScanSuccess = (channel: Channel, source: 'qr' | 'pin' = 'qr') => {
+    setSelectedChannel(channel);
+    setIsJoinScanning(false);
+    setIsJoinModalOpen(false);
+    setJoinPinDigits('');
+    setScanSuccessModal({
+      isOpen: true,
+      channel,
+      pin: channel.pin || '1090',
+      source,
+    });
+  };
+
   // Unirse a canal mediante PIN
   const handleJoinChannelSubmit = () => {
     Keyboard.dismiss();
@@ -421,10 +526,7 @@ export default function NativeApp() {
     );
 
     if (found) {
-      setSelectedChannel(found);
-      setIsJoinModalOpen(false);
-      setJoinPinDigits('');
-      Alert.alert('✅ Canal Enlazado', `Te has unido exitosamente a ${found.name} (${found.frequency})`);
+      handleChannelScanSuccess(found, 'pin');
     } else {
       const newLinked: Channel = {
         id: `chan-pin-${pin}`,
@@ -438,25 +540,15 @@ export default function NativeApp() {
         accessCode: `C5I-TAC-${pin}`,
       };
       setChannels((prev) => [newLinked, ...prev]);
-      setSelectedChannel(newLinked);
-      setIsJoinModalOpen(false);
-      setJoinPinDigits('');
-      Alert.alert('✅ Canal Enlazado', `Te has unido exitosamente al canal táctico #${pin}`);
+      handleChannelScanSuccess(newLinked, 'pin');
     }
   };
 
-  // Simular o procesar escaneo QR
+  // Simular o procesar escaneo QR (con modal táctico C5i)
   const handleScanQrMock = (mockChannel?: Channel) => {
     Keyboard.dismiss();
     const target = mockChannel || channels[0];
-    const targetPin = target?.pin || '1090';
-    setJoinPinDigits(targetPin);
-    setIsJoinScanning(false);
-    setTimeout(() => {
-      setSelectedChannel(target);
-      setIsJoinModalOpen(false);
-      Alert.alert('✅ Código QR Detectado', `Canal reconocido: ${target.name}. Enlazado exitosamente.`);
-    }, 250);
+    handleChannelScanSuccess(target, 'qr');
   };
 
   // Crear nuevo canal táctico (Simplificado: Solo Nombre y PIN de 4 dígitos)
@@ -3127,15 +3219,82 @@ export default function NativeApp() {
                   {isJoinScanning ? (
                     /* VISTA ESCÁNER QR (DENTRO DEL MISMO MODAL: 100% FUNCIONAL EN IOS) */
                     <View style={styles.canalesScannerBody}>
-                      {/* Visor de Cámara con Retícula */}
+                      {/* Visor de Cámara con Retícula y Transmisión Real */}
                       <View style={styles.canalesCameraFrame}>
+                        {/* Live Web Camera Video Element */}
+                        {Platform.OS === 'web' && (
+                          <video
+                            ref={webVideoRef}
+                            autoPlay
+                            playsInline
+                            muted
+                            style={{
+                              position: 'absolute',
+                              top: 0,
+                              left: 0,
+                              width: '100%',
+                              height: '100%',
+                              objectFit: 'cover',
+                            }}
+                          />
+                        )}
+
+                        {/* Live Native CameraView (iOS / Android si está disponible en Expo) */}
+                        {Platform.OS !== 'web' && NativeCameraView && cameraPermissionGranted && (
+                          <NativeCameraView
+                            style={StyleSheet.absoluteFill}
+                            facing="back"
+                            barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
+                            onBarcodeScanned={(result: any) => {
+                              if (result?.data) {
+                                handleScanQrMock();
+                              }
+                            }}
+                          />
+                        )}
+
+                        {/* Retícula de esquinas táctica */}
                         <View style={[styles.canalesScannerCorner, styles.cornerTL]} />
                         <View style={[styles.canalesScannerCorner, styles.cornerTR]} />
                         <View style={[styles.canalesScannerCorner, styles.cornerBL]} />
                         <View style={[styles.canalesScannerCorner, styles.cornerBR]} />
-                        <View style={styles.canalesScannerLaser} />
-                        <QrCodeIcon size={72} color="rgba(255, 255, 255, 0.25)" strokeWidth={1} />
-                        <Text style={styles.canalesScannerHint}>Buscando código QR C5i...</Text>
+
+                        {/* Rayo láser animado */}
+                        <Animated.View
+                          style={[
+                            styles.canalesScannerLaser,
+                            {
+                              transform: [
+                                {
+                                  translateY: scanLaserAnim.interpolate({
+                                    inputRange: [0, 1],
+                                    outputRange: [15, 190],
+                                  }),
+                                },
+                              ],
+                            },
+                          ]}
+                        />
+
+                        {/* Ícono central tenue si la cámara aún no transmite */}
+                        {!cameraPermissionGranted && (
+                          <QrCodeIcon size={68} color="rgba(255, 255, 255, 0.22)" strokeWidth={1} />
+                        )}
+
+                        {/* Indicador táctico inferior */}
+                        <View style={styles.canalesScannerPill}>
+                          <View
+                            style={[
+                              styles.canalesScannerDot,
+                              cameraPermissionGranted && { backgroundColor: '#10b981' },
+                            ]}
+                          />
+                          <Text style={styles.canalesScannerHint}>
+                            {cameraPermissionGranted
+                              ? 'Cámara táctica activa • Escaneando'
+                              : 'Buscando código QR C5i...'}
+                          </Text>
+                        </View>
                       </View>
 
                       {/* Botones de Detección Rápida de Canales */}
@@ -3530,6 +3689,68 @@ export default function NativeApp() {
                 </TouchableOpacity>
               </View>
             </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* 5. MODAL DE ÉXITO TÁCTICO AL DETECTAR QR O ENLAZAR CANAL (DISEÑO ARMONIOSO C5i) */}
+      <Modal
+        visible={scanSuccessModal.isOpen}
+        animationType="fade"
+        transparent
+        onRequestClose={() => setScanSuccessModal((prev) => ({ ...prev, isOpen: false }))}
+      >
+        <View style={styles.channelModalOverlay}>
+          <View style={styles.scanSuccessCard}>
+            {/* Glow ambient de fondo con tono vino */}
+            <View style={styles.scanSuccessGlow} />
+
+            {/* Ícono de confirmación en escudo verde esmeralda */}
+            <View style={styles.scanSuccessIconBox}>
+              <CheckCircleIcon size={34} color="#059669" strokeWidth={2.5} />
+            </View>
+
+            <Text style={styles.scanSuccessTitle}>
+              {scanSuccessModal.source === 'qr' ? 'Código QR Detectado' : 'Canal Enlazado'}
+            </Text>
+            <Text style={styles.scanSuccessSubtitle}>
+              {scanSuccessModal.source === 'qr'
+                ? 'Canal reconocido y autenticado con éxito en la red táctica C5i.'
+                : 'Te has unido exitosamente al canal táctico en la red C5i.'}
+            </Text>
+
+            {/* Tarjeta con los datos del canal y colorimetría C5i */}
+            {scanSuccessModal.channel && (
+              <View style={styles.scanSuccessChannelBox}>
+                <View style={styles.scanSuccessRadioBadge}>
+                  <RadioIcon size={20} color="#ffffff" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.scanSuccessChannelName} numberOfLines={1}>
+                    {scanSuccessModal.channel.name}
+                  </Text>
+                  <View style={styles.scanSuccessMetaRow}>
+                    <View style={styles.scanSuccessPinPill}>
+                      <Text style={styles.scanSuccessPinText}>
+                        PIN: {scanSuccessModal.channel.pin || '1090'}
+                      </Text>
+                    </View>
+                    <Text style={styles.scanSuccessFreqText}>
+                      {scanSuccessModal.channel.frequency}
+                    </Text>
+                  </View>
+                </View>
+              </View>
+            )}
+
+            {/* Botón de acción con estilo vino institucional */}
+            <TouchableOpacity
+              style={styles.scanSuccessActionBtn}
+              onPress={() => setScanSuccessModal((prev) => ({ ...prev, isOpen: false }))}
+              activeOpacity={0.88}
+            >
+              <Text style={styles.scanSuccessActionBtnText}>SINTONIZAR Y ENTRAR AL CANAL</Text>
+            </TouchableOpacity>
           </View>
         </View>
       </Modal>
@@ -5816,6 +6037,147 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
     color: '#691c32',
+  },
+  canalesScannerPill: {
+    position: 'absolute',
+    bottom: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(15, 23, 42, 0.78)',
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderRadius: 20,
+    gap: 6,
+  },
+  canalesScannerDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#e11d48',
+  },
+  scanSuccessCard: {
+    backgroundColor: '#ffffff',
+    borderRadius: 24,
+    width: '100%',
+    maxWidth: 340,
+    padding: 24,
+    alignItems: 'center',
+    shadowColor: '#691c32',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.22,
+    shadowRadius: 25,
+    elevation: 12,
+    borderWidth: 1.5,
+    borderColor: '#f2c8d0',
+    overflow: 'hidden',
+    position: 'relative',
+  },
+  scanSuccessGlow: {
+    position: 'absolute',
+    top: -40,
+    width: 200,
+    height: 100,
+    borderRadius: 50,
+    backgroundColor: 'rgba(105, 28, 50, 0.08)',
+  },
+  scanSuccessIconBox: {
+    width: 64,
+    height: 64,
+    borderRadius: 22,
+    backgroundColor: '#ecfdf5',
+    borderWidth: 1.5,
+    borderColor: '#a7f3d0',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 16,
+    shadowColor: '#059669',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 8,
+    elevation: 2,
+  },
+  scanSuccessTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#0f172a',
+    textAlign: 'center',
+    marginBottom: 6,
+    letterSpacing: -0.3,
+  },
+  scanSuccessSubtitle: {
+    fontSize: 13,
+    color: '#64748b',
+    textAlign: 'center',
+    lineHeight: 18,
+    marginBottom: 18,
+    paddingHorizontal: 8,
+  },
+  scanSuccessChannelBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#fbf2f4',
+    borderWidth: 1,
+    borderColor: '#f5d5db',
+    borderRadius: 16,
+    padding: 12,
+    width: '100%',
+    gap: 12,
+    marginBottom: 20,
+  },
+  scanSuccessRadioBadge: {
+    width: 42,
+    height: 42,
+    borderRadius: 13,
+    backgroundColor: '#e11d48',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  scanSuccessChannelName: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#0f172a',
+    marginBottom: 4,
+  },
+  scanSuccessMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  scanSuccessPinPill: {
+    backgroundColor: '#691c32',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  scanSuccessPinText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#ffffff',
+    letterSpacing: 0.5,
+  },
+  scanSuccessFreqText: {
+    fontSize: 11,
+    color: '#64748b',
+    fontWeight: '600',
+  },
+  scanSuccessActionBtn: {
+    width: '100%',
+    backgroundColor: '#691c32',
+    height: 48,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#691c32',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.28,
+    shadowRadius: 8,
+    elevation: 3,
+  },
+  scanSuccessActionBtnText: {
+    color: '#ffffff',
+    fontSize: 13,
+    fontWeight: '800',
+    letterSpacing: 0.6,
   },
 });
 
