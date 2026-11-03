@@ -28,5 +28,13 @@ if (fs.existsSync(rnDir)) {
     fs.writeFileSync(vcFile, "export function checkVersions() {}\n");
   }
 
+  // 4. Parchar expo-av index.js si existe
+  const avIndex = path.resolve(__dirname, '../node_modules/expo-av/build/index.js');
+  if (fs.existsSync(avIndex)) {
+    let content = fs.readFileSync(avIndex, 'utf-8');
+    content = content.replace(/from '\.\/Audio(\/index\.js)?'/g, "from './Audio.js'").replace(/from '\.\/Video(\/index\.js)?'/g, "from './Video.js'");
+    fs.writeFileSync(avIndex, content);
+  }
+
   console.log('✅ Compatibilidad de React Native con Expo verificada y parchada exitosamente.');
 }
