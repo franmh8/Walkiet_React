@@ -28,6 +28,8 @@ import {
   Camera as LucideCamera,
   Copy as LucideCopy,
   Settings as LucideSettings,
+  LogOut as LucideLogOut,
+  Trash2 as LucideTrash2,
 } from 'lucide-react';
 
 export interface IconProps {
@@ -389,6 +391,34 @@ export const SettingsIcon: React.FC<IconProps> = ({
       <LucideSettings size={size} color={color} strokeWidth={strokeWidth} />
     ) : (
       <Feather name="settings" size={size} color={color} />
+    )}
+  </View>
+);
+
+export const LogOutIcon: React.FC<IconProps> = ({
+  size = 18,
+  color = '#64748b',
+  strokeWidth = 2,
+}) => (
+  <View style={[styles.center, { width: size, height: size }]}>
+    {isWeb ? (
+      <LucideLogOut size={size} color={color} strokeWidth={strokeWidth} />
+    ) : (
+      <Feather name="log-out" size={size} color={color} />
+    )}
+  </View>
+);
+
+export const TrashIcon: React.FC<IconProps> = ({
+  size = 18,
+  color = '#e11d48',
+  strokeWidth = 2,
+}) => (
+  <View style={[styles.center, { width: size, height: size }]}>
+    {isWeb ? (
+      <LucideTrash2 size={size} color={color} strokeWidth={strokeWidth} />
+    ) : (
+      <Feather name="trash-2" size={size} color={color} />
     )}
   </View>
 );

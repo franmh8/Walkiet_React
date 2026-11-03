@@ -49,6 +49,8 @@ import {
   CameraIcon,
   CopyIcon,
   SettingsIcon,
+  LogOutIcon,
+  TrashIcon,
 } from './icons';
 import QRCode from 'qrcode';
 import { soundEngine } from '../services/soundEngine';
@@ -296,7 +298,9 @@ export default function NativeApp() {
     isOpen: boolean;
     channel: Channel | null;
     pin: string;
-    source: 'qr' | 'pin';
+    source: 'qr' | 'pin' | 'tune' | 'leave' | 'delete' | 'create';
+    customTitle?: string;
+    customSubtitle?: string;
   }>({
     isOpen: false,
     channel: null,
@@ -404,6 +408,80 @@ export default function NativeApp() {
       source,
     });
   }, []);
+
+  // Sintonizar canal con modal táctico C5i (reemplaza alert gris del sistema)
+  const handleTuneChannel = useCallback((channel: Channel) => {
+    setSelectedChannel(channel);
+    try {
+      soundEngine.playIncomingChirp();
+    } catch {}
+    setScanSuccessModal({
+      isOpen: true,
+      channel,
+      pin: channel.pin || '1090',
+      source: 'tune',
+      customTitle: 'Canal Sintonizado',
+      customSubtitle: `Radio enlazado a ${channel.name} (${channel.frequency || '154.800 MHz'}).`,
+    });
+  }, []);
+
+  // Salir del canal / grupo
+  const handleLeaveChannel = useCallback((channel: Channel) => {
+    setIsConfigModalOpen(false);
+    const remaining = channels.filter((c) => c.id !== channel.id);
+    const nextChannel = remaining.length > 0 ? remaining[0] : DEFAULT_CHANNELS[0];
+
+    if (selectedChannel.id === channel.id) {
+      setSelectedChannel(nextChannel);
+    }
+
+    try {
+      soundEngine.playRogerBeep();
+    } catch {}
+
+    setScanSuccessModal({
+      isOpen: true,
+      channel: nextChannel,
+      pin: nextChannel.pin || '1090',
+      source: 'leave',
+      customTitle: 'Has Salido del Grupo',
+      customSubtitle: `Te has desconectado de ${channel.name}. Tu radio se ha reubicado en ${nextChannel.name}.`,
+    });
+  }, [channels, selectedChannel]);
+
+  // Eliminar el canal / grupo
+  const handleDeleteChannel = useCallback((channel: Channel) => {
+    setIsConfigModalOpen(false);
+    const remaining = channels.filter((c) => c.id !== channel.id);
+    const nextChannel = remaining.length > 0 ? remaining[0] : DEFAULT_CHANNELS[0];
+
+    setChannels(remaining);
+    if (selectedChannel.id === channel.id) {
+      setSelectedChannel(nextChannel);
+    }
+
+    if (serverUrl && channel.id) {
+      try {
+        const cleanUrl = serverUrl.replace(/\/+$/, '');
+        fetchWithTimeout(`${cleanUrl}/api/channels/${channel.id}`, {
+          method: 'DELETE',
+        }, 3000).catch(() => {});
+      } catch {}
+    }
+
+    try {
+      soundEngine.playRogerBeep();
+    } catch {}
+
+    setScanSuccessModal({
+      isOpen: true,
+      channel: nextChannel,
+      pin: nextChannel.pin || '1090',
+      source: 'delete',
+      customTitle: 'Canal Táctico Eliminado',
+      customSubtitle: `El canal ${channel.name} ha sido eliminado de la red táctica C5i.`,
+    });
+  }, [channels, selectedChannel, serverUrl]);
 
   // Referencia para evitar múltiples lecturas seguidas del mismo QR
   const isHandlingScanRef = useRef(false);
@@ -799,8 +877,17 @@ export default function NativeApp() {
     setSelectedChannel(newCh);
     setIsCreateModalOpen(false);
     setCreateChannelName('');
-    setCreateChannelPin('');
-    Alert.alert('Canal Creado', `Canal ${newCh.name} creado exitosamente con PIN ${newCh.pin}`);
+    try {
+      soundEngine.playIncomingChirp();
+    } catch {}
+    setScanSuccessModal({
+      isOpen: true,
+      channel: newCh,
+      pin: newCh.pin || pin,
+      source: 'create',
+      customTitle: 'Canal Creado y Sintonizado',
+      customSubtitle: `Canal ${newCh.name} creado y enlazado exitosamente con PIN ${newCh.pin}.`,
+    });
 
     if (serverUrl) {
       try {
@@ -2991,10 +3078,7 @@ export default function NativeApp() {
                     >
                       <TouchableOpacity
                         style={styles.canalesCardLeft}
-                        onPress={() => {
-                          setSelectedChannel(ch);
-                          Alert.alert('Canal Sintonizado', `Radio enlazado a ${ch.name} (${ch.frequency})`);
-                        }}
+                        onPress={() => handleTuneChannel(ch)}
                         activeOpacity={0.7}
                       >
                         <View style={styles.canalesCardRadioBadge}>
@@ -3044,10 +3128,7 @@ export default function NativeApp() {
                             styles.canalesCardSintonizarBtn,
                             isSelected && styles.canalesCardSintonizarBtnActive,
                           ]}
-                          onPress={() => {
-                            setSelectedChannel(ch);
-                            Alert.alert('Canal Sintonizado', `Radio enlazado a ${ch.name} (${ch.frequency})`);
-                          }}
+                          onPress={() => handleTuneChannel(ch)}
                           activeOpacity={0.8}
                         >
                           <Text
@@ -3908,21 +3989,49 @@ export default function NativeApp() {
                 </Text>
               </TouchableOpacity>
 
-              {/* Botón Sintonizar / Cerrar */}
-              <View style={{ flexDirection: 'row', gap: 10, marginTop: 8 }}>
+              {/* Acciones del Canal: Sintonizar, Salir del Grupo y Eliminar Grupo */}
+              <View style={styles.canalesModalActionsStack}>
                 <TouchableOpacity
-                  style={[styles.canalesModalSubmitBtn, { flex: 1, marginTop: 0 }]}
+                  style={styles.canalesModalSubmitBtn}
                   onPress={() => {
                     if (configChannel) {
-                      setSelectedChannel(configChannel);
                       setIsConfigModalOpen(false);
-                      Alert.alert('Canal Sintonizado', `Radio enlazado a ${configChannel.name}`);
+                      handleTuneChannel(configChannel);
                     }
                   }}
                   activeOpacity={0.88}
                 >
                   <Text style={styles.canalesModalSubmitBtnText}>SINTONIZAR ESTE CANAL</Text>
                 </TouchableOpacity>
+
+                {/* Fila con los dos botones solicitados: Salir del Grupo y Eliminar Grupo */}
+                <View style={styles.canalesDangerRow}>
+                  <TouchableOpacity
+                    style={styles.canalesLeaveBtn}
+                    onPress={() => {
+                      if (configChannel) {
+                        handleLeaveChannel(configChannel);
+                      }
+                    }}
+                    activeOpacity={0.8}
+                  >
+                    <LogOutIcon size={15} color="#b45309" strokeWidth={2.2} />
+                    <Text style={styles.canalesLeaveBtnText}>Salir del Grupo</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={styles.canalesDeleteBtn}
+                    onPress={() => {
+                      if (configChannel) {
+                        handleDeleteChannel(configChannel);
+                      }
+                    }}
+                    activeOpacity={0.8}
+                  >
+                    <TrashIcon size={15} color="#e11d48" strokeWidth={2.2} />
+                    <Text style={styles.canalesDeleteBtnText}>Eliminar Grupo</Text>
+                  </TouchableOpacity>
+                </View>
 
                 <TouchableOpacity
                   style={styles.channelCloseBtn}
@@ -3949,18 +4058,56 @@ export default function NativeApp() {
             {/* Glow ambient de fondo con tono vino */}
             <View style={styles.scanSuccessGlow} />
 
-            {/* Ícono de confirmación en escudo verde esmeralda */}
-            <View style={styles.scanSuccessIconBox}>
-              <CheckCircleIcon size={34} color="#059669" strokeWidth={2.5} />
+            {/* Ícono de confirmación dinámico según la acción */}
+            <View
+              style={[
+                styles.scanSuccessIconBox,
+                scanSuccessModal.source === 'leave' && {
+                  backgroundColor: '#fffbeb',
+                  borderColor: '#fde68a',
+                  shadowColor: '#d97706',
+                },
+                scanSuccessModal.source === 'delete' && {
+                  backgroundColor: '#fef2f2',
+                  borderColor: '#fecdd3',
+                  shadowColor: '#e11d48',
+                },
+              ]}
+            >
+              {scanSuccessModal.source === 'leave' ? (
+                <LogOutIcon size={30} color="#d97706" strokeWidth={2.2} />
+              ) : scanSuccessModal.source === 'delete' ? (
+                <TrashIcon size={30} color="#e11d48" strokeWidth={2.2} />
+              ) : (
+                <CheckCircleIcon size={34} color="#059669" strokeWidth={2.5} />
+              )}
             </View>
 
             <Text style={styles.scanSuccessTitle}>
-              {scanSuccessModal.source === 'qr' ? 'Código QR Detectado' : 'Canal Enlazado'}
+              {scanSuccessModal.customTitle ||
+                (scanSuccessModal.source === 'qr'
+                  ? 'Código QR Detectado'
+                  : scanSuccessModal.source === 'pin'
+                  ? 'Canal Enlazado'
+                  : scanSuccessModal.source === 'leave'
+                  ? 'Has Salido del Grupo'
+                  : scanSuccessModal.source === 'delete'
+                  ? 'Canal Eliminado'
+                  : scanSuccessModal.source === 'create'
+                  ? 'Canal Creado'
+                  : 'Canal Sintonizado')}
             </Text>
             <Text style={styles.scanSuccessSubtitle}>
-              {scanSuccessModal.source === 'qr'
-                ? 'Canal reconocido y autenticado con éxito en la red táctica C5i.'
-                : 'Te has unido exitosamente al canal táctico en la red C5i.'}
+              {scanSuccessModal.customSubtitle ||
+                (scanSuccessModal.source === 'qr'
+                  ? 'Canal reconocido y autenticado con éxito en la red táctica C5i.'
+                  : scanSuccessModal.source === 'pin'
+                  ? 'Te has unido exitosamente al canal táctico en la red C5i.'
+                  : scanSuccessModal.source === 'leave'
+                  ? 'Te has desconectado de este canal táctico.'
+                  : scanSuccessModal.source === 'delete'
+                  ? 'El canal táctico ha sido removido de la red C5i.'
+                  : `Radio enlazado a ${scanSuccessModal.channel?.name || 'Canal'} (${scanSuccessModal.channel?.frequency || '154.800 MHz'}).`)}
             </Text>
 
             {/* Tarjeta con los datos del canal y colorimetría C5i */}
@@ -3990,10 +4137,24 @@ export default function NativeApp() {
             {/* Botón de acción con estilo vino institucional */}
             <TouchableOpacity
               style={styles.scanSuccessActionBtn}
-              onPress={() => setScanSuccessModal((prev) => ({ ...prev, isOpen: false }))}
+              onPress={() => {
+                setScanSuccessModal((prev) => ({ ...prev, isOpen: false }));
+                if (
+                  scanSuccessModal.source === 'tune' ||
+                  scanSuccessModal.source === 'qr' ||
+                  scanSuccessModal.source === 'pin' ||
+                  scanSuccessModal.source === 'create'
+                ) {
+                  setCurrentTab('PTT');
+                }
+              }}
               activeOpacity={0.88}
             >
-              <Text style={styles.scanSuccessActionBtnText}>SINTONIZAR Y ENTRAR AL CANAL</Text>
+              <Text style={styles.scanSuccessActionBtnText}>
+                {scanSuccessModal.source === 'leave' || scanSuccessModal.source === 'delete'
+                  ? 'ENTENDIDO'
+                  : 'COMENZAR A TRANSMITIR'}
+              </Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -6487,6 +6648,50 @@ const styles = StyleSheet.create({
     fontSize: 12,
     marginTop: 10,
     fontWeight: '600',
+  },
+  canalesModalActionsStack: {
+    width: '100%',
+    gap: 10,
+    marginTop: 12,
+  },
+  canalesDangerRow: {
+    flexDirection: 'row',
+    gap: 10,
+    width: '100%',
+  },
+  canalesLeaveBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    backgroundColor: '#fffbeb',
+    borderWidth: 1.2,
+    borderColor: '#fde68a',
+    borderRadius: 12,
+    height: 44,
+  },
+  canalesLeaveBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#b45309',
+  },
+  canalesDeleteBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    backgroundColor: '#fef2f2',
+    borderWidth: 1.2,
+    borderColor: '#fecdd3',
+    borderRadius: 12,
+    height: 44,
+  },
+  canalesDeleteBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#e11d48',
   },
 });
 
