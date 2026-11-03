@@ -89,6 +89,46 @@ try {
   // Graceful fallback
 }
 
+// Helper robusto para consultar permisos usando la Permission API de Expo
+async function queryExpoCameraPermission(): Promise<{ granted: boolean; status: string; canAskAgain: boolean }> {
+  try {
+    if (getNativeCamPerm) {
+      const res = await getNativeCamPerm();
+      if (res) {
+        const isGranted = Boolean(res.granted || res.status === 'granted');
+        return {
+          granted: isGranted,
+          status: res.status || (isGranted ? 'granted' : 'denied'),
+          canAskAgain: res.canAskAgain !== false,
+        };
+      }
+    }
+  } catch (e) {
+    console.warn('Error al consultar permisos de cámara en Expo:', e);
+  }
+  return { granted: false, status: 'undetermined', canAskAgain: true };
+}
+
+// Helper robusto para solicitar autorización usando la Permission API de Expo
+async function requestExpoCameraPermission(): Promise<{ granted: boolean; status: string; canAskAgain: boolean }> {
+  try {
+    if (requestNativeCamPerm) {
+      const res = await requestNativeCamPerm();
+      if (res) {
+        const isGranted = Boolean(res.granted || res.status === 'granted');
+        return {
+          granted: isGranted,
+          status: res.status || (isGranted ? 'granted' : 'denied'),
+          canAskAgain: res.canAskAgain !== false,
+        };
+      }
+    }
+  } catch (e) {
+    console.warn('Error al solicitar permisos de cámara en Expo:', e);
+  }
+  return { granted: false, status: 'denied', canAskAgain: false };
+}
+
 // Tipos para React Native
 interface User {
   id: string;
@@ -266,6 +306,8 @@ export default function NativeApp() {
 
   // Estado de la cámara real y animación del láser
   const [cameraPermissionGranted, setCameraPermissionGranted] = useState<boolean | null>(null);
+  const [isRequestingPermission, setIsRequestingPermission] = useState(false);
+  const [permissionCanAskAgain, setPermissionCanAskAgain] = useState(true);
   const scanLaserAnim = useRef(new Animated.Value(0)).current;
   const webVideoRef = useRef<any>(null);
   
@@ -423,10 +465,73 @@ export default function NativeApp() {
     [channels, handleChannelScanSuccess]
   );
 
+  // Manejador robusto de permisos de cámara utilizando Expo's Permission API
+  const requestCameraPermission = useCallback(async (): Promise<boolean> => {
+    setIsRequestingPermission(true);
+    try {
+      if (Platform.OS === 'web') {
+        if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
+          setCameraPermissionGranted(false);
+          setPermissionCanAskAgain(false);
+          return false;
+        }
+
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({
+            video: {
+              facingMode: { ideal: 'environment' },
+              width: { ideal: 1280 },
+              height: { ideal: 720 },
+            },
+          });
+          // Autorización genuina confirmada tras obtener el MediaStream
+          setCameraPermissionGranted(true);
+          setPermissionCanAskAgain(true);
+          if (webVideoRef.current) {
+            webVideoRef.current.srcObject = stream;
+            webVideoRef.current.setAttribute('playsinline', 'true');
+            webVideoRef.current.play?.().catch?.(() => {});
+          }
+          return true;
+        } catch (err: any) {
+          console.warn('Permiso de cámara denegado en navegador:', err);
+          setCameraPermissionGranted(false);
+          setPermissionCanAskAgain(err?.name !== 'NotAllowedError');
+          return false;
+        }
+      }
+
+      // En iOS / Android: Consulta estado previo con Expo's Permission API
+      const current = await queryExpoCameraPermission();
+      if (current.granted) {
+        setCameraPermissionGranted(true);
+        setPermissionCanAskAgain(true);
+        return true;
+      }
+
+      // Si no estaba autorizado, solicita autorización interactiva al usuario con Expo Permission API
+      if (current.canAskAgain || current.status === 'undetermined') {
+        const promptRes = await requestExpoCameraPermission();
+        setCameraPermissionGranted(promptRes.granted);
+        setPermissionCanAskAgain(promptRes.canAskAgain);
+        return promptRes.granted;
+      } else {
+        setCameraPermissionGranted(false);
+        setPermissionCanAskAgain(false);
+        return false;
+      }
+    } catch (e) {
+      console.warn('Error en requestCameraPermission:', e);
+      setCameraPermissionGranted(false);
+      return false;
+    } finally {
+      setIsRequestingPermission(false);
+    }
+  }, []);
+
   // Iniciar cámara real, decodificador de QR en Web y animación del láser táctico
   useEffect(() => {
     let animLoop: Animated.CompositeAnimation | null = null;
-    let localStream: any = null;
     let scanInterval: any = null;
 
     if (isJoinScanning) {
@@ -448,103 +553,59 @@ export default function NativeApp() {
       );
       animLoop.start();
 
-      if (Platform.OS === 'web') {
-        ensureWebQrScannerLoaded();
-        if (typeof navigator !== 'undefined' && navigator.mediaDevices?.getUserMedia) {
-          navigator.mediaDevices
-            .getUserMedia({
-              video: {
-                facingMode: { ideal: 'environment' },
-                width: { ideal: 1280 },
-                height: { ideal: 720 },
-              },
-            })
-            .then((stream) => {
-              localStream = stream;
-              setCameraPermissionGranted(true);
-              if (webVideoRef.current) {
-                webVideoRef.current.srcObject = stream;
-                webVideoRef.current.setAttribute('playsinline', 'true');
-                webVideoRef.current.play?.().catch?.(() => {});
-              }
-            })
-            .catch((err) => {
-              console.warn('Web camera error:', err);
-              setCameraPermissionGranted(false);
-            });
-        }
+      // Solicitar y validar la autorización real antes de activar el escáner y la vista previa
+      requestCameraPermission().then((isAuthorized) => {
+        // Solo si la autorización es confirmada en web se activa el bucle decodificador
+        if (isAuthorized && Platform.OS === 'web') {
+          ensureWebQrScannerLoaded();
+          const offscreenCanvas = typeof document !== 'undefined' ? document.createElement('canvas') : null;
+          const offscreenCtx = offscreenCanvas?.getContext('2d', { willReadFrequently: true });
 
-        // Bucle activo para procesar y detectar códigos QR en tiempo real en la web
-        const offscreenCanvas = typeof document !== 'undefined' ? document.createElement('canvas') : null;
-        const offscreenCtx = offscreenCanvas?.getContext('2d', { willReadFrequently: true });
+          scanInterval = setInterval(async () => {
+            const video = webVideoRef.current;
+            if (!video || video.readyState < 2) return;
+            if (isHandlingScanRef.current) return;
 
-        scanInterval = setInterval(async () => {
-          const video = webVideoRef.current;
-          if (!video || video.readyState < 2) return;
-          if (isHandlingScanRef.current) return;
-
-          // 1. Detección nativa del navegador BarcodeDetector (Chrome, Edge, Safari 17+)
-          if (typeof window !== 'undefined' && (window as any).BarcodeDetector) {
-            try {
-              const detector = new (window as any).BarcodeDetector({ formats: ['qr_code'] });
-              const barcodes = await detector.detect(video);
-              if (barcodes && barcodes.length > 0 && barcodes[0]?.rawValue) {
-                handleScannedQrPayload(barcodes[0].rawValue);
-                return;
-              }
-            } catch {}
-          }
-
-          // 2. Decodificación de fotogramas mediante jsQR cargado dinámicamente en el navegador
-          const webJsQr = typeof window !== 'undefined' ? (window as any).jsQR : null;
-          if (webJsQr && offscreenCtx && offscreenCanvas) {
-            try {
-              const vw = video.videoWidth;
-              const vh = video.videoHeight;
-              if (vw > 0 && vh > 0) {
-                offscreenCanvas.width = vw;
-                offscreenCanvas.height = vh;
-                offscreenCtx.drawImage(video, 0, 0, vw, vh);
-                const imgData = offscreenCtx.getImageData(0, 0, vw, vh);
-                const qrCode = webJsQr(imgData.data, imgData.width, imgData.height, {
-                  inversionAttempts: 'dontInvert',
-                });
-                if (qrCode && qrCode.data) {
-                  handleScannedQrPayload(qrCode.data);
+            // 1. Detección nativa del navegador BarcodeDetector (Chrome, Edge, Safari 17+)
+            if (typeof window !== 'undefined' && (window as any).BarcodeDetector) {
+              try {
+                const detector = new (window as any).BarcodeDetector({ formats: ['qr_code'] });
+                const barcodes = await detector.detect(video);
+                if (barcodes && barcodes.length > 0 && barcodes[0]?.rawValue) {
+                  handleScannedQrPayload(barcodes[0].rawValue);
+                  return;
                 }
-              }
-            } catch (e) {
-              // Ignorar excepciones de lectura de fotograma individual
+              } catch {}
             }
-          }
-        }, 220);
-      } else {
-        // En iOS / Android solicita permisos a ExpoCamera si el módulo nativo está disponible
-        (async () => {
-          try {
-            if (getNativeCamPerm) {
-              const check = await getNativeCamPerm().catch(() => null);
-              if (check?.granted) {
-                setCameraPermissionGranted(true);
-                return;
+
+            // 2. Decodificación de fotogramas mediante jsQR cargado dinámicamente en el navegador
+            const webJsQr = typeof window !== 'undefined' ? (window as any).jsQR : null;
+            if (webJsQr && offscreenCtx && offscreenCanvas) {
+              try {
+                const vw = video.videoWidth;
+                const vh = video.videoHeight;
+                if (vw > 0 && vh > 0) {
+                  offscreenCanvas.width = vw;
+                  offscreenCanvas.height = vh;
+                  offscreenCtx.drawImage(video, 0, 0, vw, vh);
+                  const imgData = offscreenCtx.getImageData(0, 0, vw, vh);
+                  const qrCode = webJsQr(imgData.data, imgData.width, imgData.height, {
+                    inversionAttempts: 'dontInvert',
+                  });
+                  if (qrCode && qrCode.data) {
+                    handleScannedQrPayload(qrCode.data);
+                  }
+                }
+              } catch (e) {
+                // Ignorar excepciones de lectura de fotograma individual
               }
             }
-            if (requestNativeCamPerm) {
-              const res = await requestNativeCamPerm().catch(() => null);
-              if (res?.granted !== undefined) {
-                setCameraPermissionGranted(Boolean(res.granted));
-                return;
-              }
-            }
-          } catch (e) {
-            console.warn('Error solicitando permisos de cámara nativa:', e);
-          }
-          // En dispositivos nativos siempre habilitamos la vista para que el visor nativo monte
-          setCameraPermissionGranted(true);
-        })();
-      }
+          }, 220);
+        }
+      });
     } else {
       scanLaserAnim.setValue(0);
+      setCameraPermissionGranted(null);
     }
 
     return () => {
@@ -552,11 +613,15 @@ export default function NativeApp() {
       if (scanInterval) {
         clearInterval(scanInterval);
       }
-      if (localStream) {
-        localStream.getTracks?.().forEach((t: any) => t.stop?.());
+      if (webVideoRef.current?.srcObject) {
+        try {
+          const stream = webVideoRef.current.srcObject;
+          stream.getTracks?.().forEach((t: any) => t.stop?.());
+        } catch {}
+        webVideoRef.current.srcObject = null;
       }
     };
-  }, [isJoinScanning, handleScannedQrPayload]);
+  }, [isJoinScanning, handleScannedQrPayload, requestCameraPermission]);
 
   // Probar conectividad con el servidor configurado (Alwaysdata PHP y Node Express)
   const testServerConnection = async () => {
@@ -3377,8 +3442,8 @@ export default function NativeApp() {
                     <View style={styles.canalesScannerBody}>
                       {/* Visor de Cámara con Retícula y Transmisión Real */}
                       <View style={styles.canalesCameraFrame}>
-                        {/* Live Web Camera Video Element */}
-                        {Platform.OS === 'web' && (
+                        {/* Live Web Camera Video Element - ÚNICAMENTE con autorización confirmada */}
+                        {Platform.OS === 'web' && cameraPermissionGranted === true && (
                           <video
                             ref={webVideoRef}
                             autoPlay
@@ -3395,8 +3460,8 @@ export default function NativeApp() {
                           />
                         )}
 
-                        {/* Live Native CameraView (iOS / Android si está disponible en Expo) */}
-                        {Platform.OS !== 'web' && NativeCameraView && cameraPermissionGranted !== false && (
+                        {/* Live Native CameraView (iOS / Android) - ÚNICAMENTE con autorización confirmada */}
+                        {Platform.OS !== 'web' && NativeCameraView && cameraPermissionGranted === true && (
                           <NativeCameraView
                             style={StyleSheet.absoluteFill}
                             facing="back"
@@ -3416,26 +3481,55 @@ export default function NativeApp() {
                         <View style={[styles.canalesScannerCorner, styles.cornerBL]} />
                         <View style={[styles.canalesScannerCorner, styles.cornerBR]} />
 
-                        {/* Rayo láser animado */}
-                        <Animated.View
-                          style={[
-                            styles.canalesScannerLaser,
-                            {
-                              transform: [
-                                {
-                                  translateY: scanLaserAnim.interpolate({
-                                    inputRange: [0, 1],
-                                    outputRange: [15, 190],
-                                  }),
-                                },
-                              ],
-                            },
-                          ]}
-                        />
+                        {/* Rayo láser animado (solo activo con cámara autorizada) */}
+                        {cameraPermissionGranted === true && (
+                          <Animated.View
+                            style={[
+                              styles.canalesScannerLaser,
+                              {
+                                transform: [
+                                  {
+                                    translateY: scanLaserAnim.interpolate({
+                                      inputRange: [0, 1],
+                                      outputRange: [15, 190],
+                                    }),
+                                  },
+                                ],
+                              },
+                            ]}
+                          />
+                        )}
 
-                        {/* Ícono central tenue si la cámara aún no transmite */}
-                        {cameraPermissionGranted === false && (
-                          <QrCodeIcon size={68} color="rgba(255, 255, 255, 0.22)" strokeWidth={1} />
+                        {/* Estado: Solicitando o verificando autorización */}
+                        {isRequestingPermission && (
+                          <View style={styles.canalesPermOverlay}>
+                            <ActivityIndicator size="small" color="#e11d48" />
+                            <Text style={styles.canalesPermLoadingText}>
+                              Consultando autorización de cámara...
+                            </Text>
+                          </View>
+                        )}
+
+                        {/* Estado: Permiso de cámara no autorizado / denegado */}
+                        {cameraPermissionGranted === false && !isRequestingPermission && (
+                          <View style={styles.canalesPermOverlay}>
+                            <View style={styles.canalesPermIconWrap}>
+                              <CameraIcon size={24} color="#e11d48" strokeWidth={2} />
+                            </View>
+                            <Text style={styles.canalesPermTitle}>Acceso a Cámara Requerido</Text>
+                            <Text style={styles.canalesPermDesc}>
+                              Para sintonizar canales tácticos por código QR, autoriza el acceso a la cámara.
+                            </Text>
+                            <TouchableOpacity
+                              style={styles.canalesPermRetryBtn}
+                              onPress={requestCameraPermission}
+                              activeOpacity={0.85}
+                            >
+                              <Text style={styles.canalesPermRetryBtnText}>
+                                {permissionCanAskAgain ? 'Autorizar Cámara' : 'Reintentar Permiso'}
+                              </Text>
+                            </TouchableOpacity>
+                          </View>
                         )}
 
                         {/* Indicador táctico inferior */}
@@ -3443,12 +3537,14 @@ export default function NativeApp() {
                           <View
                             style={[
                               styles.canalesScannerDot,
-                              cameraPermissionGranted !== false && { backgroundColor: '#10b981' },
+                              cameraPermissionGranted === true && { backgroundColor: '#10b981' },
                             ]}
                           />
                           <Text style={styles.canalesScannerHint}>
-                            {cameraPermissionGranted !== false
+                            {cameraPermissionGranted === true
                               ? 'Cámara táctica activa • Escaneando'
+                              : isRequestingPermission
+                              ? 'Solicitando autorización...'
                               : 'Permiso de cámara requerido'}
                           </Text>
                         </View>
@@ -6326,6 +6422,71 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '800',
     letterSpacing: 0.6,
+  },
+  canalesPermOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(15, 23, 42, 0.94)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 20,
+    zIndex: 10,
+    borderRadius: 20,
+  },
+  canalesPermIconWrap: {
+    width: 50,
+    height: 50,
+    borderRadius: 18,
+    backgroundColor: 'rgba(225, 29, 72, 0.15)',
+    borderWidth: 1,
+    borderColor: 'rgba(225, 29, 72, 0.4)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 10,
+  },
+  canalesPermTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#ffffff',
+    textAlign: 'center',
+    marginBottom: 4,
+    letterSpacing: -0.2,
+  },
+  canalesPermDesc: {
+    fontSize: 11,
+    color: '#94a3b8',
+    textAlign: 'center',
+    lineHeight: 16,
+    marginBottom: 14,
+    paddingHorizontal: 8,
+  },
+  canalesPermRetryBtn: {
+    backgroundColor: '#691c32',
+    paddingHorizontal: 16,
+    paddingVertical: 9,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#e11d48',
+    shadowColor: '#e11d48',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 5,
+    elevation: 3,
+  },
+  canalesPermRetryBtnText: {
+    color: '#ffffff',
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 0.4,
+  },
+  canalesPermLoadingText: {
+    color: '#e2e8f0',
+    fontSize: 12,
+    marginTop: 10,
+    fontWeight: '600',
   },
 });
 
