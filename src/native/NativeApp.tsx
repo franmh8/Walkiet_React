@@ -51,6 +51,7 @@ import {
   SettingsIcon,
 } from './icons';
 import QRCode from 'qrcode';
+import jsQR from 'jsqr';
 import { soundEngine } from '../services/soundEngine';
 
 // Silenciar advertencia informativa de SafeAreaView en React Native
@@ -58,10 +59,20 @@ LogBox.ignoreLogs(['SafeAreaView has been deprecated']);
 
 // Componente de cámara nativa con resolución protegida contra fallos nativos
 let NativeCameraView: any = null;
+let requestNativeCamPerm: any = null;
+let getNativeCamPerm: any = null;
 try {
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   const ExpoCam = require('expo-camera');
-  NativeCameraView = ExpoCam.CameraView || ExpoCam.Camera;
+  NativeCameraView = ExpoCam.CameraView || ExpoCam.Camera || ExpoCam.default;
+  requestNativeCamPerm =
+    ExpoCam.Camera?.requestCameraPermissionsAsync ||
+    ExpoCam.requestCameraPermissionsAsync ||
+    ExpoCam.CameraView?.requestCameraPermissionsAsync;
+  getNativeCamPerm =
+    ExpoCam.Camera?.getCameraPermissionsAsync ||
+    ExpoCam.getCameraPermissionsAsync ||
+    ExpoCam.CameraView?.getCameraPermissionsAsync;
 } catch {
   // Graceful fallback
 }
@@ -326,10 +337,85 @@ export default function NativeApp() {
     }
   }, [serverUrl, refreshChannels]);
 
-  // Iniciar cámara real y animación del láser táctico al abrir el escáner
+  // Confirmación exitosa con diseño y colorimetría C5i (reemplaza alert gris del sistema)
+  const handleChannelScanSuccess = useCallback((channel: Channel, source: 'qr' | 'pin' = 'qr') => {
+    setSelectedChannel(channel);
+    setIsJoinScanning(false);
+    setIsJoinModalOpen(false);
+    setJoinPinDigits('');
+    setScanSuccessModal({
+      isOpen: true,
+      channel,
+      pin: channel.pin || '1090',
+      source,
+    });
+  }, []);
+
+  // Referencia para evitar múltiples lecturas seguidas del mismo QR
+  const isHandlingScanRef = useRef(false);
+
+  // Procesamiento robusto del payload decodificado de código QR (Web y Nativo iPhone)
+  const handleScannedQrPayload = useCallback(
+    (raw: string) => {
+      if (!raw || isHandlingScanRef.current) return;
+      isHandlingScanRef.current = true;
+
+      try {
+        const text = String(raw).trim();
+        // 1. Buscar PIN de 4 dígitos (ej: C5I-CANAL:CH-10:PIN-1090, PIN-2040, o solo 1090)
+        const pinMatch = text.match(/PIN[-:]?(\d{4})/i) || text.match(/\b(\d{4})\b/);
+        const pin = pinMatch ? pinMatch[1] : null;
+
+        // 2. Buscar código de canal (ej: CH-10, CH-20, CH-91)
+        const codeMatch = text.match(/(CH-\d+)/i);
+        const code = codeMatch ? codeMatch[1].toUpperCase() : null;
+
+        // Buscar canal coincidente en la lista actual
+        let found = channels.find(
+          (c) =>
+            (pin && c.pin === pin) ||
+            (code && c.code.toUpperCase() === code) ||
+            (c.accessCode && text.includes(c.accessCode))
+        );
+
+        // Si no existe pero se detectó un PIN de 4 dígitos, sintonizar y enlazar automáticamente
+        if (!found && pin) {
+          found = {
+            id: `chan-pin-${pin}`,
+            name: `CANAL TÁCTICO #${pin}`,
+            code: `CH-${pin}`,
+            frequency: `15${pin.slice(0, 1)}.${pin.slice(1)} MHz`,
+            category: 'Táctico',
+            isEncrypted: true,
+            activeUsers: Math.floor(2 + Math.random() * 8),
+            pin: pin,
+            accessCode: `C5I-TAC-${pin}`,
+          };
+          setChannels((prev) => [found!, ...prev]);
+        }
+
+        if (!found) {
+          found = channels[0];
+        }
+
+        try {
+          soundEngine.playIncomingChirp();
+        } catch {}
+        handleChannelScanSuccess(found, 'qr');
+      } finally {
+        setTimeout(() => {
+          isHandlingScanRef.current = false;
+        }, 2200);
+      }
+    },
+    [channels, handleChannelScanSuccess]
+  );
+
+  // Iniciar cámara real, decodificador de QR en Web y animación del láser táctico
   useEffect(() => {
     let animLoop: Animated.CompositeAnimation | null = null;
     let localStream: any = null;
+    let scanInterval: any = null;
 
     if (isJoinScanning) {
       animLoop = Animated.loop(
@@ -353,29 +439,95 @@ export default function NativeApp() {
       if (Platform.OS === 'web') {
         if (typeof navigator !== 'undefined' && navigator.mediaDevices?.getUserMedia) {
           navigator.mediaDevices
-            .getUserMedia({ video: { facingMode: { ideal: 'environment' } } })
+            .getUserMedia({
+              video: {
+                facingMode: { ideal: 'environment' },
+                width: { ideal: 1280 },
+                height: { ideal: 720 },
+              },
+            })
             .then((stream) => {
               localStream = stream;
               setCameraPermissionGranted(true);
               if (webVideoRef.current) {
                 webVideoRef.current.srcObject = stream;
+                webVideoRef.current.setAttribute('playsinline', 'true');
                 webVideoRef.current.play?.().catch?.(() => {});
               }
             })
-            .catch(() => setCameraPermissionGranted(false));
+            .catch((err) => {
+              console.warn('Web camera error:', err);
+              setCameraPermissionGranted(false);
+            });
         }
-      } else {
-        // En iOS / Android solicita permisos a ExpoCamera si el módulo nativo está compilado
-        try {
-          const ExpoCamera = require('expo-camera');
-          if (ExpoCamera.requestCameraPermissionsAsync) {
-            ExpoCamera.requestCameraPermissionsAsync()
-              .then((res: any) => setCameraPermissionGranted(res?.granted ?? false))
-              .catch(() => setCameraPermissionGranted(false));
+
+        // Bucle activo para procesar y detectar códigos QR en tiempo real en la web
+        const offscreenCanvas = typeof document !== 'undefined' ? document.createElement('canvas') : null;
+        const offscreenCtx = offscreenCanvas?.getContext('2d', { willReadFrequently: true });
+
+        scanInterval = setInterval(async () => {
+          const video = webVideoRef.current;
+          if (!video || video.readyState < 2) return;
+          if (isHandlingScanRef.current) return;
+
+          // 1. Detección nativa del navegador BarcodeDetector (Chrome, Edge, Safari 17+)
+          if (typeof window !== 'undefined' && (window as any).BarcodeDetector) {
+            try {
+              const detector = new (window as any).BarcodeDetector({ formats: ['qr_code'] });
+              const barcodes = await detector.detect(video);
+              if (barcodes && barcodes.length > 0 && barcodes[0]?.rawValue) {
+                handleScannedQrPayload(barcodes[0].rawValue);
+                return;
+              }
+            } catch {}
           }
-        } catch {
-          setCameraPermissionGranted(false);
-        }
+
+          // 2. Decodificación de fotogramas mediante jsQR (funciona en 100% de navegadores)
+          if (offscreenCtx && offscreenCanvas) {
+            try {
+              const vw = video.videoWidth;
+              const vh = video.videoHeight;
+              if (vw > 0 && vh > 0) {
+                offscreenCanvas.width = vw;
+                offscreenCanvas.height = vh;
+                offscreenCtx.drawImage(video, 0, 0, vw, vh);
+                const imgData = offscreenCtx.getImageData(0, 0, vw, vh);
+                const qrCode = jsQR(imgData.data, imgData.width, imgData.height, {
+                  inversionAttempts: 'dontInvert',
+                });
+                if (qrCode && qrCode.data) {
+                  handleScannedQrPayload(qrCode.data);
+                }
+              }
+            } catch (e) {
+              // Ignorar excepciones de lectura de fotograma individual
+            }
+          }
+        }, 220);
+      } else {
+        // En iOS / Android solicita permisos a ExpoCamera si el módulo nativo está disponible
+        (async () => {
+          try {
+            if (getNativeCamPerm) {
+              const check = await getNativeCamPerm().catch(() => null);
+              if (check?.granted) {
+                setCameraPermissionGranted(true);
+                return;
+              }
+            }
+            if (requestNativeCamPerm) {
+              const res = await requestNativeCamPerm().catch(() => null);
+              if (res?.granted !== undefined) {
+                setCameraPermissionGranted(Boolean(res.granted));
+                return;
+              }
+            }
+          } catch (e) {
+            console.warn('Error solicitando permisos de cámara nativa:', e);
+          }
+          // En dispositivos nativos siempre habilitamos la vista para que el visor nativo monte
+          setCameraPermissionGranted(true);
+        })();
       }
     } else {
       scanLaserAnim.setValue(0);
@@ -383,11 +535,14 @@ export default function NativeApp() {
 
     return () => {
       animLoop?.stop();
+      if (scanInterval) {
+        clearInterval(scanInterval);
+      }
       if (localStream) {
         localStream.getTracks?.().forEach((t: any) => t.stop?.());
       }
     };
-  }, [isJoinScanning]);
+  }, [isJoinScanning, handleScannedQrPayload]);
 
   // Probar conectividad con el servidor configurado (Alwaysdata PHP y Node Express)
   const testServerConnection = async () => {
@@ -497,19 +652,6 @@ export default function NativeApp() {
     setIsConfigModalOpen(true);
   };
 
-  // Confirmación exitosa con diseño y colorimetría C5i (reemplaza alert gris del sistema)
-  const handleChannelScanSuccess = (channel: Channel, source: 'qr' | 'pin' = 'qr') => {
-    setSelectedChannel(channel);
-    setIsJoinScanning(false);
-    setIsJoinModalOpen(false);
-    setJoinPinDigits('');
-    setScanSuccessModal({
-      isOpen: true,
-      channel,
-      pin: channel.pin || '1090',
-      source,
-    });
-  };
 
   // Unirse a canal mediante PIN
   const handleJoinChannelSubmit = () => {
@@ -3240,14 +3382,15 @@ export default function NativeApp() {
                         )}
 
                         {/* Live Native CameraView (iOS / Android si está disponible en Expo) */}
-                        {Platform.OS !== 'web' && NativeCameraView && cameraPermissionGranted && (
+                        {Platform.OS !== 'web' && NativeCameraView && cameraPermissionGranted !== false && (
                           <NativeCameraView
                             style={StyleSheet.absoluteFill}
                             facing="back"
                             barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
                             onBarcodeScanned={(result: any) => {
-                              if (result?.data) {
-                                handleScanQrMock();
+                              const data = result?.data || result?.raw || '';
+                              if (data) {
+                                handleScannedQrPayload(data);
                               }
                             }}
                           />
@@ -3277,7 +3420,7 @@ export default function NativeApp() {
                         />
 
                         {/* Ícono central tenue si la cámara aún no transmite */}
-                        {!cameraPermissionGranted && (
+                        {cameraPermissionGranted === false && (
                           <QrCodeIcon size={68} color="rgba(255, 255, 255, 0.22)" strokeWidth={1} />
                         )}
 
@@ -3286,13 +3429,13 @@ export default function NativeApp() {
                           <View
                             style={[
                               styles.canalesScannerDot,
-                              cameraPermissionGranted && { backgroundColor: '#10b981' },
+                              cameraPermissionGranted !== false && { backgroundColor: '#10b981' },
                             ]}
                           />
                           <Text style={styles.canalesScannerHint}>
-                            {cameraPermissionGranted
+                            {cameraPermissionGranted !== false
                               ? 'Cámara táctica activa • Escaneando'
-                              : 'Buscando código QR C5i...'}
+                              : 'Permiso de cámara requerido'}
                           </Text>
                         </View>
                       </View>
@@ -3505,16 +3648,7 @@ export default function NativeApp() {
 
                     {/* PIN de Acceso (4 dígitos) */}
                     <View style={styles.recoveryInputGroup}>
-                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <Text style={styles.recoveryInputLabel}>PIN o Código de Acceso (4 dígitos)</Text>
-                        <TouchableOpacity
-                          onPress={Keyboard.dismiss}
-                          style={styles.canalesHideKeyboardBtn}
-                          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                        >
-                          <Text style={styles.canalesHideKeyboardText}>Bajar teclado ▾</Text>
-                        </TouchableOpacity>
-                      </View>
+                      <Text style={styles.recoveryInputLabel}>PIN o Código de Acceso (4 dígitos)</Text>
                       <Text style={styles.canalesPinSub}>
                         Los oficiales usarán este PIN para sintonizarse
                       </Text>
