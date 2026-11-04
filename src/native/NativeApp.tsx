@@ -487,6 +487,12 @@ export default function NativeApp() {
 
   const timerRef = useRef<any>(null);
 
+  // Circuit breaker para endpoints PHP en Alwaysdata (evita spam de 404 en consola si aún no se han subido los archivos)
+  const isContactsPhpAvailableRef = useRef<boolean | null>(null);
+  const isChatPhpAvailableRef = useRef<boolean | null>(null);
+  const lastContactsProbeTimeRef = useRef<number>(0);
+  const lastChatProbeTimeRef = useRef<number>(0);
+
   // Concentric animated soundwave rings for PTT (expanding circles)
   const waveAnim1 = useRef(new Animated.Value(0)).current;
   const waveAnim2 = useRef(new Animated.Value(0)).current;
@@ -525,8 +531,10 @@ export default function NativeApp() {
     if (!baseUrl) return;
     try {
       const cleanUrl = baseUrl.replace(/\/+$/, '');
+      const isAlwaysdata = cleanUrl.includes('alwaysdata.net') || cleanUrl.includes('.php');
+
       let res = await fetchWithTimeout(`${cleanUrl}/channels.php`, {}, 3000).catch(() => null);
-      if (!res || !res.ok) {
+      if (!isAlwaysdata && (!res || !res.ok)) {
         res = await fetchWithTimeout(`${cleanUrl}/api/channels`, {}, 3000).catch(() => null);
       }
       if (res && res.ok) {
@@ -554,16 +562,36 @@ export default function NativeApp() {
     }
   }, []);
 
-  // Sincronizar directorio de contactos y oficiales desde la base de datos
+  // Sincronizar directorio de contactos y oficiales desde la base de datos (con Circuit Breaker inteligente)
   const refreshContacts = useCallback(async (baseUrl: string) => {
     if (!baseUrl) return;
+
+    // Si ya detectamos que contacts.php no está disponible en este servidor, evitar saturar con 404s
+    if (isContactsPhpAvailableRef.current === false) {
+      if (Date.now() - lastContactsProbeTimeRef.current < 120000) {
+        return;
+      }
+    }
+    lastContactsProbeTimeRef.current = Date.now();
+
     try {
       const cleanUrl = baseUrl.replace(/\/+$/, '');
-      let res = await fetchWithTimeout(`${cleanUrl}/contacts.php`, {}, 3000).catch(() => null);
-      if (!res || !res.ok) {
+      const isAlwaysdata = cleanUrl.includes('alwaysdata.net') || cleanUrl.includes('.php');
+
+      let res: any = null;
+      if (isAlwaysdata) {
+        res = await fetchWithTimeout(`${cleanUrl}/contacts.php`, {}, 3000).catch(() => null);
+        if (res && res.status === 404) {
+          // Desactivar sondeos automáticos a contacts.php hasta que se suba el archivo
+          isContactsPhpAvailableRef.current = false;
+          return;
+        }
+      } else {
         res = await fetchWithTimeout(`${cleanUrl}/api/contacts`, {}, 3000).catch(() => null);
       }
+
       if (res && res.ok) {
+        isContactsPhpAvailableRef.current = true;
         const data = await res.json().catch(() => null);
         if (data && Array.isArray(data.contacts) && data.contacts.length > 0) {
           const mapped: ContactOfficer[] = data.contacts.map((c: any) => ({
@@ -581,20 +609,38 @@ export default function NativeApp() {
     } catch {}
   }, []);
 
-  // Sincronizar mensajes del chat activo desde el backend
+  // Sincronizar mensajes del chat activo desde el backend (con Circuit Breaker inteligente)
   const syncConversationMessages = useCallback(async (conv: Conversation) => {
     if (!serverUrl || !conv) return;
+
+    // Si chat-messages.php no existe en el host remoto, pausar sondeo
+    if (isChatPhpAvailableRef.current === false) {
+      if (Date.now() - lastChatProbeTimeRef.current < 120000) {
+        return;
+      }
+    }
+    lastChatProbeTimeRef.current = Date.now();
+
     try {
       const cleanUrl = serverUrl.replace(/\/+$/, '');
+      const isAlwaysdata = cleanUrl.includes('alwaysdata.net') || cleanUrl.includes('.php');
       const queryParam = conv.type === 'group'
         ? `channel_id=${encodeURIComponent(conv.id)}`
         : `receiver_id=${encodeURIComponent(conv.targetUserId || '')}&user_id=${encodeURIComponent(currentUser?.id || 'usr-c5i-01')}`;
 
-      let res = await fetchWithTimeout(`${cleanUrl}/chat-messages.php?${queryParam}`, {}, 3000).catch(() => null);
-      if (!res || !res.ok) {
+      let res: any = null;
+      if (isAlwaysdata) {
+        res = await fetchWithTimeout(`${cleanUrl}/chat-messages.php?${queryParam}`, {}, 3000).catch(() => null);
+        if (res && res.status === 404) {
+          isChatPhpAvailableRef.current = false;
+          return;
+        }
+      } else {
         res = await fetchWithTimeout(`${cleanUrl}/api/chat-messages?${queryParam}`, {}, 3000).catch(() => null);
       }
+
       if (res && res.ok) {
+        isChatPhpAvailableRef.current = true;
         const data = await res.json().catch(() => null);
         if (data && Array.isArray(data.messages) && data.messages.length > 0) {
           const remoteMsgs: ChatMessage[] = data.messages.map((m: any) => ({
@@ -631,11 +677,12 @@ export default function NativeApp() {
       refreshContacts(serverUrl);
       const timer = setInterval(() => {
         refreshChannels(serverUrl);
+        // refreshContacts y syncConversationMessages respetan el circuit breaker y no spamean 404s
         refreshContacts(serverUrl);
         if (activeConversation) {
           syncConversationMessages(activeConversation);
         }
-      }, 3500);
+      }, 4000);
       return () => clearInterval(timer);
     }
   }, [serverUrl, refreshChannels, refreshContacts, syncConversationMessages, activeConversation]);
@@ -2201,6 +2248,7 @@ export default function NativeApp() {
       (async () => {
         try {
           const cleanUrl = serverUrl.replace(/\/+$/, '');
+          const isAlwaysdata = cleanUrl.includes('alwaysdata.net') || cleanUrl.includes('.php');
           const headers = getSafePostHeaders();
           const payload = JSON.stringify({
             name: newOfficer.name,
@@ -2211,13 +2259,18 @@ export default function NativeApp() {
             role: newOfficer.role,
           });
 
-          let res = await fetchWithTimeout(`${cleanUrl}/contacts.php`, {
-            method: 'POST',
-            headers,
-            body: payload,
-          }, 4000).catch(() => null);
-
-          if (!res || !res.ok) {
+          if (isAlwaysdata) {
+            const res = await fetchWithTimeout(`${cleanUrl}/contacts.php`, {
+              method: 'POST',
+              headers,
+              body: payload,
+            }, 4000).catch(() => null);
+            if (res && res.status === 404) {
+              isContactsPhpAvailableRef.current = false;
+            } else if (res && res.ok) {
+              isContactsPhpAvailableRef.current = true;
+            }
+          } else {
             await fetchWithTimeout(`${cleanUrl}/api/contacts`, {
               method: 'POST',
               headers,
@@ -2277,6 +2330,7 @@ export default function NativeApp() {
       (async () => {
         try {
           const cleanUrl = serverUrl.replace(/\/+$/, '');
+          const isAlwaysdata = cleanUrl.includes('alwaysdata.net') || cleanUrl.includes('.php');
           const headers = getSafePostHeaders();
           const payload = JSON.stringify({
             sender_id: currentUser?.id || 'usr-c5i-01',
@@ -2289,13 +2343,18 @@ export default function NativeApp() {
             fileName,
           });
 
-          let res = await fetchWithTimeout(`${cleanUrl}/chat-messages.php`, {
-            method: 'POST',
-            headers,
-            body: payload,
-          }, 4000).catch(() => null);
-
-          if (!res || !res.ok) {
+          if (isAlwaysdata) {
+            const res = await fetchWithTimeout(`${cleanUrl}/chat-messages.php`, {
+              method: 'POST',
+              headers,
+              body: payload,
+            }, 4000).catch(() => null);
+            if (res && res.status === 404) {
+              isChatPhpAvailableRef.current = false;
+            } else if (res && res.ok) {
+              isChatPhpAvailableRef.current = true;
+            }
+          } else {
             await fetchWithTimeout(`${cleanUrl}/api/chat-messages`, {
               method: 'POST',
               headers,
