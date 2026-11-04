@@ -30,6 +30,10 @@ import {
   Settings as LucideSettings,
   LogOut as LucideLogOut,
   Trash2 as LucideTrash2,
+  Edit3 as LucideEdit3,
+  Send as LucideSend,
+  Paperclip as LucidePaperclip,
+  CheckCheck as LucideCheckCheck,
 } from 'lucide-react';
 
 export interface IconProps {
@@ -419,6 +423,62 @@ export const TrashIcon: React.FC<IconProps> = ({
       <LucideTrash2 size={size} color={color} strokeWidth={strokeWidth} />
     ) : (
       <Feather name="trash-2" size={size} color={color} />
+    )}
+  </View>
+);
+
+export const EditIcon: React.FC<IconProps> = ({
+  size = 18,
+  color = '#334155',
+  strokeWidth = 2,
+}) => (
+  <View style={[styles.center, { width: size, height: size }]}>
+    {isWeb ? (
+      <LucideEdit3 size={size} color={color} strokeWidth={strokeWidth} />
+    ) : (
+      <Feather name="edit-3" size={size} color={color} />
+    )}
+  </View>
+);
+
+export const SendIcon: React.FC<IconProps> = ({
+  size = 18,
+  color = '#ffffff',
+  strokeWidth = 2,
+}) => (
+  <View style={[styles.center, { width: size, height: size }]}>
+    {isWeb ? (
+      <LucideSend size={size} color={color} strokeWidth={strokeWidth} />
+    ) : (
+      <Feather name="send" size={size} color={color} />
+    )}
+  </View>
+);
+
+export const PaperclipIcon: React.FC<IconProps> = ({
+  size = 18,
+  color = '#64748b',
+  strokeWidth = 2,
+}) => (
+  <View style={[styles.center, { width: size, height: size }]}>
+    {isWeb ? (
+      <LucidePaperclip size={size} color={color} strokeWidth={strokeWidth} />
+    ) : (
+      <Feather name="paperclip" size={size} color={color} />
+    )}
+  </View>
+);
+
+export const DoubleCheckIcon: React.FC<IconProps> = ({
+  size = 14,
+  color = '#38bdf8',
+  strokeWidth = 2,
+}) => (
+  <View style={[styles.center, { width: size, height: size }]}>
+    {isWeb ? (
+      <LucideCheckCheck size={size} color={color} strokeWidth={strokeWidth} />
+    ) : (
+      <Feather name="check" size={size} color={color} />
     )}
   </View>
 );

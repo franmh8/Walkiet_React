@@ -51,6 +51,10 @@ import {
   SettingsIcon,
   LogOutIcon,
   TrashIcon,
+  EditIcon,
+  SendIcon,
+  PaperclipIcon,
+  DoubleCheckIcon,
 } from './icons';
 import QRCode from 'qrcode';
 import { soundEngine } from '../services/soundEngine';
@@ -165,6 +169,81 @@ interface Transmission {
   type: 'voice' | 'sos' | 'text';
   text?: string;
 }
+
+export interface ChatMessage {
+  id: string;
+  senderId: string;
+  senderName: string;
+  senderCallsign?: string;
+  text: string;
+  timestamp: string;
+  isSelf: boolean;
+  status: 'sent' | 'delivered' | 'read';
+}
+
+export interface Conversation {
+  id: string;
+  type: 'direct' | 'group';
+  name: string;
+  callsign?: string;
+  unit?: string;
+  targetUserId?: string;
+  participantCount?: number;
+  lastMessage: string;
+  lastMessageTime: string;
+  unreadCount: number;
+  isOnline: boolean;
+  messages: ChatMessage[];
+}
+
+export interface ContactOfficer {
+  id: string;
+  name: string;
+  callsign: string;
+  unit: string;
+  phone_number?: string;
+  status: 'online' | 'offline';
+  role?: string;
+}
+
+const INITIAL_OFFICERS: ContactOfficer[] = [
+  {
+    id: 'usr-c5i-01',
+    name: 'Comandante Roberto Morales',
+    callsign: 'HALCÓN-01',
+    unit: 'Fuerza Especial de Reacción C5i',
+    phone_number: '7711234567',
+    status: 'online',
+    role: 'Mando Operativo',
+  },
+  {
+    id: 'usr-c5i-02',
+    name: 'Oficial Karla Mendoza',
+    callsign: 'PATRULLA-04',
+    unit: 'Sector Operativo Pachuca Sur',
+    phone_number: '7719876543',
+    status: 'online',
+    role: 'Elemento Táctico',
+  },
+  {
+    id: 'usr-c5i-03',
+    name: 'Oficial Diego Navarrete',
+    callsign: 'COBRA-09',
+    unit: 'Vialidad y Tránsito Estatal',
+    phone_number: '7714567890',
+    status: 'online',
+    role: 'Vialidad',
+  },
+  {
+    id: 'usr-c5i-04',
+    name: 'Despacho Central 911',
+    callsign: 'CENTRAL-C5I',
+    unit: 'Centro de Comando C5i Hidalgo',
+    phone_number: '7710009911',
+    status: 'online',
+    role: 'Despachador 911',
+  },
+];
 
 const DEFAULT_CHANNELS: Channel[] = [
   { id: 'chan-01', name: 'LOLO', code: 'CH-10', frequency: '154.800 MHz', category: 'Táctico', isEncrypted: true, activeUsers: 1, pin: '1090', accessCode: 'C5I-TAC-10' },
@@ -322,6 +401,32 @@ export default function NativeApp() {
     { id: '3', sender: 'Comandante Morales', badge: 'HALCÓN-01', channel: 'OPERACIONES ESPECIALES TÁCTICAS', timestamp: '10:20', duration: 2, type: 'text', text: '10-4 Unidad en posición de patrullaje preventivo C5i' },
   ]);
   const [messageInput, setMessageInput] = useState('');
+
+  // Chat & Messaging State (WhatsApp-style C5i)
+  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [activeConversation, setActiveConversation] = useState<Conversation | null>(null);
+  const [chatSearchQuery, setChatSearchQuery] = useState('');
+  const [selectedChatFilter, setSelectedChatFilter] = useState<'Todos' | 'Grupos' | 'Directos'>('Todos');
+  const [chatDraftMessage, setChatDraftMessage] = useState('');
+
+  // Modals for Chat & Contacts
+  const [isNewChatModalOpen, setIsNewChatModalOpen] = useState(false);
+  const [contactSearchQuery, setContactSearchQuery] = useState('');
+  const [officersList, setOfficersList] = useState<ContactOfficer[]>(INITIAL_OFFICERS);
+
+  // Modal: Registrar Nuevo Contacto
+  const [isAddContactModalOpen, setIsAddContactModalOpen] = useState(false);
+  const [newContactName, setNewContactName] = useState('');
+  const [newContactCallsign, setNewContactCallsign] = useState('');
+  const [newContactUnit, setNewContactUnit] = useState('');
+  const [newContactPhone, setNewContactPhone] = useState('');
+  const [addContactError, setAddContactError] = useState<string | null>(null);
+
+  // Modal: Crear Grupo de Conversación
+  const [isCreateGroupChatModalOpen, setIsCreateGroupChatModalOpen] = useState(false);
+  const [newGroupName, setNewGroupName] = useState('');
+  const [selectedGroupMembers, setSelectedGroupMembers] = useState<string[]>([]);
+  const [createGroupError, setCreateGroupError] = useState<string | null>(null);
 
   const timerRef = useRef<any>(null);
 
@@ -1837,6 +1942,190 @@ export default function NativeApp() {
     }
   };
 
+  // Filtros y contadores para la pestaña Chat (WhatsApp-style C5i)
+  const filteredConversations = useMemo(() => {
+    return conversations.filter((c) => {
+      if (selectedChatFilter === 'Grupos' && c.type !== 'group') return false;
+      if (selectedChatFilter === 'Directos' && c.type !== 'direct') return false;
+      if (chatSearchQuery.trim()) {
+        const q = chatSearchQuery.toLowerCase();
+        const matchesName = c.name.toLowerCase().includes(q);
+        const matchesCallsign = c.callsign ? c.callsign.toLowerCase().includes(q) : false;
+        const matchesLastMsg = c.lastMessage.toLowerCase().includes(q);
+        return matchesName || matchesCallsign || matchesLastMsg;
+      }
+      return true;
+    });
+  }, [conversations, selectedChatFilter, chatSearchQuery]);
+
+  const filteredOfficers = useMemo(() => {
+    if (!contactSearchQuery.trim()) return officersList;
+    const q = contactSearchQuery.toLowerCase();
+    return officersList.filter((off) => {
+      return (
+        off.name.toLowerCase().includes(q) ||
+        off.callsign.toLowerCase().includes(q) ||
+        (off.phone_number && off.phone_number.includes(q)) ||
+        (off.unit && off.unit.toLowerCase().includes(q))
+      );
+    });
+  }, [officersList, contactSearchQuery]);
+
+  const totalChatCount = conversations.length;
+  const groupsChatCount = conversations.filter((c) => c.type === 'group').length;
+  const directChatCount = conversations.filter((c) => c.type === 'direct').length;
+
+  const handleStartDirectChat = (officer: ContactOfficer) => {
+    const existing = conversations.find(
+      (c) => c.type === 'direct' && (c.targetUserId === officer.id || c.name === officer.name)
+    );
+    if (existing) {
+      setActiveConversation(existing);
+      setIsNewChatModalOpen(false);
+      return;
+    }
+
+    const newConv: Conversation = {
+      id: `conv-off-${officer.id}`,
+      type: 'direct',
+      name: officer.name,
+      callsign: officer.callsign,
+      unit: officer.unit,
+      targetUserId: officer.id,
+      lastMessage: 'Enlace táctico encriptado iniciado',
+      lastMessageTime: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      unreadCount: 0,
+      isOnline: officer.status === 'online',
+      messages: [
+        {
+          id: `msg-${Date.now()}`,
+          senderId: officer.id,
+          senderName: officer.name,
+          senderCallsign: officer.callsign,
+          text: `Enlace táctico seguro establecido con ${officer.callsign} (${officer.unit}). Comunicaciones protegidas con cifrado C5i.`,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          isSelf: false,
+          status: 'read',
+        },
+      ],
+    };
+
+    setConversations((prev) => [newConv, ...prev]);
+    setActiveConversation(newConv);
+    setIsNewChatModalOpen(false);
+    try {
+      soundEngine.playIncomingChirp();
+    } catch {}
+  };
+
+  const handleCreateGroupChatSubmit = () => {
+    const cleanName = newGroupName.trim();
+    if (!cleanName) {
+      setCreateGroupError('Ingresa un nombre para el grupo de conversación.');
+      return;
+    }
+
+    const newGroup: Conversation = {
+      id: `conv-grp-${Date.now()}`,
+      type: 'group',
+      name: cleanName,
+      participantCount: selectedGroupMembers.length + 1,
+      lastMessage: 'Grupo táctico creado',
+      lastMessageTime: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      unreadCount: 0,
+      isOnline: true,
+      messages: [
+        {
+          id: `msg-${Date.now()}`,
+          senderId: currentUser?.id || 'me',
+          senderName: currentUser?.name || 'Tú',
+          text: `Grupo táctico "${cleanName}" creado. ${selectedGroupMembers.length + 1} elementos vinculados a la sala encriptada C5i.`,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          isSelf: true,
+          status: 'read',
+        },
+      ],
+    };
+
+    setConversations((prev) => [newGroup, ...prev]);
+    setActiveConversation(newGroup);
+    setIsCreateGroupChatModalOpen(false);
+    setIsNewChatModalOpen(false);
+    setNewGroupName('');
+    setSelectedGroupMembers([]);
+    setCreateGroupError(null);
+    try {
+      soundEngine.playIncomingChirp();
+    } catch {}
+  };
+
+  const handleSaveContactSubmit = () => {
+    const cleanName = newContactName.trim();
+    const cleanCallsign = newContactCallsign.trim();
+    if (!cleanName) {
+      setAddContactError('El nombre del oficial o contacto es requerido.');
+      return;
+    }
+    if (!cleanCallsign) {
+      setAddContactError('El indicativo o clave de radio es requerido.');
+      return;
+    }
+
+    const newOfficer: ContactOfficer = {
+      id: `off-${Date.now()}`,
+      name: cleanName,
+      callsign: cleanCallsign.toUpperCase(),
+      unit: newContactUnit.trim() || 'Sector Operativo Pachuca C5i',
+      phone_number: newContactPhone.trim(),
+      status: 'online',
+      role: 'Oficial Operativo',
+    };
+
+    setOfficersList((prev) => [newOfficer, ...prev]);
+    setIsAddContactModalOpen(false);
+    setNewContactName('');
+    setNewContactCallsign('');
+    setNewContactUnit('');
+    setNewContactPhone('');
+    setAddContactError(null);
+  };
+
+  const handleSendChatMessage = () => {
+    if (!chatDraftMessage.trim() || !activeConversation) return;
+    const textToSend = chatDraftMessage.trim();
+    const newMsg: ChatMessage = {
+      id: `msg-${Date.now()}`,
+      senderId: currentUser?.id || 'me',
+      senderName: currentUser?.name || 'Tú',
+      senderCallsign: currentUser?.callsign || currentUser?.badge || 'C5I-OP',
+      text: textToSend,
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      isSelf: true,
+      status: 'sent',
+    };
+
+    const updatedConv: Conversation = {
+      ...activeConversation,
+      lastMessage: textToSend,
+      lastMessageTime: newMsg.timestamp,
+      messages: [...activeConversation.messages, newMsg],
+    };
+
+    setActiveConversation(updatedConv);
+    setConversations((prev) => [updatedConv, ...prev.filter((c) => c.id !== updatedConv.id)]);
+    setChatDraftMessage('');
+
+    try {
+      soundEngine.playIncomingChirp();
+    } catch {}
+  };
+
+  const toggleGroupMemberSelection = (officerId: string) => {
+    setSelectedGroupMembers((prev) =>
+      prev.includes(officerId) ? prev.filter((id) => id !== officerId) : [...prev, officerId]
+    );
+  };
+
   if (!currentUser) {
     return (
       <SafeAreaView style={styles.loginContainer}>
@@ -3229,43 +3518,347 @@ export default function NativeApp() {
         )}
 
         {currentTab === 'Chat' && (
-          <View style={styles.messagesContainer}>
-            <ScrollView style={styles.transmissionsList}>
-              <Text style={styles.cleanSectionTitle}>CHAT Y TRANSMISIONES</Text>
-              {transmissions.map((item) => (
-                <View
-                  key={item.id}
-                  style={[
-                    styles.transmissionItem,
-                    item.type === 'sos' && styles.transmissionItemSos,
-                  ]}
-                >
-                  <View style={styles.transHeader}>
-                    <Text style={styles.transBadge}>{item.badge} • {item.sender}</Text>
-                    <Text style={styles.transTime}>{item.timestamp}</Text>
-                  </View>
-                  <Text style={styles.transChannel}>Canal: {item.channel}</Text>
-                  {item.text ? (
-                    <Text style={styles.transText}>{item.text}</Text>
-                  ) : (
-                    <Text style={styles.transVoice}>🔊 Mensaje de Voz PTT ({item.duration}s transmitidos)</Text>
-                  )}
-                </View>
-              ))}
-            </ScrollView>
+          <View style={styles.chatTabContainer}>
+            {activeConversation ? (
+              // VISTA DE CONVERSACIÓN ACTIVA (ESTILO WHATSAPP TÁCTICO)
+              <View style={styles.chatActiveView}>
+                {/* Header de conversación activa */}
+                <View style={styles.chatActiveHeader}>
+                  <TouchableOpacity
+                    style={styles.chatActiveBackBtn}
+                    onPress={() => setActiveConversation(null)}
+                    activeOpacity={0.7}
+                    hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                  >
+                    <ArrowLeftIcon size={20} color="#0f172a" strokeWidth={2.2} />
+                  </TouchableOpacity>
 
-            <View style={styles.messageInputRow}>
-              <TextInput
-                style={styles.msgInput}
-                value={messageInput}
-                onChangeText={setMessageInput}
-                placeholder="Escribir mensaje cifrado..."
-                placeholderTextColor="#64748b"
-              />
-              <TouchableOpacity style={styles.sendMsgBtn} onPress={handleSendMessage}>
-                <Text style={styles.sendMsgText}>ENVIAR</Text>
-              </TouchableOpacity>
-            </View>
+                  <View style={styles.chatActiveAvatarBox}>
+                    <Text style={styles.chatActiveAvatarText}>
+                      {activeConversation.type === 'group'
+                        ? 'GRP'
+                        : (activeConversation.callsign?.slice(0, 2) || activeConversation.name.slice(0, 2)).toUpperCase()}
+                    </Text>
+                    {activeConversation.isOnline && <View style={styles.chatActiveOnlineDot} />}
+                  </View>
+
+                  <View style={styles.chatActiveInfo}>
+                    <Text style={styles.chatActiveTitle} numberOfLines={1}>
+                      {activeConversation.name}
+                    </Text>
+                    <Text style={styles.chatActiveSubtitle} numberOfLines={1}>
+                      {activeConversation.type === 'group'
+                        ? `${activeConversation.participantCount || 2} elementos encriptados`
+                        : (activeConversation.callsign ? `${activeConversation.callsign} • En línea` : 'En línea')}
+                    </Text>
+                  </View>
+
+                  <TouchableOpacity
+                    style={styles.chatActivePttBtn}
+                    onPress={() => setCurrentTab('PTT')}
+                    activeOpacity={0.75}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    accessibilityLabel="Sintonizar canal y transmitir PTT"
+                  >
+                    <MicIcon size={18} color="#8a1a36" strokeWidth={2} />
+                  </TouchableOpacity>
+                </View>
+
+                {/* Hilo de mensajes con cifrado C5i */}
+                <ScrollView
+                  style={styles.chatMessagesScroll}
+                  contentContainerStyle={styles.chatMessagesScrollContent}
+                  showsVerticalScrollIndicator={false}
+                >
+                  <View style={styles.chatSecurityBanner}>
+                    <LockIcon size={12} color="#64748b" strokeWidth={2} />
+                    <Text style={styles.chatSecurityText}>
+                      Cifrado de extremo a extremo táctico C5i activo
+                    </Text>
+                  </View>
+
+                  {activeConversation.messages.map((msg) => {
+                    const isSelf = msg.isSelf;
+                    return (
+                      <View
+                        key={msg.id}
+                        style={[
+                          styles.chatBubbleRow,
+                          isSelf ? styles.chatBubbleRowSelf : styles.chatBubbleRowOther,
+                        ]}
+                      >
+                        <View
+                          style={[
+                            styles.chatBubble,
+                            isSelf ? styles.chatBubbleSelf : styles.chatBubbleOther,
+                          ]}
+                        >
+                          {!isSelf && activeConversation.type === 'group' && (
+                            <Text style={styles.chatBubbleSender}>
+                              {msg.senderCallsign || msg.senderName}
+                            </Text>
+                          )}
+                          <Text
+                            style={[
+                              styles.chatBubbleText,
+                              isSelf ? styles.chatBubbleTextSelf : styles.chatBubbleTextOther,
+                            ]}
+                          >
+                            {msg.text}
+                          </Text>
+                          <View style={styles.chatBubbleMetaRow}>
+                            <Text
+                              style={[
+                                styles.chatBubbleTime,
+                                isSelf ? styles.chatBubbleTimeSelf : styles.chatBubbleTimeOther,
+                              ]}
+                            >
+                              {msg.timestamp}
+                            </Text>
+                            {isSelf && (
+                              <View style={styles.chatBubbleCheckWrap}>
+                                <DoubleCheckIcon size={13} color="#86efac" />
+                              </View>
+                            )}
+                          </View>
+                        </View>
+                      </View>
+                    );
+                  })}
+                </ScrollView>
+
+                {/* Barra de entrada de mensaje */}
+                <KeyboardAvoidingView
+                  behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+                  keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
+                >
+                  <View style={styles.chatInputBar}>
+                    <TouchableOpacity
+                      style={styles.chatAttachBtn}
+                      activeOpacity={0.7}
+                      onPress={() => {
+                        Alert.alert(
+                          'Adjuntar Táctico',
+                          'Envío de coordenadas GPS en vivo y evidencias fotográficas encriptadas C5i habilitado.',
+                          [{ text: 'Aceptar' }]
+                        );
+                      }}
+                    >
+                      <PaperclipIcon size={20} color="#64748b" />
+                    </TouchableOpacity>
+
+                    <TextInput
+                      style={styles.chatTextInput}
+                      value={chatDraftMessage}
+                      onChangeText={setChatDraftMessage}
+                      placeholder="Mensaje encriptado..."
+                      placeholderTextColor="#94a3b8"
+                      multiline
+                    />
+
+                    <TouchableOpacity
+                      style={[
+                        styles.chatSendBtn,
+                        Boolean(chatDraftMessage.trim()) && styles.chatSendBtnActive,
+                      ]}
+                      onPress={handleSendChatMessage}
+                      disabled={!chatDraftMessage.trim()}
+                      activeOpacity={0.8}
+                    >
+                      <SendIcon size={18} color="#ffffff" />
+                    </TouchableOpacity>
+                  </View>
+                </KeyboardAvoidingView>
+              </View>
+            ) : (
+              // LISTA DE CHATS (EXACTA A CAPTURA 1)
+              <View style={styles.chatListView}>
+                {/* Header superior: Ícono de chat redondeado, Título "Chat", Botón SOS rojo y Botón Editar/Nuevo */}
+                <View style={styles.chatTopHeader}>
+                  <View style={styles.chatTopHeaderLeft}>
+                    <View style={styles.chatHeaderIconBadge}>
+                      <MessageSquareIcon size={20} color="#8a1a36" strokeWidth={2.2} />
+                    </View>
+                    <Text style={styles.chatTopHeaderTitle}>Chat</Text>
+                  </View>
+
+                  <View style={styles.chatTopHeaderRight}>
+                    {/* Botón SOS Rojo idéntico a Captura 1 */}
+                    <TouchableOpacity
+                      style={styles.chatSosHeaderBtn}
+                      onPress={handleTriggerSos}
+                      activeOpacity={0.8}
+                      accessibilityLabel="Alerta de emergencia SOS"
+                    >
+                      <AlertTriangleIcon size={18} color="#ffffff" strokeWidth={2.4} />
+                    </TouchableOpacity>
+
+                    {/* Botón Nuevo / Componer con icono de lápiz/editar */}
+                    <TouchableOpacity
+                      style={styles.chatComposeBtn}
+                      onPress={() => setIsNewChatModalOpen(true)}
+                      activeOpacity={0.75}
+                      accessibilityLabel="Nueva conversación"
+                    >
+                      <EditIcon size={18} color="#0f172a" strokeWidth={2} />
+                    </TouchableOpacity>
+                  </View>
+                </View>
+
+                {/* Barra de búsqueda idéntica a Captura 1: "Buscar chats o mensajes..." */}
+                <View style={styles.chatSearchContainer}>
+                  <View style={styles.chatSearchInputBox}>
+                    <SearchIcon size={16} color="#94a3b8" strokeWidth={2} />
+                    <TextInput
+                      style={styles.chatSearchInput}
+                      value={chatSearchQuery}
+                      onChangeText={setChatSearchQuery}
+                      placeholder="Buscar chats o mensajes..."
+                      placeholderTextColor="#94a3b8"
+                    />
+                    {Boolean(chatSearchQuery) && (
+                      <TouchableOpacity onPress={() => setChatSearchQuery('')}>
+                        <XIcon size={14} color="#94a3b8" />
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                </View>
+
+                {/* Filtros de Categoría tipo Pill idénticos a Captura 1: Todos (N), Grupos (N), Directos (N) */}
+                <View style={styles.chatFilterPillsRow}>
+                  <TouchableOpacity
+                    style={[
+                      styles.chatFilterPill,
+                      selectedChatFilter === 'Todos' && styles.chatFilterPillActive,
+                    ]}
+                    onPress={() => setSelectedChatFilter('Todos')}
+                    activeOpacity={0.8}
+                  >
+                    <Text
+                      style={[
+                        styles.chatFilterPillText,
+                        selectedChatFilter === 'Todos' && styles.chatFilterPillTextActive,
+                      ]}
+                    >
+                      Todos ({totalChatCount})
+                    </Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={[
+                      styles.chatFilterPill,
+                      selectedChatFilter === 'Grupos' && styles.chatFilterPillActive,
+                    ]}
+                    onPress={() => setSelectedChatFilter('Grupos')}
+                    activeOpacity={0.8}
+                  >
+                    <Text
+                      style={[
+                        styles.chatFilterPillText,
+                        selectedChatFilter === 'Grupos' && styles.chatFilterPillTextActive,
+                      ]}
+                    >
+                      Grupos ({groupsChatCount})
+                    </Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={[
+                      styles.chatFilterPill,
+                      selectedChatFilter === 'Directos' && styles.chatFilterPillActive,
+                    ]}
+                    onPress={() => setSelectedChatFilter('Directos')}
+                    activeOpacity={0.8}
+                  >
+                    <Text
+                      style={[
+                        styles.chatFilterPillText,
+                        selectedChatFilter === 'Directos' && styles.chatFilterPillTextActive,
+                      ]}
+                    >
+                      Directos ({directChatCount})
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+
+                {/* Contenido: Si no hay chats -> Empty state de Captura 1; si hay -> lista de conversaciones */}
+                {filteredConversations.length === 0 ? (
+                  <View style={styles.chatEmptyStateBox}>
+                    <View style={styles.chatEmptyIconBadge}>
+                      <MessageSquareIcon size={32} color="#94a3b8" strokeWidth={1.8} />
+                    </View>
+                    <Text style={styles.chatEmptyTitle}>Sin conversaciones todavía</Text>
+                    <Text style={styles.chatEmptySubtitle}>
+                      Crea un grupo para comenzar a chatear.
+                    </Text>
+                    <TouchableOpacity
+                      style={styles.chatEmptyStartBtn}
+                      onPress={() => setIsNewChatModalOpen(true)}
+                      activeOpacity={0.85}
+                    >
+                      <PlusIcon size={16} color="#ffffff" strokeWidth={2.2} />
+                      <Text style={styles.chatEmptyStartBtnText}>Iniciar Conversación</Text>
+                    </TouchableOpacity>
+                  </View>
+                ) : (
+                  <ScrollView
+                    style={styles.chatConversationsScroll}
+                    contentContainerStyle={{ paddingBottom: 30 }}
+                    showsVerticalScrollIndicator={false}
+                  >
+                    {filteredConversations.map((conv) => (
+                      <TouchableOpacity
+                        key={conv.id}
+                        style={styles.chatConvCard}
+                        onPress={() => setActiveConversation(conv)}
+                        activeOpacity={0.75}
+                      >
+                        <View style={styles.chatConvAvatarWrap}>
+                          <View
+                            style={[
+                              styles.chatConvAvatar,
+                              conv.type === 'group' && { backgroundColor: '#f1f5f9' },
+                            ]}
+                          >
+                            {conv.type === 'group' ? (
+                              <UsersIcon size={20} color="#8a1a36" strokeWidth={2} />
+                            ) : (
+                              <Text style={styles.chatConvAvatarText}>
+                                {(conv.callsign?.slice(0, 2) || conv.name.slice(0, 2)).toUpperCase()}
+                              </Text>
+                            )}
+                          </View>
+                          {conv.isOnline && <View style={styles.chatConvOnlineDot} />}
+                        </View>
+
+                        <View style={styles.chatConvContent}>
+                          <View style={styles.chatConvHeaderRow}>
+                            <Text style={styles.chatConvName} numberOfLines={1}>
+                              {conv.name}
+                            </Text>
+                            <Text style={styles.chatConvTime}>{conv.lastMessageTime}</Text>
+                          </View>
+
+                          <View style={styles.chatConvMsgRow}>
+                            <View style={styles.chatConvCheckWrap}>
+                              <DoubleCheckIcon size={14} color="#059669" />
+                            </View>
+                            <Text style={styles.chatConvLastMsg} numberOfLines={1}>
+                              {conv.lastMessage}
+                            </Text>
+                            {conv.unreadCount > 0 && (
+                              <View style={styles.chatConvUnreadBadge}>
+                                <Text style={styles.chatConvUnreadText}>{conv.unreadCount}</Text>
+                              </View>
+                            )}
+                          </View>
+                        </View>
+                      </TouchableOpacity>
+                    ))}
+                  </ScrollView>
+                )}
+              </View>
+            )}
           </View>
         )}
 
@@ -4237,6 +4830,404 @@ export default function NativeApp() {
             </TouchableOpacity>
           </View>
         </View>
+      </Modal>
+
+      {/* 6. MODAL: NUEVA CONVERSACIÓN (IDÉNTICO A CAPTURA 2) */}
+      <Modal
+        visible={isNewChatModalOpen}
+        animationType="fade"
+        transparent
+        onRequestClose={() => {
+          setIsNewChatModalOpen(false);
+          setContactSearchQuery('');
+        }}
+      >
+        <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+          <View style={styles.chatModalBackdrop}>
+            <View style={styles.chatModalCard}>
+              {/* Header: ícono chat en cuadro redondeado, título "Nueva Conversación", subtítulo "Selecciona un contacto para chatear", botón cerrar */}
+              <View style={styles.chatModalHeader}>
+                <View style={styles.chatModalHeaderLeft}>
+                  <View style={styles.chatModalIconBox}>
+                    <MessageSquareIcon size={18} color="#8a1a36" strokeWidth={2.2} />
+                  </View>
+                  <View>
+                    <Text style={styles.chatModalTitle}>Nueva Conversación</Text>
+                    <Text style={styles.chatModalSubtitle}>
+                      Selecciona un contacto para chatear
+                    </Text>
+                  </View>
+                </View>
+                <TouchableOpacity
+                  style={styles.chatModalCloseBtn}
+                  onPress={() => {
+                    setIsNewChatModalOpen(false);
+                    setContactSearchQuery('');
+                  }}
+                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                >
+                  <XIcon size={18} color="#64748b" strokeWidth={2} />
+                </TouchableOpacity>
+              </View>
+
+              {/* Botones de acción: "+ Registrar Nuevo Contacto" (color vino idéntico a Captura 2) y "+ Crear Grupo" */}
+              <View style={styles.chatModalActionsRow}>
+                <TouchableOpacity
+                  style={styles.chatModalRegisterBtn}
+                  onPress={() => setIsAddContactModalOpen(true)}
+                  activeOpacity={0.85}
+                >
+                  <UserPlusIcon size={18} color="#ffffff" strokeWidth={2.2} />
+                  <Text style={styles.chatModalRegisterBtnText}>+ Registrar Nuevo Contacto</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.chatModalCreateGroupBtn}
+                  onPress={() => setIsCreateGroupChatModalOpen(true)}
+                  activeOpacity={0.8}
+                >
+                  <UsersIcon size={16} color="#8a1a36" strokeWidth={2.2} />
+                  <Text style={styles.chatModalCreateGroupBtnText}>+ Crear Grupo de Conversación</Text>
+                </TouchableOpacity>
+              </View>
+
+              {/* Barra de búsqueda idéntica a Captura 2: "Buscar por nombre, indicativo o teléfono..." */}
+              <View style={styles.chatModalSearchBox}>
+                <SearchIcon size={16} color="#94a3b8" strokeWidth={2} />
+                <TextInput
+                  style={styles.chatModalSearchInput}
+                  value={contactSearchQuery}
+                  onChangeText={setContactSearchQuery}
+                  placeholder="Buscar por nombre, indicativo o teléfono..."
+                  placeholderTextColor="#94a3b8"
+                />
+                {Boolean(contactSearchQuery) && (
+                  <TouchableOpacity onPress={() => setContactSearchQuery('')}>
+                    <XIcon size={14} color="#94a3b8" />
+                  </TouchableOpacity>
+                )}
+              </View>
+
+              {/* Contenido: Si no hay contactos filtrados -> Empty state exacto a Captura 2; si hay -> lista de oficiales */}
+              {filteredOfficers.length === 0 ? (
+                <View style={styles.chatModalEmptyBox}>
+                  <View style={styles.chatModalEmptyUserIcon}>
+                    <UserIcon size={32} color="#94a3b8" strokeWidth={1.8} />
+                  </View>
+                  <Text style={styles.chatModalEmptyTitle}>Sin contactos registrados</Text>
+                  <Text style={styles.chatModalEmptySubtitle}>
+                    Agrega a tu primer oficial o contacto para iniciar una conversación encriptada.
+                  </Text>
+                  <TouchableOpacity
+                    style={styles.chatModalEmptyAddBtn}
+                    onPress={() => setIsAddContactModalOpen(true)}
+                    activeOpacity={0.85}
+                  >
+                    <Text style={styles.chatModalEmptyAddBtnText}>+ Agregar Contacto</Text>
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                <ScrollView
+                  style={styles.chatModalOfficersScroll}
+                  contentContainerStyle={{ paddingBottom: 15 }}
+                  showsVerticalScrollIndicator={false}
+                >
+                  {filteredOfficers.map((officer) => (
+                    <TouchableOpacity
+                      key={officer.id}
+                      style={styles.chatOfficerCard}
+                      onPress={() => handleStartDirectChat(officer)}
+                      activeOpacity={0.7}
+                    >
+                      <View style={styles.chatOfficerAvatarWrap}>
+                        <View style={styles.chatOfficerAvatar}>
+                          <Text style={styles.chatOfficerAvatarText}>
+                            {officer.callsign.slice(0, 2).toUpperCase()}
+                          </Text>
+                        </View>
+                        {officer.status === 'online' && (
+                          <View style={styles.chatOfficerOnlineDot} />
+                        )}
+                      </View>
+
+                      <View style={styles.chatOfficerInfo}>
+                        <View style={styles.chatOfficerNameRow}>
+                          <Text style={styles.chatOfficerName} numberOfLines={1}>
+                            {officer.name}
+                          </Text>
+                          <View style={styles.chatOfficerCallsignPill}>
+                            <Text style={styles.chatOfficerCallsignText}>
+                              {officer.callsign}
+                            </Text>
+                          </View>
+                        </View>
+                        <Text style={styles.chatOfficerUnit} numberOfLines={1}>
+                          {officer.unit}
+                          {officer.phone_number ? ` • Tel: ${officer.phone_number}` : ''}
+                        </Text>
+                      </View>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+              )}
+            </View>
+          </View>
+        </TouchableWithoutFeedback>
+      </Modal>
+
+      {/* 7. MODAL: REGISTRAR NUEVO CONTACTO */}
+      <Modal
+        visible={isAddContactModalOpen}
+        animationType="fade"
+        transparent
+        onRequestClose={() => {
+          setIsAddContactModalOpen(false);
+          setAddContactError(null);
+        }}
+      >
+        <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+          <View style={styles.chatModalBackdrop}>
+            <View style={styles.chatModalCard}>
+              <View style={styles.chatModalHeader}>
+                <View style={styles.chatModalHeaderLeft}>
+                  <View style={[styles.chatModalIconBox, { backgroundColor: '#8a1a36' }]}>
+                    <UserPlusIcon size={18} color="#ffffff" strokeWidth={2.2} />
+                  </View>
+                  <View>
+                    <Text style={styles.chatModalTitle}>Registrar Oficial / Contacto</Text>
+                    <Text style={styles.chatModalSubtitle}>
+                      Añade un contacto a la agenda táctica C5i
+                    </Text>
+                  </View>
+                </View>
+                <TouchableOpacity
+                  style={styles.chatModalCloseBtn}
+                  onPress={() => {
+                    setIsAddContactModalOpen(false);
+                    setAddContactError(null);
+                  }}
+                >
+                  <XIcon size={18} color="#64748b" strokeWidth={2} />
+                </TouchableOpacity>
+              </View>
+
+              <ScrollView
+                style={{ maxHeight: 380 }}
+                contentContainerStyle={{ padding: 18, gap: 14 }}
+                keyboardShouldPersistTaps="handled"
+              >
+                {addContactError && (
+                  <View style={styles.recoveryErrorBanner}>
+                    <AlertTriangleIcon size={15} color="#be123c" strokeWidth={1.8} />
+                    <Text style={styles.recoveryErrorText}>{addContactError}</Text>
+                  </View>
+                )}
+
+                <View style={styles.recoveryInputGroup}>
+                  <Text style={styles.recoveryInputLabel}>Nombre Completo del Oficial</Text>
+                  <View style={styles.recoveryInputBox}>
+                    <TextInput
+                      style={styles.recoveryInput}
+                      value={newContactName}
+                      onChangeText={setNewContactName}
+                      placeholder="Ej. Oficial Rodrigo Santos"
+                      placeholderTextColor="#94a3b8"
+                    />
+                  </View>
+                </View>
+
+                <View style={styles.recoveryInputGroup}>
+                  <Text style={styles.recoveryInputLabel}>Indicativo / Clave de Radio</Text>
+                  <View style={styles.recoveryInputBox}>
+                    <TextInput
+                      style={styles.recoveryInput}
+                      value={newContactCallsign}
+                      onChangeText={setNewContactCallsign}
+                      placeholder="Ej. JAGUAR-05"
+                      placeholderTextColor="#94a3b8"
+                      autoCapitalize="characters"
+                    />
+                  </View>
+                </View>
+
+                <View style={styles.recoveryInputGroup}>
+                  <Text style={styles.recoveryInputLabel}>Unidad o Sector Operativo</Text>
+                  <View style={styles.recoveryInputBox}>
+                    <TextInput
+                      style={styles.recoveryInput}
+                      value={newContactUnit}
+                      onChangeText={setNewContactUnit}
+                      placeholder="Ej. Sector Tulancingo / Fuerza Especial"
+                      placeholderTextColor="#94a3b8"
+                    />
+                  </View>
+                </View>
+
+                <View style={styles.recoveryInputGroup}>
+                  <Text style={styles.recoveryInputLabel}>Teléfono Móvil (Opcional)</Text>
+                  <View style={styles.recoveryInputBox}>
+                    <TextInput
+                      style={styles.recoveryInput}
+                      value={newContactPhone}
+                      onChangeText={setNewContactPhone}
+                      placeholder="7711234567"
+                      placeholderTextColor="#94a3b8"
+                      keyboardType="phone-pad"
+                    />
+                  </View>
+                </View>
+              </ScrollView>
+
+              <View style={styles.chatModalFormFooter}>
+                <TouchableOpacity
+                  style={styles.chatModalCancelBtn}
+                  onPress={() => {
+                    setIsAddContactModalOpen(false);
+                    setAddContactError(null);
+                  }}
+                >
+                  <Text style={styles.chatModalCancelBtnText}>Cancelar</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.chatModalSubmitFormBtn}
+                  onPress={handleSaveContactSubmit}
+                  activeOpacity={0.85}
+                >
+                  <Text style={styles.chatModalSubmitFormBtnText}>Guardar Contacto</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </TouchableWithoutFeedback>
+      </Modal>
+
+      {/* 8. MODAL: CREAR GRUPO DE CONVERSACIÓN */}
+      <Modal
+        visible={isCreateGroupChatModalOpen}
+        animationType="fade"
+        transparent
+        onRequestClose={() => {
+          setIsCreateGroupChatModalOpen(false);
+          setCreateGroupError(null);
+        }}
+      >
+        <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+          <View style={styles.chatModalBackdrop}>
+            <View style={styles.chatModalCard}>
+              <View style={styles.chatModalHeader}>
+                <View style={styles.chatModalHeaderLeft}>
+                  <View style={[styles.chatModalIconBox, { backgroundColor: '#8a1a36' }]}>
+                    <UsersIcon size={18} color="#ffffff" strokeWidth={2.2} />
+                  </View>
+                  <View>
+                    <Text style={styles.chatModalTitle}>Crear Grupo de Conversación</Text>
+                    <Text style={styles.chatModalSubtitle}>
+                      Sala encriptada para múltiples oficiales C5i
+                    </Text>
+                  </View>
+                </View>
+                <TouchableOpacity
+                  style={styles.chatModalCloseBtn}
+                  onPress={() => {
+                    setIsCreateGroupChatModalOpen(false);
+                    setCreateGroupError(null);
+                  }}
+                >
+                  <XIcon size={18} color="#64748b" strokeWidth={2} />
+                </TouchableOpacity>
+              </View>
+
+              <ScrollView
+                style={{ maxHeight: 380 }}
+                contentContainerStyle={{ padding: 18, gap: 14 }}
+                keyboardShouldPersistTaps="handled"
+              >
+                {createGroupError && (
+                  <View style={styles.recoveryErrorBanner}>
+                    <AlertTriangleIcon size={15} color="#be123c" strokeWidth={1.8} />
+                    <Text style={styles.recoveryErrorText}>{createGroupError}</Text>
+                  </View>
+                )}
+
+                <View style={styles.recoveryInputGroup}>
+                  <Text style={styles.recoveryInputLabel}>Nombre del Grupo Táctico</Text>
+                  <View style={styles.recoveryInputBox}>
+                    <TextInput
+                      style={styles.recoveryInput}
+                      value={newGroupName}
+                      onChangeText={setNewGroupName}
+                      placeholder="Ej. OPERATIVO NOCTURNO C5I"
+                      placeholderTextColor="#94a3b8"
+                      autoCapitalize="characters"
+                    />
+                  </View>
+                </View>
+
+                <View style={styles.recoveryInputGroup}>
+                  <Text style={styles.recoveryInputLabel}>
+                    Seleccionar Miembros ({selectedGroupMembers.length} seleccionados)
+                  </Text>
+                  <Text style={styles.canalesPinSub}>
+                    Marca los oficiales que participarán en el grupo cifrado
+                  </Text>
+
+                  <View style={{ gap: 8, marginTop: 8 }}>
+                    {officersList.map((off) => {
+                      const isChecked = selectedGroupMembers.includes(off.id);
+                      return (
+                        <TouchableOpacity
+                          key={off.id}
+                          style={[
+                            styles.chatGroupMemberItem,
+                            isChecked && styles.chatGroupMemberItemChecked,
+                          ]}
+                          onPress={() => toggleGroupMemberSelection(off.id)}
+                          activeOpacity={0.7}
+                        >
+                          <View
+                            style={[
+                              styles.chatGroupCheckbox,
+                              isChecked && styles.chatGroupCheckboxChecked,
+                            ]}
+                          >
+                            {isChecked && <CheckCircleIcon size={14} color="#ffffff" strokeWidth={2.5} />}
+                          </View>
+                          <View style={{ flex: 1 }}>
+                            <Text style={styles.chatGroupMemberName}>{off.name}</Text>
+                            <Text style={styles.chatGroupMemberMeta}>
+                              [{off.callsign}] • {off.unit}
+                            </Text>
+                          </View>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                </View>
+              </ScrollView>
+
+              <View style={styles.chatModalFormFooter}>
+                <TouchableOpacity
+                  style={styles.chatModalCancelBtn}
+                  onPress={() => {
+                    setIsCreateGroupChatModalOpen(false);
+                    setCreateGroupError(null);
+                  }}
+                >
+                  <Text style={styles.chatModalCancelBtnText}>Cancelar</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.chatModalSubmitFormBtn}
+                  onPress={handleCreateGroupChatSubmit}
+                  activeOpacity={0.85}
+                >
+                  <Text style={styles.chatModalSubmitFormBtnText}>Crear Grupo Cifrado</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </TouchableWithoutFeedback>
       </Modal>
     </SafeAreaView>
   );
@@ -6813,6 +7804,778 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
     color: '#e11d48',
+  },
+
+  // ----------------------------------------------------
+  // ESTILOS TÁCTICOS C5i PARA CHAT (WHATSAPP-STYLE)
+  // ----------------------------------------------------
+  chatTabContainer: {
+    flex: 1,
+    backgroundColor: '#f8fafc',
+  },
+  chatListView: {
+    flex: 1,
+    backgroundColor: '#f8fafc',
+  },
+  chatTopHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingTop: 14,
+    paddingBottom: 12,
+    backgroundColor: '#ffffff',
+    borderBottomWidth: 1,
+    borderBottomColor: '#f1f5f9',
+  },
+  chatTopHeaderLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  chatHeaderIconBadge: {
+    width: 38,
+    height: 38,
+    borderRadius: 10,
+    backgroundColor: '#fdf2f4',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#fce7ea',
+  },
+  chatTopHeaderTitle: {
+    fontSize: 24,
+    fontWeight: '800',
+    color: '#0f172a',
+    letterSpacing: -0.5,
+  },
+  chatTopHeaderRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  chatSosHeaderBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    backgroundColor: '#dc2626',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#dc2626',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.35,
+    shadowRadius: 5,
+    elevation: 4,
+  },
+  chatComposeBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    backgroundColor: '#ffffff',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1.2,
+    borderColor: '#e2e8f0',
+  },
+  chatSearchContainer: {
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    paddingBottom: 8,
+    backgroundColor: '#f8fafc',
+  },
+  chatSearchInputBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#ffffff',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    height: 42,
+    gap: 8,
+  },
+  chatSearchInput: {
+    flex: 1,
+    fontSize: 13,
+    color: '#0f172a',
+    paddingVertical: 0,
+  },
+  chatFilterPillsRow: {
+    flexDirection: 'row',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    gap: 8,
+  },
+  chatFilterPill: {
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: 20,
+    backgroundColor: '#f1f5f9',
+  },
+  chatFilterPillActive: {
+    backgroundColor: '#691c32',
+  },
+  chatFilterPillText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#475569',
+  },
+  chatFilterPillTextActive: {
+    color: '#ffffff',
+    fontWeight: '700',
+  },
+  chatEmptyStateBox: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 32,
+    paddingBottom: 60,
+  },
+  chatEmptyIconBadge: {
+    width: 72,
+    height: 72,
+    borderRadius: 20,
+    backgroundColor: '#f1f5f9',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 16,
+  },
+  chatEmptyTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#1e293b',
+    marginBottom: 6,
+    textAlign: 'center',
+  },
+  chatEmptySubtitle: {
+    fontSize: 14,
+    color: '#64748b',
+    textAlign: 'center',
+    lineHeight: 20,
+  },
+  chatEmptyStartBtn: {
+    marginTop: 20,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#691c32',
+    paddingHorizontal: 18,
+    paddingVertical: 10,
+    borderRadius: 12,
+  },
+  chatEmptyStartBtnText: {
+    color: '#ffffff',
+    fontWeight: '700',
+    fontSize: 13,
+  },
+  chatConversationsScroll: {
+    flex: 1,
+    paddingHorizontal: 16,
+    paddingTop: 6,
+  },
+  chatConvCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#ffffff',
+    borderRadius: 16,
+    padding: 12,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: '#f1f5f9',
+    shadowColor: '#0f172a',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 3,
+    elevation: 1,
+  },
+  chatConvAvatarWrap: {
+    position: 'relative',
+    marginRight: 12,
+  },
+  chatConvAvatar: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: '#691c32',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  chatConvAvatarText: {
+    color: '#ffffff',
+    fontSize: 16,
+    fontWeight: '800',
+  },
+  chatConvOnlineDot: {
+    position: 'absolute',
+    bottom: 1,
+    right: 1,
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    backgroundColor: '#10b981',
+    borderWidth: 2,
+    borderColor: '#ffffff',
+  },
+  chatConvContent: {
+    flex: 1,
+  },
+  chatConvHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  chatConvName: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#0f172a',
+    flex: 1,
+    marginRight: 8,
+  },
+  chatConvTime: {
+    fontSize: 11,
+    color: '#94a3b8',
+    fontWeight: '500',
+  },
+  chatConvMsgRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  chatConvCheckWrap: {
+    marginRight: 2,
+  },
+  chatConvLastMsg: {
+    fontSize: 13,
+    color: '#64748b',
+    flex: 1,
+  },
+  chatConvUnreadBadge: {
+    minWidth: 18,
+    height: 18,
+    borderRadius: 9,
+    backgroundColor: '#059669',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 5,
+  },
+  chatConvUnreadText: {
+    color: '#ffffff',
+    fontSize: 10,
+    fontWeight: '800',
+  },
+
+  // Vista activa de conversación
+  chatActiveView: {
+    flex: 1,
+    backgroundColor: '#f8fafc',
+  },
+  chatActiveHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#ffffff',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f1f5f9',
+    gap: 10,
+  },
+  chatActiveBackBtn: {
+    padding: 6,
+    borderRadius: 8,
+  },
+  chatActiveAvatarBox: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#691c32',
+    alignItems: 'center',
+    justifyContent: 'center',
+    position: 'relative',
+  },
+  chatActiveAvatarText: {
+    color: '#ffffff',
+    fontWeight: '800',
+    fontSize: 13,
+  },
+  chatActiveOnlineDot: {
+    position: 'absolute',
+    bottom: 0,
+    right: 0,
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: '#10b981',
+    borderWidth: 2,
+    borderColor: '#ffffff',
+  },
+  chatActiveInfo: {
+    flex: 1,
+  },
+  chatActiveTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#0f172a',
+  },
+  chatActiveSubtitle: {
+    fontSize: 11,
+    color: '#059669',
+    fontWeight: '500',
+    marginTop: 1,
+  },
+  chatActivePttBtn: {
+    width: 38,
+    height: 38,
+    borderRadius: 10,
+    backgroundColor: '#fdf2f4',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#fce7ea',
+  },
+  chatMessagesScroll: {
+    flex: 1,
+    backgroundColor: '#f1f5f9',
+  },
+  chatMessagesScrollContent: {
+    padding: 14,
+    paddingBottom: 20,
+  },
+  chatSecurityBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    backgroundColor: '#ffffff',
+    borderRadius: 10,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    alignSelf: 'center',
+    marginBottom: 14,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    maxWidth: '92%',
+  },
+  chatSecurityText: {
+    fontSize: 11,
+    color: '#64748b',
+    fontWeight: '500',
+    textAlign: 'center',
+  },
+  chatBubbleRow: {
+    flexDirection: 'row',
+    marginBottom: 10,
+    width: '100%',
+  },
+  chatBubbleRowSelf: {
+    justifyContent: 'flex-end',
+  },
+  chatBubbleRowOther: {
+    justifyContent: 'flex-start',
+  },
+  chatBubble: {
+    maxWidth: '82%',
+    borderRadius: 16,
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  chatBubbleSelf: {
+    backgroundColor: '#691c32',
+    borderBottomRightRadius: 4,
+  },
+  chatBubbleOther: {
+    backgroundColor: '#ffffff',
+    borderBottomLeftRadius: 4,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  chatBubbleSender: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#8a1a36',
+    marginBottom: 3,
+  },
+  chatBubbleText: {
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  chatBubbleTextSelf: {
+    color: '#ffffff',
+  },
+  chatBubbleTextOther: {
+    color: '#0f172a',
+  },
+  chatBubbleMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    gap: 4,
+    marginTop: 4,
+  },
+  chatBubbleTime: {
+    fontSize: 10,
+  },
+  chatBubbleTimeSelf: {
+    color: '#fecdd3',
+  },
+  chatBubbleTimeOther: {
+    color: '#94a3b8',
+  },
+  chatBubbleCheckWrap: {
+    marginLeft: 2,
+  },
+  chatInputBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#ffffff',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#e2e8f0',
+    gap: 8,
+  },
+  chatAttachBtn: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#f8fafc',
+  },
+  chatTextInput: {
+    flex: 1,
+    minHeight: 38,
+    maxHeight: 100,
+    backgroundColor: '#f1f5f9',
+    borderRadius: 20,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    fontSize: 14,
+    color: '#0f172a',
+  },
+  chatSendBtn: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: '#94a3b8',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  chatSendBtnActive: {
+    backgroundColor: '#691c32',
+  },
+
+  // Modales de Chat y Contactos (Captura 2)
+  chatModalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.6)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 18,
+  },
+  chatModalCard: {
+    width: '100%',
+    maxWidth: 420,
+    backgroundColor: '#ffffff',
+    borderRadius: 24,
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.25,
+    shadowRadius: 20,
+    elevation: 10,
+  },
+  chatModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingTop: 18,
+    paddingBottom: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f1f5f9',
+  },
+  chatModalHeaderLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  chatModalIconBox: {
+    width: 38,
+    height: 38,
+    borderRadius: 10,
+    backgroundColor: '#fdf2f4',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#fce7ea',
+  },
+  chatModalTitle: {
+    fontSize: 17,
+    fontWeight: '800',
+    color: '#0f172a',
+  },
+  chatModalSubtitle: {
+    fontSize: 12,
+    color: '#64748b',
+    marginTop: 1,
+  },
+  chatModalCloseBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: '#f1f5f9',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  chatModalActionsRow: {
+    paddingHorizontal: 18,
+    paddingTop: 14,
+    paddingBottom: 10,
+    gap: 8,
+  },
+  chatModalRegisterBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: '#691c32',
+    height: 46,
+    borderRadius: 14,
+    shadowColor: '#691c32',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  chatModalRegisterBtnText: {
+    color: '#ffffff',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  chatModalCreateGroupBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    backgroundColor: '#fdf2f4',
+    borderWidth: 1,
+    borderColor: '#fce7ea',
+    height: 40,
+    borderRadius: 12,
+  },
+  chatModalCreateGroupBtnText: {
+    color: '#8a1a36',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  chatModalSearchBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#f8fafc',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    borderRadius: 12,
+    marginHorizontal: 18,
+    marginVertical: 8,
+    paddingHorizontal: 12,
+    height: 42,
+    gap: 8,
+  },
+  chatModalSearchInput: {
+    flex: 1,
+    fontSize: 13,
+    color: '#0f172a',
+    paddingVertical: 0,
+  },
+  chatModalEmptyBox: {
+    alignItems: 'center',
+    paddingVertical: 36,
+    paddingHorizontal: 24,
+  },
+  chatModalEmptyUserIcon: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: '#f1f5f9',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 14,
+  },
+  chatModalEmptyTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#1e293b',
+    marginBottom: 6,
+    textAlign: 'center',
+  },
+  chatModalEmptySubtitle: {
+    fontSize: 13,
+    color: '#64748b',
+    textAlign: 'center',
+    lineHeight: 18,
+    marginBottom: 18,
+  },
+  chatModalEmptyAddBtn: {
+    backgroundColor: '#691c32',
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 12,
+  },
+  chatModalEmptyAddBtnText: {
+    color: '#ffffff',
+    fontWeight: '700',
+    fontSize: 13,
+  },
+  chatModalOfficersScroll: {
+    maxHeight: 320,
+    paddingHorizontal: 18,
+  },
+  chatOfficerCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f1f5f9',
+  },
+  chatOfficerAvatarWrap: {
+    position: 'relative',
+    marginRight: 12,
+  },
+  chatOfficerAvatar: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: '#f1f5f9',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  chatOfficerAvatarText: {
+    color: '#8a1a36',
+    fontWeight: '800',
+    fontSize: 13,
+  },
+  chatOfficerOnlineDot: {
+    position: 'absolute',
+    bottom: 0,
+    right: 0,
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: '#10b981',
+    borderWidth: 2,
+    borderColor: '#ffffff',
+  },
+  chatOfficerInfo: {
+    flex: 1,
+  },
+  chatOfficerNameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 2,
+  },
+  chatOfficerName: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#0f172a',
+    flex: 1,
+    marginRight: 6,
+  },
+  chatOfficerCallsignPill: {
+    backgroundColor: '#fdf2f4',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#fce7ea',
+  },
+  chatOfficerCallsignText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#8a1a36',
+  },
+  chatOfficerUnit: {
+    fontSize: 12,
+    color: '#64748b',
+  },
+  chatModalFormFooter: {
+    flexDirection: 'row',
+    padding: 16,
+    borderTopWidth: 1,
+    borderTopColor: '#f1f5f9',
+    gap: 10,
+  },
+  chatModalCancelBtn: {
+    flex: 1,
+    height: 44,
+    borderRadius: 12,
+    backgroundColor: '#f1f5f9',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  chatModalCancelBtnText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#64748b',
+  },
+  chatModalSubmitFormBtn: {
+    flex: 1.5,
+    height: 44,
+    borderRadius: 12,
+    backgroundColor: '#691c32',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  chatModalSubmitFormBtnText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#ffffff',
+  },
+  chatGroupMemberItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 10,
+    borderRadius: 12,
+    backgroundColor: '#f8fafc',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    gap: 10,
+  },
+  chatGroupMemberItemChecked: {
+    backgroundColor: '#fdf2f4',
+    borderColor: '#fce7ea',
+  },
+  chatGroupCheckbox: {
+    width: 20,
+    height: 20,
+    borderRadius: 6,
+    borderWidth: 1.5,
+    borderColor: '#94a3b8',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#ffffff',
+  },
+  chatGroupCheckboxChecked: {
+    backgroundColor: '#691c32',
+    borderColor: '#691c32',
+  },
+  chatGroupMemberName: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#0f172a',
+  },
+  chatGroupMemberMeta: {
+    fontSize: 11,
+    color: '#64748b',
+    marginTop: 1,
   },
 });
 
