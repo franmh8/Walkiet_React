@@ -34,6 +34,10 @@ import {
   Send as LucideSend,
   Paperclip as LucidePaperclip,
   CheckCheck as LucideCheckCheck,
+  Video as LucideVideo,
+  Image as LucideImage,
+  MapPin as LucideMapPin,
+  FileText as LucideFileText,
 } from 'lucide-react';
 
 export interface IconProps {
@@ -479,6 +483,62 @@ export const DoubleCheckIcon: React.FC<IconProps> = ({
       <LucideCheckCheck size={size} color={color} strokeWidth={strokeWidth} />
     ) : (
       <Feather name="check" size={size} color={color} />
+    )}
+  </View>
+);
+
+export const VideoIcon: React.FC<IconProps> = ({
+  size = 18,
+  color = '#334155',
+  strokeWidth = 2,
+}) => (
+  <View style={[styles.center, { width: size, height: size }]}>
+    {isWeb ? (
+      <LucideVideo size={size} color={color} strokeWidth={strokeWidth} />
+    ) : (
+      <Feather name="video" size={size} color={color} />
+    )}
+  </View>
+);
+
+export const ImageIcon: React.FC<IconProps> = ({
+  size = 18,
+  color = '#334155',
+  strokeWidth = 2,
+}) => (
+  <View style={[styles.center, { width: size, height: size }]}>
+    {isWeb ? (
+      <LucideImage size={size} color={color} strokeWidth={strokeWidth} />
+    ) : (
+      <Feather name="image" size={size} color={color} />
+    )}
+  </View>
+);
+
+export const MapPinIcon: React.FC<IconProps> = ({
+  size = 18,
+  color = '#334155',
+  strokeWidth = 2,
+}) => (
+  <View style={[styles.center, { width: size, height: size }]}>
+    {isWeb ? (
+      <LucideMapPin size={size} color={color} strokeWidth={strokeWidth} />
+    ) : (
+      <Feather name="map-pin" size={size} color={color} />
+    )}
+  </View>
+);
+
+export const FileTextIcon: React.FC<IconProps> = ({
+  size = 18,
+  color = '#334155',
+  strokeWidth = 2,
+}) => (
+  <View style={[styles.center, { width: size, height: size }]}>
+    {isWeb ? (
+      <LucideFileText size={size} color={color} strokeWidth={strokeWidth} />
+    ) : (
+      <Feather name="file-text" size={size} color={color} />
     )}
   </View>
 );

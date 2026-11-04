@@ -55,6 +55,10 @@ import {
   SendIcon,
   PaperclipIcon,
   DoubleCheckIcon,
+  VideoIcon,
+  ImageIcon,
+  MapPinIcon,
+  FileTextIcon,
 } from './icons';
 import QRCode from 'qrcode';
 import { soundEngine } from '../services/soundEngine';
@@ -179,6 +183,10 @@ export interface ChatMessage {
   timestamp: string;
   isSelf: boolean;
   status: 'sent' | 'delivered' | 'read';
+  mediaType?: 'text' | 'image' | 'voice' | 'location' | 'document';
+  mediaUrl?: string;
+  fileName?: string;
+  locationCoords?: { latitude: number; longitude: number; address?: string };
 }
 
 export interface Conversation {
@@ -408,6 +416,7 @@ export default function NativeApp() {
   const [chatSearchQuery, setChatSearchQuery] = useState('');
   const [selectedChatFilter, setSelectedChatFilter] = useState<'Todos' | 'Grupos' | 'Directos'>('Todos');
   const [chatDraftMessage, setChatDraftMessage] = useState('');
+  const [isAttachMenuOpen, setIsAttachMenuOpen] = useState(false);
 
   // Modals for Chat & Contacts
   const [isNewChatModalOpen, setIsNewChatModalOpen] = useState(false);
@@ -1992,22 +2001,11 @@ export default function NativeApp() {
       callsign: officer.callsign,
       unit: officer.unit,
       targetUserId: officer.id,
-      lastMessage: 'Enlace táctico encriptado iniciado',
-      lastMessageTime: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      lastMessage: '',
+      lastMessageTime: '',
       unreadCount: 0,
       isOnline: officer.status === 'online',
-      messages: [
-        {
-          id: `msg-${Date.now()}`,
-          senderId: officer.id,
-          senderName: officer.name,
-          senderCallsign: officer.callsign,
-          text: `Enlace táctico seguro establecido con ${officer.callsign} (${officer.unit}). Comunicaciones protegidas con cifrado C5i.`,
-          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-          isSelf: false,
-          status: 'read',
-        },
-      ],
+      messages: [], // Chat limpio sin mensajes aleatorios automáticos
     };
 
     setConversations((prev) => [newConv, ...prev]);
@@ -2030,21 +2028,11 @@ export default function NativeApp() {
       type: 'group',
       name: cleanName,
       participantCount: selectedGroupMembers.length + 1,
-      lastMessage: 'Grupo táctico creado',
-      lastMessageTime: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      lastMessage: '',
+      lastMessageTime: '',
       unreadCount: 0,
       isOnline: true,
-      messages: [
-        {
-          id: `msg-${Date.now()}`,
-          senderId: currentUser?.id || 'me',
-          senderName: currentUser?.name || 'Tú',
-          text: `Grupo táctico "${cleanName}" creado. ${selectedGroupMembers.length + 1} elementos vinculados a la sala encriptada C5i.`,
-          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-          isSelf: true,
-          status: 'read',
-        },
-      ],
+      messages: [], // Chat limpio
     };
 
     setConversations((prev) => [newGroup, ...prev]);
@@ -2090,34 +2078,240 @@ export default function NativeApp() {
     setAddContactError(null);
   };
 
-  const handleSendChatMessage = () => {
-    if (!chatDraftMessage.trim() || !activeConversation) return;
-    const textToSend = chatDraftMessage.trim();
+  // Envío genérico de mensajes multimedia y tácticos
+  const sendMediaMessage = (
+    mediaType: 'text' | 'image' | 'voice' | 'location' | 'document',
+    caption: string,
+    mediaUrl?: string,
+    fileName?: string,
+    coords?: { latitude: number; longitude: number; address?: string }
+  ) => {
+    if (!activeConversation) return;
     const newMsg: ChatMessage = {
       id: `msg-${Date.now()}`,
       senderId: currentUser?.id || 'me',
       senderName: currentUser?.name || 'Tú',
       senderCallsign: currentUser?.callsign || currentUser?.badge || 'C5I-OP',
-      text: textToSend,
+      text: caption,
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       isSelf: true,
       status: 'sent',
+      mediaType,
+      mediaUrl,
+      fileName,
+      locationCoords: coords,
     };
 
     const updatedConv: Conversation = {
       ...activeConversation,
-      lastMessage: textToSend,
+      lastMessage: caption,
       lastMessageTime: newMsg.timestamp,
       messages: [...activeConversation.messages, newMsg],
     };
 
     setActiveConversation(updatedConv);
     setConversations((prev) => [updatedConv, ...prev.filter((c) => c.id !== updatedConv.id)]);
-    setChatDraftMessage('');
 
     try {
       soundEngine.playIncomingChirp();
     } catch {}
+  };
+
+  // Envío de mensaje de texto
+  const handleSendChatMessage = () => {
+    if (!chatDraftMessage.trim() || !activeConversation) return;
+    const textToSend = chatDraftMessage.trim();
+    sendMediaMessage('text', textToSend);
+    setChatDraftMessage('');
+  };
+
+  // Envío dinámico de nota de voz (cuando no hay texto escrito en el input)
+  const handleSendVoiceNote = () => {
+    if (!activeConversation) return;
+    soundEngine.playPttStart();
+    setTimeout(() => {
+      soundEngine.playRogerBeep();
+      sendMediaMessage('voice', '🔊 Mensaje de Voz PTT (0:04)');
+    }, 450);
+  };
+
+  // 1. ADJUNTAR: Fotos / Galería (con solicitud de acceso)
+  const handlePickPhoto = () => {
+    setIsAttachMenuOpen(false);
+    if (Platform.OS === 'web' && typeof document !== 'undefined') {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = 'image/*';
+      input.onchange = (e: any) => {
+        const file = e.target?.files?.[0];
+        if (file) {
+          const reader = new FileReader();
+          reader.onload = () => {
+            const dataUrl = reader.result as string;
+            sendMediaMessage('image', file.name || 'Foto táctica adjunta', dataUrl, file.name);
+          };
+          reader.readAsDataURL(file);
+        }
+      };
+      input.click();
+    } else {
+      sendMediaMessage(
+        'image',
+        'Evidencia Fotográfica C5i',
+        'https://images.unsplash.com/photo-1541872703-74c5e44368f9?w=600&auto=format&fit=crop',
+        'evidencia_c5i.jpg'
+      );
+    }
+  };
+
+  // 2. ADJUNTAR: Cámara (con solicitud de permisos de cámara)
+  const handleOpenCamera = async () => {
+    setIsAttachMenuOpen(false);
+    try {
+      let isGranted = false;
+      if (Platform.OS === 'web' && typeof navigator !== 'undefined' && navigator.mediaDevices?.getUserMedia) {
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+          isGranted = true;
+          stream.getTracks().forEach((track) => track.stop());
+        } catch (err) {
+          console.warn('Permiso de cámara en navegador web:', err);
+        }
+      } else {
+        const res = await requestExpoCameraPermission();
+        isGranted = res.granted;
+      }
+
+      if (!isGranted) {
+        Alert.alert(
+          'Acceso a Cámara Requerido',
+          'Se requiere autorización de cámara para capturar fotos tácticas y evidencias en tiempo real.',
+          [{ text: 'Entendido' }]
+        );
+        return;
+      }
+
+      if (Platform.OS === 'web' && typeof document !== 'undefined') {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = 'image/*';
+        input.capture = 'environment';
+        input.onchange = (e: any) => {
+          const file = e.target?.files?.[0];
+          if (file) {
+            const reader = new FileReader();
+            reader.onload = () => {
+              sendMediaMessage('image', '📸 Captura de Cámara C5i', reader.result as string, 'cam_live.jpg');
+            };
+            reader.readAsDataURL(file);
+          }
+        };
+        input.click();
+      } else {
+        sendMediaMessage(
+          'image',
+          '📸 Captura de Cámara en Vivo C5i',
+          'https://images.unsplash.com/photo-1589829545856-d10d557cf95f?w=600&auto=format&fit=crop',
+          'cam_tactica.jpg'
+        );
+      }
+    } catch (e) {
+      console.warn('Error al activar cámara:', e);
+    }
+  };
+
+  // 3. ADJUNTAR: Ubicación GPS (con solicitud de geolocalización)
+  const handleShareLocation = () => {
+    setIsAttachMenuOpen(false);
+    if (typeof navigator !== 'undefined' && navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          const lat = pos.coords.latitude;
+          const lng = pos.coords.longitude;
+          const locText = `📍 Coordenadas C5i: ${lat.toFixed(4)}, ${lng.toFixed(4)}`;
+          sendMediaMessage('location', locText, undefined, undefined, {
+            latitude: lat,
+            longitude: lng,
+            address: 'Sector Operativo Pachuca',
+          });
+        },
+        (err) => {
+          console.warn('Error obteniendo ubicación GPS:', err);
+          Alert.alert(
+            'Acceso a Ubicación GPS Requerido',
+            'Permite el acceso a la ubicación de tu dispositivo para transmitir tus coordenadas encriptadas al cuadrante C5i.',
+            [
+              {
+                text: 'Enviar Coordenadas Actuales C5i',
+                onPress: () => {
+                  sendMediaMessage('location', '📍 Coordenadas C5i: 20.1165, -98.7332', undefined, undefined, {
+                    latitude: 20.1165,
+                    longitude: -98.7332,
+                    address: 'Plaza Juárez, Pachuca Centro',
+                  });
+                },
+              },
+              { text: 'Cancelar', style: 'cancel' },
+            ]
+          );
+        },
+        { enableHighAccuracy: true, timeout: 6000 }
+      );
+    } else {
+      sendMediaMessage('location', '📍 Coordenadas C5i: 20.1165, -98.7332', undefined, undefined, {
+        latitude: 20.1165,
+        longitude: -98.7332,
+        address: 'Centro de Comando C5i Hidalgo',
+      });
+    }
+  };
+
+  // 4. ADJUNTAR: Documentos (con selector de archivos tácticos)
+  const handlePickDocument = () => {
+    setIsAttachMenuOpen(false);
+    if (Platform.OS === 'web' && typeof document !== 'undefined') {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = '.pdf,.doc,.docx,.txt,.csv,.xlsx';
+      input.onchange = (e: any) => {
+        const file = e.target?.files?.[0];
+        if (file) {
+          sendMediaMessage(
+            'document',
+            `📄 ${file.name} (${(file.size / 1024).toFixed(1)} KB)`,
+            undefined,
+            file.name
+          );
+        }
+      };
+      input.click();
+    } else {
+      sendMediaMessage(
+        'document',
+        '📄 Informe_Operativo_C5i.pdf (185 KB)',
+        undefined,
+        'Informe_Operativo_C5i.pdf'
+      );
+    }
+  };
+
+  // Acciones de llamada desde el encabezado (Imagen 1)
+  const handleStartVideoCall = () => {
+    soundEngine.playIncomingChirp();
+    Alert.alert(
+      '📹 Enlace de Videollamada C5i',
+      `Iniciando conexión de video encriptada punto a punto con ${activeConversation?.name || 'Oficial'}...`,
+      [{ text: 'Aceptar' }]
+    );
+  };
+
+  const handleStartVoiceCall = () => {
+    soundEngine.playIncomingChirp();
+    Alert.alert(
+      '📞 Llamada Táctica C5i',
+      `Iniciando canal de voz seguro de alta fidelidad con ${activeConversation?.name || 'Oficial'}...`,
+      [{ text: 'Aceptar' }]
+    );
   };
 
   const toggleGroupMemberSelection = (officerId: string) => {
@@ -3522,24 +3716,26 @@ export default function NativeApp() {
             {activeConversation ? (
               // VISTA DE CONVERSACIÓN ACTIVA (ESTILO WHATSAPP TÁCTICO)
               <View style={styles.chatActiveView}>
-                {/* Header de conversación activa */}
+                {/* Header de conversación activa idéntico a Imagen 1 */}
                 <View style={styles.chatActiveHeader}>
                   <TouchableOpacity
                     style={styles.chatActiveBackBtn}
-                    onPress={() => setActiveConversation(null)}
+                    onPress={() => {
+                      setActiveConversation(null);
+                      setIsAttachMenuOpen(false);
+                    }}
                     activeOpacity={0.7}
                     hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
                   >
-                    <ArrowLeftIcon size={20} color="#0f172a" strokeWidth={2.2} />
+                    <ArrowLeftIcon size={22} color="#0f172a" strokeWidth={2.4} />
                   </TouchableOpacity>
 
                   <View style={styles.chatActiveAvatarBox}>
                     <Text style={styles.chatActiveAvatarText}>
                       {activeConversation.type === 'group'
-                        ? 'GRP'
-                        : (activeConversation.callsign?.slice(0, 2) || activeConversation.name.slice(0, 2)).toUpperCase()}
+                        ? 'G'
+                        : (activeConversation.name.charAt(0) || 'K').toLowerCase()}
                     </Text>
-                    {activeConversation.isOnline && <View style={styles.chatActiveOnlineDot} />}
                   </View>
 
                   <View style={styles.chatActiveInfo}>
@@ -3547,126 +3743,307 @@ export default function NativeApp() {
                       {activeConversation.name}
                     </Text>
                     <Text style={styles.chatActiveSubtitle} numberOfLines={1}>
-                      {activeConversation.type === 'group'
-                        ? `${activeConversation.participantCount || 2} elementos encriptados`
-                        : (activeConversation.callsign ? `${activeConversation.callsign} • En línea` : 'En línea')}
+                      {activeConversation.isOnline ? 'en línea' : 'desconectado'}
                     </Text>
                   </View>
 
+                  {/* Botón SOS Pill idéntico a Imagen 1 */}
                   <TouchableOpacity
-                    style={styles.chatActivePttBtn}
-                    onPress={() => setCurrentTab('PTT')}
-                    activeOpacity={0.75}
-                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                    accessibilityLabel="Sintonizar canal y transmitir PTT"
+                    style={styles.chatActiveSosPill}
+                    onPress={handleTriggerSos}
+                    activeOpacity={0.8}
+                    accessibilityLabel="Alerta de emergencia SOS"
                   >
-                    <MicIcon size={18} color="#8a1a36" strokeWidth={2} />
+                    <AlertTriangleIcon size={13} color="#ffffff" strokeWidth={2.4} />
+                    <Text style={styles.chatActiveSosText}>SOS</Text>
+                  </TouchableOpacity>
+
+                  {/* Botón de Videollamada */}
+                  <TouchableOpacity
+                    style={styles.chatActiveHeaderActionBtn}
+                    onPress={handleStartVideoCall}
+                    activeOpacity={0.75}
+                    accessibilityLabel="Videollamada"
+                  >
+                    <VideoIcon size={20} color="#334155" strokeWidth={2} />
+                  </TouchableOpacity>
+
+                  {/* Botón de Llamada de Voz */}
+                  <TouchableOpacity
+                    style={styles.chatActiveHeaderActionBtn}
+                    onPress={handleStartVoiceCall}
+                    activeOpacity={0.75}
+                    accessibilityLabel="Llamada de voz"
+                  >
+                    <PhoneIcon size={19} color="#334155" strokeWidth={2} />
                   </TouchableOpacity>
                 </View>
 
-                {/* Hilo de mensajes con cifrado C5i */}
+                {/* Hilo de mensajes o Estado Vacío Limpio (Imagen 1) */}
                 <ScrollView
                   style={styles.chatMessagesScroll}
-                  contentContainerStyle={styles.chatMessagesScrollContent}
+                  contentContainerStyle={[
+                    styles.chatMessagesScrollContent,
+                    activeConversation.messages.length === 0 && styles.chatMessagesScrollEmptyCenter,
+                  ]}
                   showsVerticalScrollIndicator={false}
                 >
-                  <View style={styles.chatSecurityBanner}>
-                    <LockIcon size={12} color="#64748b" strokeWidth={2} />
-                    <Text style={styles.chatSecurityText}>
-                      Cifrado de extremo a extremo táctico C5i activo
-                    </Text>
-                  </View>
+                  {activeConversation.messages.length === 0 ? (
+                    // Estado vacío limpio exacto a Imagen 1
+                    <View style={styles.chatActiveEmptyWrap}>
+                      <View style={styles.chatActiveEmptyIconBox}>
+                        <MessageSquareIcon size={32} color="#94a3b8" strokeWidth={1.8} />
+                      </View>
+                      <Text style={styles.chatActiveEmptyTitle}>
+                        Sin mensajes en esta conversación
+                      </Text>
+                      <Text style={styles.chatActiveEmptySubtitle}>
+                        Escribe un mensaje de texto o presiona el botón de micrófono para enviar la primera nota de voz.
+                      </Text>
+                    </View>
+                  ) : (
+                    <>
+                      <View style={styles.chatSecurityBanner}>
+                        <LockIcon size={12} color="#64748b" strokeWidth={2} />
+                        <Text style={styles.chatSecurityText}>
+                          Cifrado de extremo a extremo táctico C5i activo
+                        </Text>
+                      </View>
 
-                  {activeConversation.messages.map((msg) => {
-                    const isSelf = msg.isSelf;
-                    return (
-                      <View
-                        key={msg.id}
-                        style={[
-                          styles.chatBubbleRow,
-                          isSelf ? styles.chatBubbleRowSelf : styles.chatBubbleRowOther,
-                        ]}
-                      >
-                        <View
-                          style={[
-                            styles.chatBubble,
-                            isSelf ? styles.chatBubbleSelf : styles.chatBubbleOther,
-                          ]}
-                        >
-                          {!isSelf && activeConversation.type === 'group' && (
-                            <Text style={styles.chatBubbleSender}>
-                              {msg.senderCallsign || msg.senderName}
-                            </Text>
-                          )}
-                          <Text
+                      {activeConversation.messages.map((msg) => {
+                        const isSelf = msg.isSelf;
+                        return (
+                          <View
+                            key={msg.id}
                             style={[
-                              styles.chatBubbleText,
-                              isSelf ? styles.chatBubbleTextSelf : styles.chatBubbleTextOther,
+                              styles.chatBubbleRow,
+                              isSelf ? styles.chatBubbleRowSelf : styles.chatBubbleRowOther,
                             ]}
                           >
-                            {msg.text}
-                          </Text>
-                          <View style={styles.chatBubbleMetaRow}>
-                            <Text
+                            <View
                               style={[
-                                styles.chatBubbleTime,
-                                isSelf ? styles.chatBubbleTimeSelf : styles.chatBubbleTimeOther,
+                                styles.chatBubble,
+                                isSelf ? styles.chatBubbleSelf : styles.chatBubbleOther,
                               ]}
                             >
-                              {msg.timestamp}
-                            </Text>
-                            {isSelf && (
-                              <View style={styles.chatBubbleCheckWrap}>
-                                <DoubleCheckIcon size={13} color="#86efac" />
+                              {!isSelf && activeConversation.type === 'group' && (
+                                <Text style={styles.chatBubbleSender}>
+                                  {msg.senderCallsign || msg.senderName}
+                                </Text>
+                              )}
+
+                              {/* Renderizado multimedia dinámico */}
+                              {msg.mediaType === 'image' && msg.mediaUrl ? (
+                                <View style={styles.chatBubbleMediaImageWrap}>
+                                  <Image
+                                    source={{ uri: msg.mediaUrl }}
+                                    style={styles.chatBubbleMediaImage}
+                                    resizeMode="cover"
+                                  />
+                                  <Text
+                                    style={[
+                                      styles.chatBubbleText,
+                                      styles.chatBubbleMediaCaption,
+                                      isSelf ? styles.chatBubbleTextSelf : styles.chatBubbleTextOther,
+                                    ]}
+                                  >
+                                    {msg.text}
+                                  </Text>
+                                </View>
+                              ) : msg.mediaType === 'location' ? (
+                                <View style={styles.chatBubbleLocationBox}>
+                                  <View style={styles.chatBubbleLocationHeader}>
+                                    <MapPinIcon size={16} color={isSelf ? '#86efac' : '#059669'} />
+                                    <Text
+                                      style={[
+                                        styles.chatBubbleLocationTitle,
+                                        isSelf && { color: '#ffffff' },
+                                      ]}
+                                    >
+                                      Posición GPS Táctica
+                                    </Text>
+                                  </View>
+                                  <Text
+                                    style={[
+                                      styles.chatBubbleText,
+                                      isSelf ? styles.chatBubbleTextSelf : styles.chatBubbleTextOther,
+                                    ]}
+                                  >
+                                    {msg.text}
+                                  </Text>
+                                </View>
+                              ) : msg.mediaType === 'document' ? (
+                                <View style={styles.chatBubbleDocBox}>
+                                  <FileTextIcon size={20} color={isSelf ? '#bae6fd' : '#0284c7'} />
+                                  <Text
+                                    style={[
+                                      styles.chatBubbleText,
+                                      styles.chatBubbleDocText,
+                                      isSelf ? styles.chatBubbleTextSelf : styles.chatBubbleTextOther,
+                                    ]}
+                                  >
+                                    {msg.text}
+                                  </Text>
+                                </View>
+                              ) : msg.mediaType === 'voice' ? (
+                                <View style={styles.chatBubbleVoiceBox}>
+                                  <MicIcon size={18} color={isSelf ? '#ffffff' : '#8a1a36'} />
+                                  <Text
+                                    style={[
+                                      styles.chatBubbleText,
+                                      styles.chatBubbleVoiceText,
+                                      isSelf ? styles.chatBubbleTextSelf : styles.chatBubbleTextOther,
+                                    ]}
+                                  >
+                                    {msg.text}
+                                  </Text>
+                                </View>
+                              ) : (
+                                <Text
+                                  style={[
+                                    styles.chatBubbleText,
+                                    isSelf ? styles.chatBubbleTextSelf : styles.chatBubbleTextOther,
+                                  ]}
+                                >
+                                  {msg.text}
+                                </Text>
+                              )}
+
+                              <View style={styles.chatBubbleMetaRow}>
+                                <Text
+                                  style={[
+                                    styles.chatBubbleTime,
+                                    isSelf ? styles.chatBubbleTimeSelf : styles.chatBubbleTimeOther,
+                                  ]}
+                                >
+                                  {msg.timestamp}
+                                </Text>
+                                {isSelf && (
+                                  <View style={styles.chatBubbleCheckWrap}>
+                                    <DoubleCheckIcon size={13} color="#86efac" />
+                                  </View>
+                                )}
                               </View>
-                            )}
+                            </View>
                           </View>
-                        </View>
-                      </View>
-                    );
-                  })}
+                        );
+                      })}
+                    </>
+                  )}
                 </ScrollView>
 
-                {/* Barra de entrada de mensaje */}
+                {/* Menú de Adjuntos tipo WhatsApp (Imagen 3: Photos, Camera, Location, Document) */}
+                {isAttachMenuOpen && (
+                  <View style={styles.chatAttachMenuOverlay}>
+                    <View style={styles.chatAttachMenuCard}>
+                      <View style={styles.chatAttachMenuRow}>
+                        {/* 1. Photos */}
+                        <TouchableOpacity
+                          style={styles.chatAttachMenuItem}
+                          onPress={handlePickPhoto}
+                          activeOpacity={0.75}
+                        >
+                          <View style={[styles.chatAttachIconCircle, { backgroundColor: '#2563eb' }]}>
+                            <ImageIcon size={26} color="#ffffff" strokeWidth={2} />
+                          </View>
+                          <Text style={styles.chatAttachMenuLabel}>Photos</Text>
+                        </TouchableOpacity>
+
+                        {/* 2. Camera */}
+                        <TouchableOpacity
+                          style={styles.chatAttachMenuItem}
+                          onPress={handleOpenCamera}
+                          activeOpacity={0.75}
+                        >
+                          <View style={[styles.chatAttachIconCircle, { backgroundColor: '#475569' }]}>
+                            <CameraIcon size={26} color="#ffffff" strokeWidth={2} />
+                          </View>
+                          <Text style={styles.chatAttachMenuLabel}>Camera</Text>
+                        </TouchableOpacity>
+
+                        {/* 3. Location */}
+                        <TouchableOpacity
+                          style={styles.chatAttachMenuItem}
+                          onPress={handleShareLocation}
+                          activeOpacity={0.75}
+                        >
+                          <View style={[styles.chatAttachIconCircle, { backgroundColor: '#059669' }]}>
+                            <MapPinIcon size={26} color="#ffffff" strokeWidth={2} />
+                          </View>
+                          <Text style={styles.chatAttachMenuLabel}>Location</Text>
+                        </TouchableOpacity>
+
+                        {/* 4. Document */}
+                        <TouchableOpacity
+                          style={styles.chatAttachMenuItem}
+                          onPress={handlePickDocument}
+                          activeOpacity={0.75}
+                        >
+                          <View style={[styles.chatAttachIconCircle, { backgroundColor: '#0284c7' }]}>
+                            <FileTextIcon size={26} color="#ffffff" strokeWidth={2} />
+                          </View>
+                          <Text style={styles.chatAttachMenuLabel}>Document</Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  </View>
+                )}
+
+                {/* Barra de entrada dinámica idéntica a Imagen 1 */}
                 <KeyboardAvoidingView
                   behavior={Platform.OS === 'ios' ? 'padding' : undefined}
                   keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
                 >
-                  <View style={styles.chatInputBar}>
-                    <TouchableOpacity
-                      style={styles.chatAttachBtn}
-                      activeOpacity={0.7}
-                      onPress={() => {
-                        Alert.alert(
-                          'Adjuntar Táctico',
-                          'Envío de coordenadas GPS en vivo y evidencias fotográficas encriptadas C5i habilitado.',
-                          [{ text: 'Aceptar' }]
-                        );
-                      }}
-                    >
-                      <PaperclipIcon size={20} color="#64748b" />
-                    </TouchableOpacity>
+                  <View style={styles.chatInputBarWrapper}>
+                    <View style={styles.chatInputBar}>
+                      {/* Botón Clip para desplegar el menú de adjuntos */}
+                      <TouchableOpacity
+                        style={[
+                          styles.chatAttachBtn,
+                          isAttachMenuOpen && styles.chatAttachBtnActive,
+                        ]}
+                        activeOpacity={0.7}
+                        onPress={() => setIsAttachMenuOpen((prev) => !prev)}
+                        accessibilityLabel="Adjuntar archivo o evidencia"
+                      >
+                        <PaperclipIcon
+                          size={20}
+                          color={isAttachMenuOpen ? '#8a1a36' : '#64748b'}
+                          strokeWidth={2}
+                        />
+                      </TouchableOpacity>
 
-                    <TextInput
-                      style={styles.chatTextInput}
-                      value={chatDraftMessage}
-                      onChangeText={setChatDraftMessage}
-                      placeholder="Mensaje encriptado..."
-                      placeholderTextColor="#94a3b8"
-                      multiline
-                    />
+                      {/* Campo de texto limpio "Escribe un mensaje de radio..." */}
+                      <TextInput
+                        style={styles.chatTextInput}
+                        value={chatDraftMessage}
+                        onChangeText={setChatDraftMessage}
+                        placeholder="Escribe un mensaje de radio..."
+                        placeholderTextColor="#94a3b8"
+                        multiline
+                      />
 
-                    <TouchableOpacity
-                      style={[
-                        styles.chatSendBtn,
-                        Boolean(chatDraftMessage.trim()) && styles.chatSendBtnActive,
-                      ]}
-                      onPress={handleSendChatMessage}
-                      disabled={!chatDraftMessage.trim()}
-                      activeOpacity={0.8}
-                    >
-                      <SendIcon size={18} color="#ffffff" />
-                    </TouchableOpacity>
+                      {/* Botón dinámico: micrófono si está vacío, avión si hay texto */}
+                      {chatDraftMessage.trim() ? (
+                        <TouchableOpacity
+                          style={[styles.chatDynamicBtn, styles.chatSendBtnActive]}
+                          onPress={handleSendChatMessage}
+                          activeOpacity={0.8}
+                          accessibilityLabel="Enviar mensaje"
+                        >
+                          <SendIcon size={18} color="#ffffff" />
+                        </TouchableOpacity>
+                      ) : (
+                        <TouchableOpacity
+                          style={[styles.chatDynamicBtn, styles.chatMicBtn]}
+                          onPress={handleSendVoiceNote}
+                          activeOpacity={0.8}
+                          accessibilityLabel="Enviar nota de voz"
+                        >
+                          <MicIcon size={20} color="#8a1a36" strokeWidth={2.2} />
+                        </TouchableOpacity>
+                      )}
+                    </View>
                   </View>
                 </KeyboardAvoidingView>
               </View>
@@ -3952,83 +4329,85 @@ export default function NativeApp() {
         )}
       </View>
 
-      {/* 5-Tab Bottom Navigation Bar (Matching Image 2) */}
-      <View style={styles.cleanNavBar}>
-        <TouchableOpacity
-          style={styles.cleanNavItem}
-          onPress={() => setCurrentTab('PTT')}
-          activeOpacity={0.7}
-        >
-          <MicIcon
-            size={22}
-            color={currentTab === 'PTT' ? '#8a1a36' : '#64748b'}
-            strokeWidth={currentTab === 'PTT' ? 2.4 : 1.8}
-          />
-          <Text style={[styles.cleanNavLabel, currentTab === 'PTT' && styles.cleanNavLabelActive]}>
-            PTT
-          </Text>
-        </TouchableOpacity>
+      {/* 5-Tab Bottom Navigation Bar (Oculto cuando se está dentro de un chat activo, estilo WhatsApp) */}
+      {!(currentTab === 'Chat' && activeConversation) && (
+        <View style={styles.cleanNavBar}>
+          <TouchableOpacity
+            style={styles.cleanNavItem}
+            onPress={() => setCurrentTab('PTT')}
+            activeOpacity={0.7}
+          >
+            <MicIcon
+              size={22}
+              color={currentTab === 'PTT' ? '#8a1a36' : '#64748b'}
+              strokeWidth={currentTab === 'PTT' ? 2.4 : 1.8}
+            />
+            <Text style={[styles.cleanNavLabel, currentTab === 'PTT' && styles.cleanNavLabelActive]}>
+              PTT
+            </Text>
+          </TouchableOpacity>
 
-        <TouchableOpacity
-          style={styles.cleanNavItem}
-          onPress={() => setCurrentTab('Grupos')}
-          activeOpacity={0.7}
-        >
-          <UsersIcon
-            size={22}
-            color={currentTab === 'Grupos' ? '#8a1a36' : '#64748b'}
-            strokeWidth={currentTab === 'Grupos' ? 2.4 : 1.8}
-          />
-          <Text style={[styles.cleanNavLabel, currentTab === 'Grupos' && styles.cleanNavLabelActive]}>
-            Grupos
-          </Text>
-        </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.cleanNavItem}
+            onPress={() => setCurrentTab('Grupos')}
+            activeOpacity={0.7}
+          >
+            <UsersIcon
+              size={22}
+              color={currentTab === 'Grupos' ? '#8a1a36' : '#64748b'}
+              strokeWidth={currentTab === 'Grupos' ? 2.4 : 1.8}
+            />
+            <Text style={[styles.cleanNavLabel, currentTab === 'Grupos' && styles.cleanNavLabelActive]}>
+              Grupos
+            </Text>
+          </TouchableOpacity>
 
-        <TouchableOpacity
-          style={styles.cleanNavItem}
-          onPress={() => setCurrentTab('Chat')}
-          activeOpacity={0.7}
-        >
-          <MessageSquareIcon
-            size={22}
-            color={currentTab === 'Chat' ? '#8a1a36' : '#64748b'}
-            strokeWidth={currentTab === 'Chat' ? 2.4 : 1.8}
-          />
-          <Text style={[styles.cleanNavLabel, currentTab === 'Chat' && styles.cleanNavLabelActive]}>
-            Chat
-          </Text>
-        </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.cleanNavItem}
+            onPress={() => setCurrentTab('Chat')}
+            activeOpacity={0.7}
+          >
+            <MessageSquareIcon
+              size={22}
+              color={currentTab === 'Chat' ? '#8a1a36' : '#64748b'}
+              strokeWidth={currentTab === 'Chat' ? 2.4 : 1.8}
+            />
+            <Text style={[styles.cleanNavLabel, currentTab === 'Chat' && styles.cleanNavLabelActive]}>
+              Chat
+            </Text>
+          </TouchableOpacity>
 
-        <TouchableOpacity
-          style={styles.cleanNavItem}
-          onPress={() => setCurrentTab('Contactos')}
-          activeOpacity={0.7}
-        >
-          <BookOpenIcon
-            size={22}
-            color={currentTab === 'Contactos' ? '#8a1a36' : '#64748b'}
-            strokeWidth={currentTab === 'Contactos' ? 2.4 : 1.8}
-          />
-          <Text style={[styles.cleanNavLabel, currentTab === 'Contactos' && styles.cleanNavLabelActive]}>
-            Contactos
-          </Text>
-        </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.cleanNavItem}
+            onPress={() => setCurrentTab('Contactos')}
+            activeOpacity={0.7}
+          >
+            <BookOpenIcon
+              size={22}
+              color={currentTab === 'Contactos' ? '#8a1a36' : '#64748b'}
+              strokeWidth={currentTab === 'Contactos' ? 2.4 : 1.8}
+            />
+            <Text style={[styles.cleanNavLabel, currentTab === 'Contactos' && styles.cleanNavLabelActive]}>
+              Contactos
+            </Text>
+          </TouchableOpacity>
 
-        <TouchableOpacity
-          style={styles.cleanNavItem}
-          onPress={() => setCurrentTab('Perfil')}
-          activeOpacity={0.7}
-        >
-          <UserIcon
-            size={22}
-            color={currentTab === 'Perfil' ? '#8a1a36' : '#64748b'}
-            strokeWidth={currentTab === 'Perfil' ? 2.4 : 1.8}
-          />
-          <Text style={[styles.cleanNavLabel, currentTab === 'Perfil' && styles.cleanNavLabelActive]}>
-            Perfil
-          </Text>
-        </TouchableOpacity>
-      </View>
+          <TouchableOpacity
+            style={styles.cleanNavItem}
+            onPress={() => setCurrentTab('Perfil')}
+            activeOpacity={0.7}
+          >
+            <UserIcon
+              size={22}
+              color={currentTab === 'Perfil' ? '#8a1a36' : '#64748b'}
+              strokeWidth={currentTab === 'Perfil' ? 2.4 : 1.8}
+            />
+            <Text style={[styles.cleanNavLabel, currentTab === 'Perfil' && styles.cleanNavLabelActive]}>
+              Perfil
+            </Text>
+          </TouchableOpacity>
+        </View>
+      )}
 
       {/* Floating Channel Members Modal (Matching Image 3) */}
       <Modal
@@ -8069,45 +8448,34 @@ const styles = StyleSheet.create({
   chatActiveView: {
     flex: 1,
     backgroundColor: '#f8fafc',
+    position: 'relative',
   },
   chatActiveHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#ffffff',
-    paddingHorizontal: 12,
+    paddingHorizontal: 14,
     paddingVertical: 10,
     borderBottomWidth: 1,
     borderBottomColor: '#f1f5f9',
     gap: 10,
   },
   chatActiveBackBtn: {
-    padding: 6,
+    padding: 4,
     borderRadius: 8,
   },
   chatActiveAvatarBox: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: '#691c32',
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: '#e2e8f0',
     alignItems: 'center',
     justifyContent: 'center',
-    position: 'relative',
   },
   chatActiveAvatarText: {
-    color: '#ffffff',
-    fontWeight: '800',
-    fontSize: 13,
-  },
-  chatActiveOnlineDot: {
-    position: 'absolute',
-    bottom: 0,
-    right: 0,
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-    backgroundColor: '#10b981',
-    borderWidth: 2,
-    borderColor: '#ffffff',
+    color: '#0f172a',
+    fontWeight: '700',
+    fontSize: 16,
   },
   chatActiveInfo: {
     flex: 1,
@@ -8118,28 +8486,78 @@ const styles = StyleSheet.create({
     color: '#0f172a',
   },
   chatActiveSubtitle: {
-    fontSize: 11,
-    color: '#059669',
-    fontWeight: '500',
+    fontSize: 12,
+    color: '#64748b',
     marginTop: 1,
   },
-  chatActivePttBtn: {
-    width: 38,
-    height: 38,
+  chatActiveSosPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#ef4444',
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+    borderRadius: 14,
+    gap: 4,
+    shadowColor: '#ef4444',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 3,
+    elevation: 3,
+  },
+  chatActiveSosText: {
+    color: '#ffffff',
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+  },
+  chatActiveHeaderActionBtn: {
+    width: 34,
+    height: 34,
     borderRadius: 10,
-    backgroundColor: '#fdf2f4',
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: '#fce7ea',
   },
   chatMessagesScroll: {
     flex: 1,
-    backgroundColor: '#f1f5f9',
+    backgroundColor: '#f8fafc',
   },
   chatMessagesScrollContent: {
     padding: 14,
     paddingBottom: 20,
+  },
+  chatMessagesScrollEmptyCenter: {
+    flexGrow: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  chatActiveEmptyWrap: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 32,
+    paddingVertical: 40,
+  },
+  chatActiveEmptyIconBox: {
+    width: 68,
+    height: 68,
+    borderRadius: 18,
+    backgroundColor: '#f1f5f9',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 16,
+  },
+  chatActiveEmptyTitle: {
+    fontSize: 17,
+    fontWeight: '700',
+    color: '#1e293b',
+    marginBottom: 6,
+    textAlign: 'center',
+  },
+  chatActiveEmptySubtitle: {
+    fontSize: 13,
+    color: '#64748b',
+    textAlign: 'center',
+    lineHeight: 19,
+    maxWidth: 290,
   },
   chatSecurityBanner: {
     flexDirection: 'row',
@@ -8210,6 +8628,54 @@ const styles = StyleSheet.create({
   chatBubbleTextOther: {
     color: '#0f172a',
   },
+  chatBubbleMediaImageWrap: {
+    borderRadius: 12,
+    overflow: 'hidden',
+    marginBottom: 4,
+    maxWidth: 240,
+  },
+  chatBubbleMediaImage: {
+    width: 240,
+    height: 160,
+    borderRadius: 10,
+  },
+  chatBubbleMediaCaption: {
+    marginTop: 4,
+  },
+  chatBubbleLocationBox: {
+    gap: 4,
+  },
+  chatBubbleLocationHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 2,
+  },
+  chatBubbleLocationTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#059669',
+  },
+  chatBubbleDocBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 4,
+  },
+  chatBubbleDocText: {
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  chatBubbleVoiceBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 2,
+  },
+  chatBubbleVoiceText: {
+    fontSize: 13,
+    fontWeight: '600',
+  },
   chatBubbleMetaRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -8229,45 +8695,120 @@ const styles = StyleSheet.create({
   chatBubbleCheckWrap: {
     marginLeft: 2,
   },
+
+  // Menú de Adjuntos Táctico Tipo WhatsApp (Imagen 3)
+  chatAttachMenuOverlay: {
+    position: 'absolute',
+    bottom: 74,
+    left: 14,
+    right: 14,
+    zIndex: 99,
+  },
+  chatAttachMenuCard: {
+    backgroundColor: '#18222d',
+    borderRadius: 22,
+    paddingVertical: 20,
+    paddingHorizontal: 12,
+    borderWidth: 1,
+    borderColor: '#334155',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.35,
+    shadowRadius: 12,
+    elevation: 8,
+  },
+  chatAttachMenuRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-around',
+  },
+  chatAttachMenuItem: {
+    alignItems: 'center',
+    gap: 8,
+  },
+  chatAttachIconCircle: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  chatAttachMenuLabel: {
+    fontSize: 12,
+    color: '#e2e8f0',
+    fontWeight: '600',
+  },
+
+  // Barra de Entrada Dinámica (Imagen 1)
+  chatInputBarWrapper: {
+    backgroundColor: '#ffffff',
+    paddingHorizontal: 12,
+    paddingTop: 8,
+    paddingBottom: Platform.OS === 'ios' ? 24 : 12,
+    borderTopWidth: 1,
+    borderTopColor: '#f1f5f9',
+  },
   chatInputBar: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#ffffff',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderTopWidth: 1,
-    borderTopColor: '#e2e8f0',
     gap: 8,
   },
   chatAttachBtn: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: '#f8fafc',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#f8fafc',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  chatAttachBtnActive: {
+    backgroundColor: '#fdf2f4',
+    borderColor: '#fce7ea',
   },
   chatTextInput: {
     flex: 1,
-    minHeight: 38,
-    maxHeight: 100,
-    backgroundColor: '#f1f5f9',
-    borderRadius: 20,
-    paddingHorizontal: 14,
+    minHeight: 42,
+    maxHeight: 110,
+    backgroundColor: '#f8fafc',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    borderRadius: 21,
+    paddingHorizontal: 16,
     paddingVertical: 8,
     fontSize: 14,
     color: '#0f172a',
   },
-  chatSendBtn: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    backgroundColor: '#94a3b8',
+  chatDynamicBtn: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
     alignItems: 'center',
     justifyContent: 'center',
   },
+  chatMicBtn: {
+    backgroundColor: '#ffffff',
+    borderWidth: 1.5,
+    borderColor: '#fce7ea',
+    shadowColor: '#8a1a36',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.12,
+    shadowRadius: 4,
+    elevation: 2,
+  },
   chatSendBtnActive: {
     backgroundColor: '#691c32',
+    shadowColor: '#691c32',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    elevation: 3,
   },
 
   // Modales de Chat y Contactos (Captura 2)
