@@ -920,6 +920,7 @@ export default function NativeApp() {
             frequency: newCh.frequency,
             pin: newCh.pin,
             access_code: newCh.pin,
+            created_by: currentUser?.id || 'usr-c5i-01',
             is_private: 0,
           });
 
