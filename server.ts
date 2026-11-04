@@ -9,7 +9,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
-const PORT = Number(process.env.PORT) || 3000;
+const PORT = 3000;
 const HOST = '0.0.0.0';
 
 app.use(cors());
@@ -1005,6 +1005,104 @@ app.post(['/api/emergency/alert', '/api/emergency'], (req: Request, res: Respons
     code: 'ALERT_BROADCAST_OK',
     message: 'Alerta SOS registrada en base de datos C5i',
     alert: alertMessage,
+  });
+});
+
+// 15. Chat Messages (Text, Photos, Voice, Location, Documents)
+app.get(['/api/chat-messages', '/chat-messages.php', '/api/chat-messages.php'], (req: Request, res: Response) => {
+  const channel_id = req.query.channel_id as string | undefined;
+  const receiver_id = req.query.receiver_id as string | undefined;
+  const user_id = req.query.user_id as string | undefined;
+  const db = loadDatabase();
+
+  let filtered = db.voice_messages;
+  if (channel_id) {
+    filtered = filtered.filter((vm) => vm.channel_id === channel_id);
+  } else if (receiver_id && user_id) {
+    filtered = filtered.filter(
+      (vm) =>
+        (vm.sender_id === user_id && vm.receiver_id === receiver_id) ||
+        (vm.sender_id === receiver_id && vm.receiver_id === user_id)
+    );
+  }
+
+  const enriched = filtered.map((vm) => {
+    const sender = db.users.find((u) => u.id === vm.sender_id);
+    let parsedText = vm.text_content || '';
+    let mediaType = 'text';
+    let mediaUrl: string | undefined = undefined;
+    let fileName: string | undefined = undefined;
+
+    if (parsedText.startsWith('{"mediaType":')) {
+      try {
+        const meta = JSON.parse(parsedText);
+        mediaType = meta.mediaType || 'text';
+        parsedText = meta.text || parsedText;
+        mediaUrl = meta.mediaUrl;
+        fileName = meta.fileName;
+      } catch {}
+    } else if (vm.audio_url && vm.audio_url !== 'burst' && !vm.audio_url.startsWith('burst-')) {
+      mediaUrl = vm.audio_url;
+    }
+
+    return {
+      id: vm.id,
+      sender_id: vm.sender_id,
+      sender_name: sender ? sender.name : 'Oficial',
+      sender_callsign: sender?.callsign || 'OPERATIVO',
+      channel_id: vm.channel_id,
+      receiver_id: vm.receiver_id,
+      text: parsedText,
+      mediaType,
+      mediaUrl,
+      fileName,
+      created_at: vm.created_at,
+      timestamp: new Date(vm.created_at).toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' }),
+    };
+  });
+
+  res.json({ success: true, messages: enriched });
+});
+
+app.post(['/api/chat-messages', '/chat-messages.php', '/api/chat-messages.php'], (req: Request, res: Response) => {
+  const { sender_id, channel_id, receiver_id, text, caption, mediaType, mediaUrl, fileName, is_emergency } = req.body;
+  const db = loadDatabase();
+  const senderId = sender_id || 'usr-c5i-01';
+  const textContent = text || caption || '';
+
+  let packedText = textContent;
+  if (mediaType !== 'text' || mediaUrl || fileName) {
+    packedText = JSON.stringify({
+      mediaType: mediaType || 'text',
+      text: textContent,
+      mediaUrl,
+      fileName,
+    });
+  }
+
+  const newMsg = {
+    id: `msg-${Date.now()}`,
+    sender_id: senderId,
+    channel_id: channel_id || null,
+    receiver_id: receiver_id || null,
+    audio_url: (mediaType === 'voice' && mediaUrl) ? mediaUrl : `burst-${Date.now()}`,
+    duration_seconds: 2,
+    created_at: new Date().toISOString(),
+    is_emergency: Boolean(is_emergency),
+    text_content: packedText,
+  };
+
+  db.voice_messages.unshift(newMsg);
+  saveDatabase(db);
+
+  const sender = db.users.find((u) => u.id === senderId);
+
+  res.json({
+    success: true,
+    message: 'Mensaje registrado en la base de datos',
+    id: newMsg.id,
+    timestamp: new Date().toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' }),
+    sender_name: sender?.name || 'Oficial',
   });
 });
 

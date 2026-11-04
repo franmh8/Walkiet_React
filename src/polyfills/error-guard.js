@@ -77,4 +77,14 @@
   };
 
   global.ErrorUtils = ErrorUtils;
+
+  if (typeof global.require === 'undefined') {
+    global.require = function (moduleName) {
+      if (typeof moduleName === 'string' && (moduleName.startsWith('.') || moduleName.startsWith('/'))) {
+        return moduleName;
+      }
+      return {};
+    };
+  }
 })(typeof globalThis !== 'undefined' ? globalThis : typeof global !== 'undefined' ? global : typeof window !== 'undefined' ? window : this);
+

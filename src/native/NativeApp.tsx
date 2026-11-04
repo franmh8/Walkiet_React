@@ -24,6 +24,7 @@ import {
   Linking,
 } from 'react-native';
 import { safeStorage } from './storage';
+import c5iLogoImg from '../../assets/c5i-logo.png';
 import {
   UserIcon,
   LockIcon,
@@ -86,16 +87,18 @@ let requestNativeCamPerm: any = null;
 let getNativeCamPerm: any = null;
 try {
   // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const ExpoCam = require('expo-camera');
-  NativeCameraView = ExpoCam.CameraView || ExpoCam.Camera || ExpoCam.default;
-  requestNativeCamPerm =
-    ExpoCam.Camera?.requestCameraPermissionsAsync ||
-    ExpoCam.requestCameraPermissionsAsync ||
-    ExpoCam.CameraView?.requestCameraPermissionsAsync;
-  getNativeCamPerm =
-    ExpoCam.Camera?.getCameraPermissionsAsync ||
-    ExpoCam.getCameraPermissionsAsync ||
-    ExpoCam.CameraView?.getCameraPermissionsAsync;
+  const ExpoCam = typeof require === 'function' ? require('expo-camera') : null;
+  if (ExpoCam) {
+    NativeCameraView = ExpoCam.CameraView || ExpoCam.Camera || ExpoCam.default;
+    requestNativeCamPerm =
+      ExpoCam.Camera?.requestCameraPermissionsAsync ||
+      ExpoCam.requestCameraPermissionsAsync ||
+      ExpoCam.CameraView?.requestCameraPermissionsAsync;
+    getNativeCamPerm =
+      ExpoCam.Camera?.getCameraPermissionsAsync ||
+      ExpoCam.getCameraPermissionsAsync ||
+      ExpoCam.CameraView?.getCameraPermissionsAsync;
+  }
 } catch {
   // Graceful fallback
 }
@@ -532,11 +535,14 @@ export default function NativeApp() {
           const mapped: Channel[] = data.channels.map((ch: any, idx: number) => ({
             id: ch.id || `chan-${idx}`,
             name: ch.name,
-            code: `CH-${(idx + 1) * 10}`,
-            frequency: `15${4 + idx}.${(idx * 150) % 900 || '800'} MHz`,
+            code: ch.code || `CH-${(idx + 1) * 10}`,
+            frequency: ch.frequency || `15${4 + (idx % 5)}.${((idx * 175) % 800) || '800'} MHz`,
             category: ch.category ? ch.category.toUpperCase() : 'Operativo',
             isEncrypted: true,
             activeUsers: ch.member_count || (8 + idx * 3),
+            pin: ch.pin || ch.access_code || '1090',
+            accessCode: ch.access_code || `C5I-TAC-${ch.pin || '1090'}`,
+            isPrivate: Boolean(ch.is_private),
           }));
           setChannels(mapped);
           setDbStatus('ONLINE');
@@ -548,11 +554,91 @@ export default function NativeApp() {
     }
   }, []);
 
+  // Sincronizar directorio de contactos y oficiales desde la base de datos
+  const refreshContacts = useCallback(async (baseUrl: string) => {
+    if (!baseUrl) return;
+    try {
+      const cleanUrl = baseUrl.replace(/\/+$/, '');
+      let res = await fetchWithTimeout(`${cleanUrl}/contacts.php`, {}, 3000).catch(() => null);
+      if (!res || !res.ok) {
+        res = await fetchWithTimeout(`${cleanUrl}/api/contacts`, {}, 3000).catch(() => null);
+      }
+      if (res && res.ok) {
+        const data = await res.json().catch(() => null);
+        if (data && Array.isArray(data.contacts) && data.contacts.length > 0) {
+          const mapped: ContactOfficer[] = data.contacts.map((c: any) => ({
+            id: c.id,
+            name: c.name,
+            callsign: c.callsign || 'OFICIAL',
+            unit: c.unit || 'Sector Operativo Hidalgo',
+            phone_number: c.phone_number || '',
+            status: c.status || 'online',
+            role: c.role || 'Oficial Operativo',
+          }));
+          setOfficersList(mapped);
+        }
+      }
+    } catch {}
+  }, []);
+
+  // Sincronizar mensajes del chat activo desde el backend
+  const syncConversationMessages = useCallback(async (conv: Conversation) => {
+    if (!serverUrl || !conv) return;
+    try {
+      const cleanUrl = serverUrl.replace(/\/+$/, '');
+      const queryParam = conv.type === 'group'
+        ? `channel_id=${encodeURIComponent(conv.id)}`
+        : `receiver_id=${encodeURIComponent(conv.targetUserId || '')}&user_id=${encodeURIComponent(currentUser?.id || 'usr-c5i-01')}`;
+
+      let res = await fetchWithTimeout(`${cleanUrl}/chat-messages.php?${queryParam}`, {}, 3000).catch(() => null);
+      if (!res || !res.ok) {
+        res = await fetchWithTimeout(`${cleanUrl}/api/chat-messages?${queryParam}`, {}, 3000).catch(() => null);
+      }
+      if (res && res.ok) {
+        const data = await res.json().catch(() => null);
+        if (data && Array.isArray(data.messages) && data.messages.length > 0) {
+          const remoteMsgs: ChatMessage[] = data.messages.map((m: any) => ({
+            id: m.id,
+            senderName: m.sender_name || 'Oficial',
+            senderCallsign: m.sender_callsign || 'OPERATIVO',
+            text: m.text,
+            timestamp: m.timestamp || 'Ahora',
+            isSelf: m.sender_id === (currentUser?.id || 'usr-c5i-01'),
+            status: 'sent',
+            mediaType: m.mediaType || 'text',
+            mediaUrl: m.mediaUrl,
+            fileName: m.fileName,
+          }));
+
+          setActiveConversation((prev) => {
+            if (!prev || prev.id !== conv.id) return prev;
+            return {
+              ...prev,
+              lastMessage: remoteMsgs[remoteMsgs.length - 1].text,
+              lastMessageTime: remoteMsgs[remoteMsgs.length - 1].timestamp,
+              messages: remoteMsgs,
+            };
+          });
+        }
+      }
+    } catch {}
+  }, [serverUrl, currentUser]);
+
+  // Sincronización continua de canales, contactos y chat activo para paridad Web / Físico
   useEffect(() => {
     if (serverUrl) {
       refreshChannels(serverUrl);
+      refreshContacts(serverUrl);
+      const timer = setInterval(() => {
+        refreshChannels(serverUrl);
+        refreshContacts(serverUrl);
+        if (activeConversation) {
+          syncConversationMessages(activeConversation);
+        }
+      }, 3500);
+      return () => clearInterval(timer);
     }
-  }, [serverUrl, refreshChannels]);
+  }, [serverUrl, refreshChannels, refreshContacts, syncConversationMessages, activeConversation]);
 
   // Confirmación exitosa con diseño y colorimetría C5i (reemplaza alert gris del sistema)
   const handleChannelScanSuccess = useCallback((channel: Channel, source: 'qr' | 'pin' = 'qr') => {
@@ -1084,9 +1170,10 @@ export default function NativeApp() {
           });
 
           // 1. Intentar directamente channels.php (Alwaysdata / PHP)
+          const headers = getSafePostHeaders();
           let res = await fetchWithTimeout(`${cleanUrl}/channels.php`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers,
             body: payload,
           }, 4000).catch(() => null);
 
@@ -1094,19 +1181,13 @@ export default function NativeApp() {
           if (!res || !res.ok) {
             res = await fetchWithTimeout(`${cleanUrl}/api/channels`, {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
+              headers,
               body: payload,
             }, 4000).catch(() => null);
           }
 
-          // 3. Si aún no responde, intentar /api/channels.php
-          if (!res || !res.ok) {
-            await fetchWithTimeout(`${cleanUrl}/api/channels.php`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: payload,
-            }, 4000).catch(() => null);
-          }
+          // Refrescar lista de canales para sincronizar en tiempo real
+          setTimeout(() => refreshChannels(serverUrl), 600);
         } catch (err) {
           console.warn('Error al sincronizar canal con servidor C5i:', err);
         }
@@ -2115,6 +2196,40 @@ export default function NativeApp() {
     };
 
     setOfficersList((prev) => [newOfficer, ...prev]);
+
+    if (serverUrl) {
+      (async () => {
+        try {
+          const cleanUrl = serverUrl.replace(/\/+$/, '');
+          const headers = getSafePostHeaders();
+          const payload = JSON.stringify({
+            name: newOfficer.name,
+            callsign: newOfficer.callsign,
+            unit: newOfficer.unit,
+            phone_number: newOfficer.phone_number,
+            user_id: currentUser?.id || 'usr-c5i-01',
+            role: newOfficer.role,
+          });
+
+          let res = await fetchWithTimeout(`${cleanUrl}/contacts.php`, {
+            method: 'POST',
+            headers,
+            body: payload,
+          }, 4000).catch(() => null);
+
+          if (!res || !res.ok) {
+            await fetchWithTimeout(`${cleanUrl}/api/contacts`, {
+              method: 'POST',
+              headers,
+              body: payload,
+            }, 4000).catch(() => null);
+          }
+        } catch (e) {
+          console.warn('Error syncing contact to backend:', e);
+        }
+      })();
+    }
+
     setIsAddContactModalOpen(false);
     setNewContactName('');
     setNewContactCallsign('');
@@ -2156,6 +2271,42 @@ export default function NativeApp() {
 
     setActiveConversation(updatedConv);
     setConversations((prev) => [updatedConv, ...prev.filter((c) => c.id !== updatedConv.id)]);
+
+    // Guardar y despachar en base de datos para sincronización en tiempo real con Web y Dispositivos
+    if (serverUrl && activeConversation) {
+      (async () => {
+        try {
+          const cleanUrl = serverUrl.replace(/\/+$/, '');
+          const headers = getSafePostHeaders();
+          const payload = JSON.stringify({
+            sender_id: currentUser?.id || 'usr-c5i-01',
+            channel_id: activeConversation.type === 'group' ? activeConversation.id : null,
+            receiver_id: activeConversation.type === 'direct' ? (activeConversation.targetUserId || null) : null,
+            text: caption,
+            caption: caption,
+            mediaType,
+            mediaUrl,
+            fileName,
+          });
+
+          let res = await fetchWithTimeout(`${cleanUrl}/chat-messages.php`, {
+            method: 'POST',
+            headers,
+            body: payload,
+          }, 4000).catch(() => null);
+
+          if (!res || !res.ok) {
+            await fetchWithTimeout(`${cleanUrl}/api/chat-messages`, {
+              method: 'POST',
+              headers,
+              body: payload,
+            }, 4000).catch(() => null);
+          }
+        } catch (e) {
+          console.warn('Error dispatching message to backend:', e);
+        }
+      })();
+    }
 
     try {
       soundEngine.playIncomingChirp();
@@ -2382,7 +2533,7 @@ export default function NativeApp() {
             <View style={styles.loginCard}>
               {/* C5i Emblem Logo */}
               <Image
-                source={require('../../assets/c5i-logo.png')}
+                source={typeof c5iLogoImg === 'string' ? { uri: c5iLogoImg } : c5iLogoImg}
                 style={styles.loginLogo}
                 resizeMode="contain"
               />
