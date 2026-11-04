@@ -21,6 +21,7 @@ import {
   Clipboard,
   Keyboard,
   TouchableWithoutFeedback,
+  Linking,
 } from 'react-native';
 import { safeStorage } from './storage';
 import {
@@ -417,6 +418,50 @@ export default function NativeApp() {
   const [selectedChatFilter, setSelectedChatFilter] = useState<'Todos' | 'Grupos' | 'Directos'>('Todos');
   const [chatDraftMessage, setChatDraftMessage] = useState('');
   const [isAttachMenuOpen, setIsAttachMenuOpen] = useState(false);
+  const [isLiveCameraModalOpen, setIsLiveCameraModalOpen] = useState(false);
+  const [liveCameraStream, setLiveCameraStream] = useState<any>(null);
+  const liveCameraVideoRef = useRef<any>(null);
+
+  useEffect(() => {
+    if (isLiveCameraModalOpen && liveCameraStream && liveCameraVideoRef.current) {
+      try {
+        liveCameraVideoRef.current.srcObject = liveCameraStream;
+        liveCameraVideoRef.current.play?.().catch?.((e: any) => console.warn('Error reproduciendo video:', e));
+      } catch (e) {
+        console.warn('Error asignando srcObject a cámara:', e);
+      }
+    }
+  }, [isLiveCameraModalOpen, liveCameraStream]);
+
+  const handleCaptureLivePhoto = () => {
+    if (liveCameraVideoRef.current) {
+      try {
+        const video = liveCameraVideoRef.current;
+        const canvas = document.createElement('canvas');
+        canvas.width = video.videoWidth || 1280;
+        canvas.height = video.videoHeight || 720;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+          const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+          sendMediaMessage('image', '📸 Foto Capturada con Cámara Táctica', dataUrl, 'evidencia_camara.jpg');
+        }
+      } catch (e: any) {
+        Alert.alert('Error al capturar foto', e.message || 'No se pudo procesar la imagen.');
+      }
+    }
+    handleCloseLiveCamera();
+  };
+
+  const handleCloseLiveCamera = () => {
+    if (liveCameraStream) {
+      try {
+        liveCameraStream.getTracks?.().forEach((track: any) => track.stop());
+      } catch {}
+      setLiveCameraStream(null);
+    }
+    setIsLiveCameraModalOpen(false);
+  };
 
   // Modals for Chat & Contacts
   const [isNewChatModalOpen, setIsNewChatModalOpen] = useState(false);
@@ -2135,7 +2180,7 @@ export default function NativeApp() {
     }, 450);
   };
 
-  // 1. ADJUNTAR: Fotos / Galería (con solicitud de acceso)
+  // 1. ADJUNTAR: Fotos / Galería Real (Selector de archivos nativo/web sin simulación)
   const handlePickPhoto = () => {
     setIsAttachMenuOpen(false);
     if (Platform.OS === 'web' && typeof document !== 'undefined') {
@@ -2148,49 +2193,41 @@ export default function NativeApp() {
           const reader = new FileReader();
           reader.onload = () => {
             const dataUrl = reader.result as string;
-            sendMediaMessage('image', file.name || 'Foto táctica adjunta', dataUrl, file.name);
+            sendMediaMessage('image', file.name || 'Foto adjunta', dataUrl, file.name);
           };
           reader.readAsDataURL(file);
         }
       };
       input.click();
-    } else {
-      sendMediaMessage(
-        'image',
-        'Evidencia Fotográfica C5i',
-        'https://images.unsplash.com/photo-1541872703-74c5e44368f9?w=600&auto=format&fit=crop',
-        'evidencia_c5i.jpg'
-      );
     }
   };
 
-  // 2. ADJUNTAR: Cámara (con solicitud de permisos de cámara)
+  // 2. ADJUNTAR: Cámara en Vivo Real (Solicita permiso de cámara del dispositivo y abre visor en vivo)
   const handleOpenCamera = async () => {
     setIsAttachMenuOpen(false);
     try {
-      let isGranted = false;
-      if (Platform.OS === 'web' && typeof navigator !== 'undefined' && navigator.mediaDevices?.getUserMedia) {
+      if (typeof navigator !== 'undefined' && navigator.mediaDevices?.getUserMedia) {
         try {
-          const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-          isGranted = true;
-          stream.getTracks().forEach((track) => track.stop());
-        } catch (err) {
-          console.warn('Permiso de cámara en navegador web:', err);
+          const stream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
+          });
+          setLiveCameraStream(stream);
+          setIsLiveCameraModalOpen(true);
+          return;
+        } catch (err: any) {
+          console.warn('Permiso de cámara web:', err);
+          if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+            Alert.alert(
+              'Permiso de Cámara Denegado',
+              'Has denegado el acceso a la cámara. Por favor autoriza el permiso de cámara en los ajustes de tu navegador o dispositivo para capturar fotos tácticas.',
+              [{ text: 'Entendido' }]
+            );
+            return;
+          }
         }
-      } else {
-        const res = await requestExpoCameraPermission();
-        isGranted = res.granted;
       }
 
-      if (!isGranted) {
-        Alert.alert(
-          'Acceso a Cámara Requerido',
-          'Se requiere autorización de cámara para capturar fotos tácticas y evidencias en tiempo real.',
-          [{ text: 'Entendido' }]
-        );
-        return;
-      }
-
+      // Si es dispositivo móvil táctil con cámara nativa directa
       if (Platform.OS === 'web' && typeof document !== 'undefined') {
         const input = document.createElement('input');
         input.type = 'file';
@@ -2201,97 +2238,103 @@ export default function NativeApp() {
           if (file) {
             const reader = new FileReader();
             reader.onload = () => {
-              sendMediaMessage('image', '📸 Captura de Cámara C5i', reader.result as string, 'cam_live.jpg');
+              sendMediaMessage('image', file.name || 'Captura de Cámara', reader.result as string, file.name);
             };
             reader.readAsDataURL(file);
           }
         };
         input.click();
-      } else {
-        sendMediaMessage(
-          'image',
-          '📸 Captura de Cámara en Vivo C5i',
-          'https://images.unsplash.com/photo-1589829545856-d10d557cf95f?w=600&auto=format&fit=crop',
-          'cam_tactica.jpg'
-        );
       }
-    } catch (e) {
-      console.warn('Error al activar cámara:', e);
+    } catch (e: any) {
+      Alert.alert('Error de Cámara', e.message || 'No se pudo inicializar la cámara del dispositivo.');
     }
   };
 
-  // 3. ADJUNTAR: Ubicación GPS (con solicitud de geolocalización)
+  // 3. ADJUNTAR: Ubicación GPS Real (Solicita permiso de geolocalización al dispositivo)
   const handleShareLocation = () => {
     setIsAttachMenuOpen(false);
-    if (typeof navigator !== 'undefined' && navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition(
-        (pos) => {
-          const lat = pos.coords.latitude;
-          const lng = pos.coords.longitude;
-          const locText = `📍 Coordenadas C5i: ${lat.toFixed(4)}, ${lng.toFixed(4)}`;
-          sendMediaMessage('location', locText, undefined, undefined, {
-            latitude: lat,
-            longitude: lng,
-            address: 'Sector Operativo Pachuca',
-          });
-        },
-        (err) => {
-          console.warn('Error obteniendo ubicación GPS:', err);
-          Alert.alert(
-            'Acceso a Ubicación GPS Requerido',
-            'Permite el acceso a la ubicación de tu dispositivo para transmitir tus coordenadas encriptadas al cuadrante C5i.',
-            [
-              {
-                text: 'Enviar Coordenadas Actuales C5i',
-                onPress: () => {
-                  sendMediaMessage('location', '📍 Coordenadas C5i: 20.1165, -98.7332', undefined, undefined, {
-                    latitude: 20.1165,
-                    longitude: -98.7332,
-                    address: 'Plaza Juárez, Pachuca Centro',
-                  });
-                },
-              },
-              { text: 'Cancelar', style: 'cancel' },
-            ]
-          );
-        },
-        { enableHighAccuracy: true, timeout: 6000 }
-      );
-    } else {
-      sendMediaMessage('location', '📍 Coordenadas C5i: 20.1165, -98.7332', undefined, undefined, {
-        latitude: 20.1165,
-        longitude: -98.7332,
-        address: 'Centro de Comando C5i Hidalgo',
-      });
+    if (typeof navigator === 'undefined' || !navigator.geolocation) {
+      Alert.alert('Geolocalización No Disponible', 'Tu dispositivo no cuenta con sensor o soporte de geolocalización.');
+      return;
     }
+
+    navigator.geolocation.getCurrentPosition(
+      async (pos) => {
+        const lat = pos.coords.latitude;
+        const lng = pos.coords.longitude;
+        const accuracy = Math.round(pos.coords.accuracy || 10);
+
+        // Obtener dirección real del cuadrante mediante geocodificación inversa
+        let addressLabel = `Precisión GPS: ±${accuracy} metros`;
+        try {
+          const controller = new AbortController();
+          const tid = setTimeout(() => controller.abort(), 2500);
+          const geoRes = await fetch(
+            `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=16&addressdetails=1`,
+            { signal: controller.signal }
+          ).catch(() => null);
+          clearTimeout(tid);
+          if (geoRes && geoRes.ok) {
+            const geoData = await geoRes.json().catch(() => null);
+            if (geoData?.display_name) {
+              const parts = geoData.display_name.split(',').slice(0, 3).join(', ');
+              addressLabel = parts || addressLabel;
+            }
+          }
+        } catch {}
+
+        const locCaption = `📍 Ubicación Real [${lat.toFixed(5)}, ${lng.toFixed(5)}]`;
+        sendMediaMessage('location', locCaption, `https://www.google.com/maps?q=${lat},${lng}`, undefined, {
+          latitude: lat,
+          longitude: lng,
+          address: addressLabel,
+        });
+      },
+      (err) => {
+        console.warn('Error real de geolocalización:', err);
+        if (err.code === 1) {
+          Alert.alert(
+            'Permiso de Ubicación Denegado',
+            'Has denegado el acceso al GPS. Por favor autoriza el permiso de ubicación en los ajustes de tu navegador o dispositivo para compartir tu posición táctica.',
+            [{ text: 'Entendido' }]
+          );
+        } else if (err.code === 2) {
+          Alert.alert('GPS No Disponible', 'La señal de geolocalización satelital no está disponible.');
+        } else if (err.code === 3) {
+          Alert.alert('Tiempo de Espera Agotado', 'El GPS tardó demasiado tiempo en fijar las coordenadas.');
+        } else {
+          Alert.alert('Error de Ubicación', err.message || 'No fue posible obtener la posición GPS.');
+        }
+      },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+    );
   };
 
-  // 4. ADJUNTAR: Documentos (con selector de archivos tácticos)
+  // 4. ADJUNTAR: Documentos Reales (Abre el explorador de archivos del sistema)
   const handlePickDocument = () => {
     setIsAttachMenuOpen(false);
     if (Platform.OS === 'web' && typeof document !== 'undefined') {
       const input = document.createElement('input');
       input.type = 'file';
-      input.accept = '.pdf,.doc,.docx,.txt,.csv,.xlsx';
+      input.accept = '.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,.zip,.rar';
       input.onchange = (e: any) => {
         const file = e.target?.files?.[0];
         if (file) {
-          sendMediaMessage(
-            'document',
-            `📄 ${file.name} (${(file.size / 1024).toFixed(1)} KB)`,
-            undefined,
-            file.name
-          );
+          const reader = new FileReader();
+          reader.onload = () => {
+            const fileUrl = reader.result as string;
+            const sizeKb = (file.size / 1024).toFixed(1);
+            sendMediaMessage(
+              'document',
+              `📄 ${file.name} (${sizeKb} KB)`,
+              fileUrl,
+              file.name
+            );
+          };
+          reader.readAsDataURL(file);
         }
       };
       input.click();
-    } else {
-      sendMediaMessage(
-        'document',
-        '📄 Informe_Operativo_C5i.pdf (185 KB)',
-        undefined,
-        'Informe_Operativo_C5i.pdf'
-      );
     }
   };
 
@@ -3747,16 +3790,6 @@ export default function NativeApp() {
                     </Text>
                   </View>
 
-                  {/* Botón SOS Pill idéntico a Imagen 1 */}
-                  <TouchableOpacity
-                    style={styles.chatActiveSosPill}
-                    onPress={handleTriggerSos}
-                    activeOpacity={0.8}
-                    accessibilityLabel="Alerta de emergencia SOS"
-                  >
-                    <AlertTriangleIcon size={13} color="#ffffff" strokeWidth={2.4} />
-                    <Text style={styles.chatActiveSosText}>SOS</Text>
-                  </TouchableOpacity>
 
                   {/* Botón de Videollamada */}
                   <TouchableOpacity
@@ -3851,7 +3884,15 @@ export default function NativeApp() {
                                   </Text>
                                 </View>
                               ) : msg.mediaType === 'location' ? (
-                                <View style={styles.chatBubbleLocationBox}>
+                                <TouchableOpacity
+                                  style={styles.chatBubbleLocationBox}
+                                  activeOpacity={0.8}
+                                  onPress={() => {
+                                    if (msg.mediaUrl) {
+                                      Linking.openURL(msg.mediaUrl).catch(() => {});
+                                    }
+                                  }}
+                                >
                                   <View style={styles.chatBubbleLocationHeader}>
                                     <MapPinIcon size={16} color={isSelf ? '#86efac' : '#059669'} />
                                     <Text
@@ -3860,7 +3901,7 @@ export default function NativeApp() {
                                         isSelf && { color: '#ffffff' },
                                       ]}
                                     >
-                                      Posición GPS Táctica
+                                      Posición GPS Táctica (Tocar para ver en Mapa)
                                     </Text>
                                   </View>
                                   <Text
@@ -3871,9 +3912,20 @@ export default function NativeApp() {
                                   >
                                     {msg.text}
                                   </Text>
-                                </View>
+                                </TouchableOpacity>
                               ) : msg.mediaType === 'document' ? (
-                                <View style={styles.chatBubbleDocBox}>
+                                <TouchableOpacity
+                                  style={styles.chatBubbleDocBox}
+                                  activeOpacity={0.8}
+                                  onPress={() => {
+                                    if (msg.mediaUrl && Platform.OS === 'web') {
+                                      const a = document.createElement('a');
+                                      a.href = msg.mediaUrl;
+                                      a.download = msg.fileName || 'documento_c5i';
+                                      a.click();
+                                    }
+                                  }}
+                                >
                                   <FileTextIcon size={20} color={isSelf ? '#bae6fd' : '#0284c7'} />
                                   <Text
                                     style={[
@@ -3884,7 +3936,7 @@ export default function NativeApp() {
                                   >
                                     {msg.text}
                                   </Text>
-                                </View>
+                                </TouchableOpacity>
                               ) : msg.mediaType === 'voice' ? (
                                 <View style={styles.chatBubbleVoiceBox}>
                                   <MicIcon size={18} color={isSelf ? '#ffffff' : '#8a1a36'} />
@@ -3932,61 +3984,71 @@ export default function NativeApp() {
                   )}
                 </ScrollView>
 
-                {/* Menú de Adjuntos tipo WhatsApp (Imagen 3: Photos, Camera, Location, Document) */}
+                {/* Menú de Adjuntos tipo WhatsApp (Fotos, Cámara, Ubicación, Documento) */}
                 {isAttachMenuOpen && (
-                  <View style={styles.chatAttachMenuOverlay}>
-                    <View style={styles.chatAttachMenuCard}>
-                      <View style={styles.chatAttachMenuRow}>
-                        {/* 1. Photos */}
-                        <TouchableOpacity
-                          style={styles.chatAttachMenuItem}
-                          onPress={handlePickPhoto}
-                          activeOpacity={0.75}
-                        >
-                          <View style={[styles.chatAttachIconCircle, { backgroundColor: '#2563eb' }]}>
-                            <ImageIcon size={26} color="#ffffff" strokeWidth={2} />
-                          </View>
-                          <Text style={styles.chatAttachMenuLabel}>Photos</Text>
-                        </TouchableOpacity>
+                  <TouchableWithoutFeedback onPress={() => setIsAttachMenuOpen(false)}>
+                    <View style={styles.chatAttachMenuOverlay}>
+                      <TouchableWithoutFeedback
+                        onPress={(e) => {
+                          if (Platform.OS === 'web') {
+                            (e as any)?.stopPropagation?.();
+                          }
+                        }}
+                      >
+                        <View style={styles.chatAttachMenuCard}>
+                          <View style={styles.chatAttachMenuRow}>
+                            {/* 1. Fotos */}
+                            <TouchableOpacity
+                              style={styles.chatAttachMenuItem}
+                              onPress={handlePickPhoto}
+                              activeOpacity={0.75}
+                            >
+                              <View style={[styles.chatAttachIconCircle, { backgroundColor: '#2563eb' }]}>
+                                <ImageIcon size={26} color="#ffffff" strokeWidth={2} />
+                              </View>
+                              <Text style={styles.chatAttachMenuLabel}>Fotos</Text>
+                            </TouchableOpacity>
 
-                        {/* 2. Camera */}
-                        <TouchableOpacity
-                          style={styles.chatAttachMenuItem}
-                          onPress={handleOpenCamera}
-                          activeOpacity={0.75}
-                        >
-                          <View style={[styles.chatAttachIconCircle, { backgroundColor: '#475569' }]}>
-                            <CameraIcon size={26} color="#ffffff" strokeWidth={2} />
-                          </View>
-                          <Text style={styles.chatAttachMenuLabel}>Camera</Text>
-                        </TouchableOpacity>
+                            {/* 2. Cámara */}
+                            <TouchableOpacity
+                              style={styles.chatAttachMenuItem}
+                              onPress={handleOpenCamera}
+                              activeOpacity={0.75}
+                            >
+                              <View style={[styles.chatAttachIconCircle, { backgroundColor: '#475569' }]}>
+                                <CameraIcon size={26} color="#ffffff" strokeWidth={2} />
+                              </View>
+                              <Text style={styles.chatAttachMenuLabel}>Cámara</Text>
+                            </TouchableOpacity>
 
-                        {/* 3. Location */}
-                        <TouchableOpacity
-                          style={styles.chatAttachMenuItem}
-                          onPress={handleShareLocation}
-                          activeOpacity={0.75}
-                        >
-                          <View style={[styles.chatAttachIconCircle, { backgroundColor: '#059669' }]}>
-                            <MapPinIcon size={26} color="#ffffff" strokeWidth={2} />
-                          </View>
-                          <Text style={styles.chatAttachMenuLabel}>Location</Text>
-                        </TouchableOpacity>
+                            {/* 3. Ubicación */}
+                            <TouchableOpacity
+                              style={styles.chatAttachMenuItem}
+                              onPress={handleShareLocation}
+                              activeOpacity={0.75}
+                            >
+                              <View style={[styles.chatAttachIconCircle, { backgroundColor: '#059669' }]}>
+                                <MapPinIcon size={26} color="#ffffff" strokeWidth={2} />
+                              </View>
+                              <Text style={styles.chatAttachMenuLabel}>Ubicación</Text>
+                            </TouchableOpacity>
 
-                        {/* 4. Document */}
-                        <TouchableOpacity
-                          style={styles.chatAttachMenuItem}
-                          onPress={handlePickDocument}
-                          activeOpacity={0.75}
-                        >
-                          <View style={[styles.chatAttachIconCircle, { backgroundColor: '#0284c7' }]}>
-                            <FileTextIcon size={26} color="#ffffff" strokeWidth={2} />
+                            {/* 4. Documento */}
+                            <TouchableOpacity
+                              style={styles.chatAttachMenuItem}
+                              onPress={handlePickDocument}
+                              activeOpacity={0.75}
+                            >
+                              <View style={[styles.chatAttachIconCircle, { backgroundColor: '#0284c7' }]}>
+                                <FileTextIcon size={26} color="#ffffff" strokeWidth={2} />
+                              </View>
+                              <Text style={styles.chatAttachMenuLabel}>Documento</Text>
+                            </TouchableOpacity>
                           </View>
-                          <Text style={styles.chatAttachMenuLabel}>Document</Text>
-                        </TouchableOpacity>
-                      </View>
+                        </View>
+                      </TouchableWithoutFeedback>
                     </View>
-                  </View>
+                  </TouchableWithoutFeedback>
                 )}
 
                 {/* Barra de entrada dinámica idéntica a Imagen 1 */}
@@ -5607,6 +5669,89 @@ export default function NativeApp() {
             </View>
           </View>
         </TouchableWithoutFeedback>
+      </Modal>
+
+      {/* 9. MODAL: CÁMARA TÁCTICA EN VIVO C5I (CAPTURA REAL SIN SIMULACIÓN) */}
+      <Modal
+        visible={isLiveCameraModalOpen}
+        animationType="slide"
+        transparent
+        onRequestClose={handleCloseLiveCamera}
+      >
+        <View style={styles.liveCamModalBackdrop}>
+          <View style={styles.liveCamCard}>
+            {/* Header */}
+            <View style={styles.liveCamHeader}>
+              <View style={styles.liveCamHeaderLeft}>
+                <View style={styles.liveCamIconBox}>
+                  <CameraIcon size={18} color="#ffffff" strokeWidth={2.2} />
+                </View>
+                <View>
+                  <Text style={styles.liveCamTitle}>Cámara Táctica C5i</Text>
+                  <Text style={styles.liveCamSubtitle}>
+                    Captura en tiempo real para evidencia táctica
+                  </Text>
+                </View>
+              </View>
+              <TouchableOpacity
+                style={styles.liveCamCloseBtn}
+                onPress={handleCloseLiveCamera}
+                activeOpacity={0.7}
+              >
+                <XIcon size={18} color="#94a3b8" strokeWidth={2} />
+              </TouchableOpacity>
+            </View>
+
+            {/* Viewfinder con Video Real */}
+            <View style={styles.liveCamViewfinder}>
+              {Platform.OS === 'web' && (
+                <video
+                  ref={liveCameraVideoRef}
+                  autoPlay
+                  playsInline
+                  muted
+                  style={{
+                    width: '100%',
+                    height: '100%',
+                    objectFit: 'cover',
+                    backgroundColor: '#000000',
+                  }}
+                />
+              )}
+              {/* Retícula táctica de captura */}
+              <View style={[styles.canalesScannerCorner, styles.cornerTL]} />
+              <View style={[styles.canalesScannerCorner, styles.cornerTR]} />
+              <View style={[styles.canalesScannerCorner, styles.cornerBL]} />
+              <View style={[styles.canalesScannerCorner, styles.cornerBR]} />
+
+              <View style={styles.liveCamBadge}>
+                <View style={styles.liveCamDot} />
+                <Text style={styles.liveCamBadgeText}>EN VIVO • HD</Text>
+              </View>
+            </View>
+
+            {/* Controles de Disparo */}
+            <View style={styles.liveCamControlsRow}>
+              <TouchableOpacity
+                style={styles.liveCamCancelBtn}
+                onPress={handleCloseLiveCamera}
+                activeOpacity={0.75}
+              >
+                <Text style={styles.liveCamCancelBtnText}>Cancelar</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.liveCamCaptureBtn}
+                onPress={handleCaptureLivePhoto}
+                activeOpacity={0.85}
+              >
+                <View style={styles.liveCamCaptureInnerCircle} />
+              </TouchableOpacity>
+
+              <View style={{ width: 60 }} />
+            </View>
+          </View>
+        </View>
       </Modal>
     </SafeAreaView>
   );
@@ -8699,10 +8844,142 @@ const styles = StyleSheet.create({
   // Menú de Adjuntos Táctico Tipo WhatsApp (Imagen 3)
   chatAttachMenuOverlay: {
     position: 'absolute',
-    bottom: 74,
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(15, 23, 42, 0.45)',
+    justifyContent: 'flex-end',
+    paddingHorizontal: 14,
+    paddingBottom: 72,
+    zIndex: 999,
+  },
+  liveCamModalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.85)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 16,
+  },
+  liveCamCard: {
+    width: '100%',
+    maxWidth: 420,
+    backgroundColor: '#0f172a',
+    borderRadius: 24,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: '#334155',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.5,
+    shadowRadius: 20,
+    elevation: 12,
+  },
+  liveCamHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 18,
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: '#1e293b',
+  },
+  liveCamHeaderLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  liveCamIconBox: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    backgroundColor: '#8a1a36',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  liveCamTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#ffffff',
+  },
+  liveCamSubtitle: {
+    fontSize: 11,
+    color: '#94a3b8',
+  },
+  liveCamCloseBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#1e293b',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  liveCamViewfinder: {
+    width: '100%',
+    height: 340,
+    backgroundColor: '#000000',
+    position: 'relative',
+    overflow: 'hidden',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  liveCamBadge: {
+    position: 'absolute',
+    top: 14,
     left: 14,
-    right: 14,
-    zIndex: 99,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: 'rgba(0, 0, 0, 0.65)',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.15)',
+  },
+  liveCamDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#ef4444',
+  },
+  liveCamBadgeText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#ffffff',
+    letterSpacing: 0.5,
+  },
+  liveCamControlsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 24,
+    paddingVertical: 18,
+    backgroundColor: '#0f172a',
+  },
+  liveCamCancelBtn: {
+    width: 60,
+  },
+  liveCamCancelBtnText: {
+    color: '#94a3b8',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  liveCamCaptureBtn: {
+    width: 70,
+    height: 70,
+    borderRadius: 35,
+    borderWidth: 4,
+    borderColor: '#ffffff',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'transparent',
+  },
+  liveCamCaptureInnerCircle: {
+    width: 54,
+    height: 54,
+    borderRadius: 27,
+    backgroundColor: '#e11d48',
   },
   chatAttachMenuCard: {
     backgroundColor: '#18222d',
