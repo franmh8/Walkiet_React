@@ -504,6 +504,69 @@ export default function NativeApp() {
   const [selectedGroupMembers, setSelectedGroupMembers] = useState<string[]>([]);
   const [createGroupError, setCreateGroupError] = useState<string | null>(null);
 
+  // Modal de Alerta y Confirmación Táctica C5i (reemplaza window.confirm y Alert.alert)
+  const [tacticalAlertModal, setTacticalAlertModal] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    type: 'confirm_delete' | 'warning' | 'info' | 'success';
+    confirmText?: string;
+    cancelText?: string;
+    onConfirm?: () => void;
+    onCancel?: () => void;
+  }>({
+    isOpen: false,
+    title: '',
+    message: '',
+    type: 'info',
+  });
+
+  const showTacticalAlert = useCallback((
+    title: string,
+    message: string,
+    options?: {
+      type?: 'confirm_delete' | 'warning' | 'info' | 'success';
+      confirmText?: string;
+      cancelText?: string;
+      onConfirm?: () => void;
+      onCancel?: () => void;
+    }
+  ) => {
+    setTacticalAlertModal({
+      isOpen: true,
+      title,
+      message,
+      type: options?.type || 'info',
+      confirmText: options?.confirmText || (options?.onConfirm ? 'Confirmar' : 'Entendido'),
+      cancelText: options?.cancelText || (options?.onConfirm ? 'Cancelar' : undefined),
+      onConfirm: options?.onConfirm,
+      onCancel: options?.onCancel,
+    });
+  }, []);
+
+  // Notificación Toast flotante táctica C5i
+  const [tacticalToast, setTacticalToast] = useState<{
+    visible: boolean;
+    message: string;
+    type: 'success' | 'info' | 'warning';
+  }>({
+    visible: false,
+    message: '',
+    type: 'info',
+  });
+  const toastTimerRef = useRef<any>(null);
+
+  const showTacticalToast = useCallback((message: string, type: 'success' | 'info' | 'warning' = 'success') => {
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    setTacticalToast({ visible: true, message, type });
+    toastTimerRef.current = setTimeout(() => {
+      setTacticalToast((prev) => ({ ...prev, visible: false }));
+    }, 2800);
+  }, []);
+
+  // Lista negra de contactos eliminados para evitar resurrección durante sondeos en segundo plano
+  const deletedContactIdsRef = useRef<Set<string>>(new Set());
+
   const timerRef = useRef<any>(null);
 
   // Circuit breaker para endpoints PHP en Alwaysdata (evita spam de 404 en consola si aún no se han subido los archivos)
@@ -533,6 +596,17 @@ export default function NativeApp() {
           } else {
             setServerUrl(savedUrl);
           }
+        }
+
+        // Cargar lista negra de contactos eliminados para evitar resurrección
+        const savedDeleted = await safeStorage.getItem('c5i_deleted_contacts_v2');
+        if (savedDeleted) {
+          try {
+            const parsed = JSON.parse(savedDeleted);
+            if (Array.isArray(parsed)) {
+              parsed.forEach((id: string) => deletedContactIdsRef.current.add(id));
+            }
+          } catch {}
         }
       } catch (e) {
         console.log('Error reading storage', e);
@@ -612,17 +686,31 @@ export default function NativeApp() {
       if (res && res.ok) {
         isContactsPhpAvailableRef.current = true;
         const data = await res.json().catch(() => null);
-        if (data && Array.isArray(data.contacts) && data.contacts.length > 0) {
-          const mapped: ContactOfficer[] = data.contacts.map((c: any) => ({
-            id: c.id,
-            name: c.name,
-            callsign: c.callsign || 'OFICIAL',
-            unit: c.unit || 'Sector Operativo Hidalgo',
-            phone_number: c.phone_number || '',
-            status: c.status || 'online',
-            role: c.role || 'Oficial Operativo',
-          }));
-          setOfficersList(mapped);
+        if (data && Array.isArray(data.contacts)) {
+          const mapped: ContactOfficer[] = data.contacts
+            .filter((c: any) => {
+              if (!c) return false;
+              if (c.id && deletedContactIdsRef.current.has(c.id)) return false;
+              if (c.phone_number && deletedContactIdsRef.current.has(c.phone_number)) return false;
+              return true;
+            })
+            .map((c: any) => ({
+              id: c.id,
+              name: c.name,
+              callsign: c.callsign || 'OFICIAL',
+              unit: c.unit || 'Sector Operativo Hidalgo',
+              phone_number: c.phone_number || '',
+              email: c.email || c.correo || '',
+              status: c.status || 'online',
+              role: c.role || 'Oficial Operativo',
+              avatar_url: c.avatar_url || null,
+            }));
+
+          setOfficersList((prev) => {
+            // Preservar contactos locales con ID 'off-' que aún no hayan sido devueltos por el backend
+            const pendingLocal = prev.filter((p) => p.id.startsWith('off-') && !mapped.some((m) => m.phone_number === p.phone_number));
+            return [...pendingLocal, ...mapped];
+          });
         }
       }
     } catch {}
@@ -2287,8 +2375,9 @@ export default function NativeApp() {
       : (phoneDigits ? phoneDigits.padStart(4, '0') : `${Math.floor(1000 + Math.random() * 9000)}`);
     const autoCallsign = `RADIO-${last4}`;
 
+    const tempId = `off-${Date.now()}`;
     const newOfficer: ContactOfficer = {
-      id: `off-${Date.now()}`,
+      id: tempId,
       name: fullName,
       callsign: autoCallsign,
       unit: 'Sector Operativo Hidalgo C5i',
@@ -2299,6 +2388,17 @@ export default function NativeApp() {
     };
 
     setOfficersList((prev) => [newOfficer, ...prev]);
+    setIsAddContactModalOpen(false);
+    setNewContactName('');
+    setNewContactLastName('');
+    setNewContactPhone('');
+    setNewContactEmail('');
+    setAddContactError(null);
+    showTacticalToast(`Contacto "${fullName}" guardado y sincronizado`, 'success');
+
+    try {
+      soundEngine.playIncomingChirp();
+    } catch {}
 
     if (serverUrl) {
       (async () => {
@@ -2307,6 +2407,7 @@ export default function NativeApp() {
           const isAlwaysdata = cleanUrl.includes('alwaysdata.net') || cleanUrl.includes('.php');
           const headers = getSafePostHeaders();
           const payload = JSON.stringify({
+            action: 'create',
             name: fullName,
             first_name: cleanFirstName,
             last_name: cleanLastName,
@@ -2319,39 +2420,40 @@ export default function NativeApp() {
             role: newOfficer.role,
           });
 
+          let res: any = null;
           if (isAlwaysdata) {
-            const res = await fetchWithTimeout(`${cleanUrl}/contacts.php`, {
+            res = await fetchWithTimeout(`${cleanUrl}/contacts.php`, {
               method: 'POST',
               headers,
               body: payload,
-            }, 4000).catch(() => null);
+            }, 5000).catch(() => null);
             if (res && res.status >= 400) {
               isContactsPhpAvailableRef.current = false;
             } else if (res && res.ok) {
               isContactsPhpAvailableRef.current = true;
             }
           } else {
-            await fetchWithTimeout(`${cleanUrl}/api/contacts`, {
+            res = await fetchWithTimeout(`${cleanUrl}/api/contacts`, {
               method: 'POST',
               headers,
               body: payload,
-            }, 4000).catch(() => null);
+            }, 5000).catch(() => null);
+          }
+
+          if (res && res.ok) {
+            const data = await res.json().catch(() => null);
+            if (data?.contact?.id) {
+              const realId = data.contact.id;
+              setOfficersList((prev) =>
+                prev.map((off) => (off.id === tempId ? { ...off, id: realId, callsign: data.contact.callsign || off.callsign } : off))
+              );
+            }
           }
         } catch (e) {
           console.warn('Error syncing contact to backend:', e);
         }
       })();
     }
-
-    setIsAddContactModalOpen(false);
-    setNewContactName('');
-    setNewContactLastName('');
-    setNewContactPhone('');
-    setNewContactEmail('');
-    setAddContactError(null);
-    try {
-      soundEngine.playIncomingChirp();
-    } catch {}
   };
 
   const handleOpenContactDetail = (contact: ContactOfficer) => {
@@ -2403,9 +2505,9 @@ export default function NativeApp() {
       email: cleanEmail,
     };
 
-    // Actualizar en lista local
+    // Actualizar en lista local sin duplicar
     setOfficersList((prev) =>
-      prev.map((off) => (off.id === updatedOfficer.id ? updatedOfficer : off))
+      prev.map((off) => (off.id === updatedOfficer.id || (selectedContactForDetail.phone_number && off.phone_number === selectedContactForDetail.phone_number) ? updatedOfficer : off))
     );
     setSelectedContactForDetail(updatedOfficer);
 
@@ -2418,6 +2520,14 @@ export default function NativeApp() {
       )
     );
 
+    setIsEditContactModalOpen(false);
+    setEditContactError(null);
+    showTacticalToast(`Contacto "${fullName}" actualizado`, 'success');
+
+    try {
+      soundEngine.playIncomingChirp();
+    } catch {}
+
     // Sincronizar en base de datos Alwaysdata y backend
     if (serverUrl) {
       (async () => {
@@ -2426,7 +2536,11 @@ export default function NativeApp() {
           const isAlwaysdata = cleanUrl.includes('alwaysdata.net') || cleanUrl.includes('.php');
           const headers = getSafePostHeaders();
           const payload = JSON.stringify({
+            action: 'update',
+            is_edit: true,
             id: updatedOfficer.id,
+            old_id: selectedContactForDetail.id,
+            old_phone: selectedContactForDetail.phone_number,
             name: fullName,
             first_name: cleanFirstName,
             last_name: cleanLastName,
@@ -2438,80 +2552,123 @@ export default function NativeApp() {
           });
 
           if (isAlwaysdata) {
-            await fetchWithTimeout(`${cleanUrl}/contacts.php`, {
+            const res = await fetchWithTimeout(`${cleanUrl}/contacts.php`, {
               method: 'POST',
               headers,
               body: payload,
-            }, 4000).catch(() => null);
+            }, 5000).catch(() => null);
+            if (res && res.ok) {
+              const data = await res.json().catch(() => null);
+              if (data?.contact?.id) {
+                const realId = data.contact.id;
+                setOfficersList((prev) =>
+                  prev.map((off) => (off.id === updatedOfficer.id ? { ...off, id: realId, callsign: data.contact.callsign || off.callsign } : off))
+                );
+                setSelectedContactForDetail((prev) => prev ? { ...prev, id: realId } : null);
+              }
+            }
           } else {
             await fetchWithTimeout(`${cleanUrl}/api/contacts/${encodeURIComponent(updatedOfficer.id)}`, {
               method: 'PUT',
               headers,
               body: payload,
-            }, 4000).catch(() => null);
+            }, 5000).catch(() => null);
           }
         } catch (e) {
           console.warn('Error syncing contact update:', e);
         }
       })();
     }
-
-    setIsEditContactModalOpen(false);
-    setEditContactError(null);
-    try {
-      soundEngine.playIncomingChirp();
-    } catch {}
   };
 
   const handleDeleteContact = (contact: ContactOfficer) => {
+    if (!contact) return;
+
     const executeDelete = () => {
-      setOfficersList((prev) => prev.filter((o) => o.id !== contact.id));
+      // 1. Agregar a lista negra en memoria y almacenamiento local
+      if (contact.id) deletedContactIdsRef.current.add(contact.id);
+      if (contact.phone_number) deletedContactIdsRef.current.add(contact.phone_number);
+
+      try {
+        const deletedArr = Array.from(deletedContactIdsRef.current);
+        safeStorage.setItem('c5i_deleted_contacts_v2', JSON.stringify(deletedArr));
+      } catch {}
+
+      // 2. Remover de lista local inmediatamente
+      setOfficersList((prev) =>
+        prev.filter((o) => o.id !== contact.id && (!contact.phone_number || o.phone_number !== contact.phone_number))
+      );
       setIsContactDetailModalOpen(false);
       setIsEditContactModalOpen(false);
       setSelectedContactForDetail(null);
+      setTacticalAlertModal((prev) => ({ ...prev, isOpen: false }));
 
+      showTacticalToast(`Contacto "${contact.name}" eliminado de la BD`, 'warning');
+
+      try {
+        soundEngine.playIncomingChirp();
+      } catch {}
+
+      // 3. Sincronizar eliminación en servidor Alwaysdata y API local
       if (serverUrl) {
         (async () => {
           try {
             const cleanUrl = serverUrl.replace(/\/+$/, '');
             const isAlwaysdata = cleanUrl.includes('alwaysdata.net') || cleanUrl.includes('.php');
             const headers = getSafePostHeaders();
-            const body = JSON.stringify({ id: contact.id });
+            const deleteBody = JSON.stringify({
+              action: 'delete',
+              id: contact.id,
+              phone_number: contact.phone_number,
+              phone: contact.phone_number,
+            });
 
             if (isAlwaysdata) {
-              await fetchWithTimeout(`${cleanUrl}/contacts.php?id=${encodeURIComponent(contact.id)}`, {
-                method: 'DELETE',
-                headers,
-                body,
-              }, 4000).catch(() => null);
+              // Enviar DELETE y también POST con action: 'delete' para garantizar compatibilidad con Apache Alwaysdata
+              await Promise.allSettled([
+                fetchWithTimeout(`${cleanUrl}/contacts.php?id=${encodeURIComponent(contact.id)}&phone=${encodeURIComponent(contact.phone_number || '')}&action=delete`, {
+                  method: 'DELETE',
+                  headers,
+                  body: deleteBody,
+                }, 4000),
+                fetchWithTimeout(`${cleanUrl}/contacts.php`, {
+                  method: 'POST',
+                  headers,
+                  body: deleteBody,
+                }, 4000),
+              ]);
             } else {
-              await fetchWithTimeout(`${cleanUrl}/api/contacts/${encodeURIComponent(contact.id)}`, {
-                method: 'DELETE',
-                headers,
-                body,
-              }, 4000).catch(() => null);
+              await Promise.allSettled([
+                fetchWithTimeout(`${cleanUrl}/api/contacts/${encodeURIComponent(contact.id)}`, {
+                  method: 'DELETE',
+                  headers,
+                  body: deleteBody,
+                }, 4000),
+                fetchWithTimeout(`${cleanUrl}/api/contacts`, {
+                  method: 'POST',
+                  headers,
+                  body: deleteBody,
+                }, 4000),
+              ]);
             }
           } catch (e) {
-            console.warn('Error deleting contact:', e);
+            console.warn('Error deleting contact on backend:', e);
           }
         })();
       }
     };
 
-    if (Platform.OS === 'web') {
-      if (typeof window !== 'undefined' && window.confirm(`¿Eliminar contacto "${contact.name}" de la base de datos C5i?`)) {
-        executeDelete();
+    // Modal de Confirmación Táctico C5i (reemplaza window.confirm y Alert.alert del sistema)
+    showTacticalAlert(
+      '¿Eliminar Contacto C5i?',
+      `Estás a punto de dar de baja a "${contact.name}" (${contact.callsign || contact.phone_number || 'Oficial'}). Esta acción se sincronizará permanentemente con la base de datos C5i.`,
+      {
+        type: 'confirm_delete',
+        confirmText: 'Eliminar Contacto',
+        cancelText: 'Cancelar',
+        onConfirm: executeDelete,
       }
-    } else {
-      Alert.alert(
-        'Eliminar Contacto',
-        `¿Deseas eliminar a ${contact.name}? Esta acción se sincronizará con la base de datos C5i.`,
-        [
-          { text: 'Cancelar', style: 'cancel' },
-          { text: 'Eliminar', style: 'destructive', onPress: executeDelete },
-        ]
-      );
-    }
+    );
   };
 
   // Envío genérico de mensajes multimedia y tácticos
@@ -6516,7 +6673,7 @@ export default function NativeApp() {
                       Linking.openURL(`tel:${selectedContactForDetail.phone_number}`).catch(() => {});
                     }
                   } else {
-                    Alert.alert('Llamada', 'Este contacto no tiene un teléfono registrado.');
+                    showTacticalAlert('Llamada Telefónica', 'Este oficial o contacto no tiene un número celular registrado en la red C5i.', { type: 'warning' });
                   }
                 }}
                 activeOpacity={0.8}
@@ -6573,7 +6730,7 @@ export default function NativeApp() {
                       Linking.openURL(`mailto:${selectedContactForDetail.email}`).catch(() => {});
                     }
                   } else {
-                    Alert.alert('Correo Institucional', 'Este contacto no tiene un correo registrado.');
+                    showTacticalAlert('Correo Institucional', 'Este oficial o contacto no tiene un correo institucional registrado.', { type: 'warning' });
                   }
                 }}
                 activeOpacity={0.8}
@@ -6752,6 +6909,31 @@ export default function NativeApp() {
                 </View>
               </View>
             </View>
+
+            {/* Botón Eliminar Contacto con estilo C5i */}
+            {selectedContactForDetail && (
+              <TouchableOpacity
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  backgroundColor: '#fef2f2',
+                  borderWidth: 1,
+                  borderColor: '#fecdd3',
+                  paddingVertical: 13,
+                  borderRadius: 16,
+                  gap: 8,
+                  marginTop: 10,
+                }}
+                onPress={() => handleDeleteContact(selectedContactForDetail)}
+                activeOpacity={0.8}
+              >
+                <TrashIcon size={18} color="#dc2626" strokeWidth={2.2} />
+                <Text style={{ color: '#dc2626', fontWeight: '700', fontSize: 14 }}>
+                  Eliminar Contacto
+                </Text>
+              </TouchableOpacity>
+            )}
           </ScrollView>
         </SafeAreaView>
       </Modal>
@@ -7152,6 +7334,197 @@ export default function NativeApp() {
             </View>
           </View>
       </Modal>
+
+      {/* 8b. MODAL DE ALERTA Y CONFIRMACIÓN TÁCTICA C5I (REEMPLAZA ALERT.ALERT Y WINDOW.CONFIRM) */}
+      <Modal
+        visible={tacticalAlertModal.isOpen}
+        animationType="fade"
+        transparent
+        onRequestClose={() => {
+          tacticalAlertModal.onCancel?.();
+          setTacticalAlertModal((prev) => ({ ...prev, isOpen: false }));
+        }}
+      >
+        <View style={{
+          flex: 1,
+          backgroundColor: 'rgba(15, 23, 42, 0.75)',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: 24,
+        }}>
+          <View style={{
+            width: '100%',
+            maxWidth: 380,
+            backgroundColor: '#ffffff',
+            borderRadius: 24,
+            padding: 24,
+            alignItems: 'center',
+            shadowColor: '#000000',
+            shadowOffset: { width: 0, height: 10 },
+            shadowOpacity: 0.25,
+            shadowRadius: 20,
+            elevation: 10,
+            borderWidth: 1,
+            borderColor: tacticalAlertModal.type === 'confirm_delete' ? '#fecdd3' : '#e2e8f0',
+          }}>
+            {/* Tactical Badge Icon */}
+            <View style={{
+              width: 64,
+              height: 64,
+              borderRadius: 32,
+              backgroundColor: tacticalAlertModal.type === 'confirm_delete' ? '#fee2e2' : '#fdf2f4',
+              borderWidth: 2,
+              borderColor: tacticalAlertModal.type === 'confirm_delete' ? '#fca5a5' : '#fbcfe8',
+              alignItems: 'center',
+              justifyContent: 'center',
+              marginBottom: 16,
+            }}>
+              {tacticalAlertModal.type === 'confirm_delete' ? (
+                <TrashIcon size={30} color="#dc2626" strokeWidth={2.2} />
+              ) : tacticalAlertModal.type === 'warning' ? (
+                <AlertTriangleIcon size={30} color="#d97706" strokeWidth={2.2} />
+              ) : tacticalAlertModal.type === 'success' ? (
+                <CheckCircleIcon size={30} color="#059669" strokeWidth={2.2} />
+              ) : (
+                <ShieldIcon size={30} color="#6b1d2f" strokeWidth={2.2} />
+              )}
+            </View>
+
+            {/* Title */}
+            <Text style={{
+              fontSize: 18,
+              fontWeight: '800',
+              color: '#0f172a',
+              textAlign: 'center',
+              marginBottom: 8,
+              letterSpacing: -0.3,
+            }}>
+              {tacticalAlertModal.title}
+            </Text>
+
+            {/* Message */}
+            <Text style={{
+              fontSize: 14,
+              lineHeight: 20,
+              color: '#475569',
+              textAlign: 'center',
+              marginBottom: 22,
+            }}>
+              {tacticalAlertModal.message}
+            </Text>
+
+            {/* Buttons */}
+            <View style={{ width: '100%', gap: 10 }}>
+              {tacticalAlertModal.onConfirm ? (
+                <>
+                  <TouchableOpacity
+                    style={{
+                      width: '100%',
+                      backgroundColor: tacticalAlertModal.type === 'confirm_delete' ? '#dc2626' : '#6b1d2f',
+                      paddingVertical: 13,
+                      borderRadius: 14,
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      shadowColor: tacticalAlertModal.type === 'confirm_delete' ? '#dc2626' : '#6b1d2f',
+                      shadowOpacity: 0.3,
+                      shadowRadius: 6,
+                      elevation: 3,
+                    }}
+                    onPress={() => {
+                      tacticalAlertModal.onConfirm?.();
+                    }}
+                    activeOpacity={0.85}
+                  >
+                    <Text style={{ color: '#ffffff', fontWeight: '800', fontSize: 14 }}>
+                      {tacticalAlertModal.confirmText || 'Confirmar'}
+                    </Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={{
+                      width: '100%',
+                      backgroundColor: '#f8fafc',
+                      borderWidth: 1,
+                      borderColor: '#e2e8f0',
+                      paddingVertical: 12,
+                      borderRadius: 14,
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}
+                    onPress={() => {
+                      tacticalAlertModal.onCancel?.();
+                      setTacticalAlertModal((prev) => ({ ...prev, isOpen: false }));
+                    }}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={{ color: '#64748b', fontWeight: '700', fontSize: 14 }}>
+                      {tacticalAlertModal.cancelText || 'Cancelar'}
+                    </Text>
+                  </TouchableOpacity>
+                </>
+              ) : (
+                <TouchableOpacity
+                  style={{
+                    width: '100%',
+                    backgroundColor: '#6b1d2f',
+                    paddingVertical: 13,
+                    borderRadius: 14,
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                  onPress={() => {
+                    setTacticalAlertModal((prev) => ({ ...prev, isOpen: false }));
+                  }}
+                  activeOpacity={0.85}
+                >
+                  <Text style={{ color: '#ffffff', fontWeight: '800', fontSize: 14 }}>
+                    {tacticalAlertModal.confirmText || 'Entendido'}
+                  </Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* 8c. TOAST TÁCTICO FLOTANTE C5I */}
+      {tacticalToast.visible && (
+        <View style={{
+          position: 'absolute',
+          top: Platform.OS === 'web' ? 24 : 50,
+          left: 20,
+          right: 20,
+          zIndex: 999999,
+          alignItems: 'center',
+          pointerEvents: 'none',
+        }}>
+          <View style={{
+            flexDirection: 'row',
+            alignItems: 'center',
+            backgroundColor: tacticalToast.type === 'warning' ? '#991b1b' : '#0f172a',
+            paddingHorizontal: 18,
+            paddingVertical: 11,
+            borderRadius: 30,
+            gap: 10,
+            shadowColor: '#000000',
+            shadowOffset: { width: 0, height: 4 },
+            shadowOpacity: 0.35,
+            shadowRadius: 10,
+            elevation: 8,
+            borderWidth: 1,
+            borderColor: tacticalToast.type === 'warning' ? '#f87171' : '#334155',
+          }}>
+            {tacticalToast.type === 'warning' ? (
+              <TrashIcon size={16} color="#fca5a5" strokeWidth={2.4} />
+            ) : (
+              <CheckCircleIcon size={16} color="#34d399" strokeWidth={2.4} />
+            )}
+            <Text style={{ color: '#ffffff', fontSize: 13, fontWeight: '700' }}>
+              {tacticalToast.message}
+            </Text>
+          </View>
+        </View>
+      )}
 
       {/* 9. MODAL: CÁMARA TÁCTICA EN VIVO C5I (CAPTURA REAL SIN SIMULACIÓN) */}
       <Modal
