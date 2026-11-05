@@ -866,7 +866,10 @@ app.post(['/api/contacts', '/contacts.php'], (req: Request, res: Response) => {
   const db = loadDatabase();
   const userId = user_id || 'usr-c5i-01';
   const fullName = name || [first_name, last_name].filter(Boolean).join(' ') || 'Oficial';
-  const resolvedCallsign = (callsign || alias || `RADIO-${Math.floor(100 + Math.random() * 900)}`).toUpperCase();
+  const cleanPhone = phone_number ? phone_number.replace(/\D/g, '') : '';
+  const last4 = cleanPhone.length >= 4 ? cleanPhone.slice(-4) : (cleanPhone ? cleanPhone.padStart(4, '0') : `${Math.floor(1000 + Math.random() * 9000)}`);
+  const autoPhoneCallsign = `RADIO-${last4}`;
+  const resolvedCallsign = (callsign || alias || autoPhoneCallsign).toUpperCase();
 
   let targetUserId = contact_user_id;
 

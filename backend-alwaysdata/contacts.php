@@ -66,12 +66,14 @@ if ($method === 'POST' || $method === 'PUT') {
         exit();
     }
 
-    if (empty($callsign)) {
-        $callsign = 'RADIO-' . rand(100, 999);
-    }
-
     if (empty($phone)) {
         $phone = '771' . rand(1000000, 9999999);
+    }
+
+    if (empty($callsign)) {
+        $digits = preg_replace('/\D/', '', $phone);
+        $last4 = strlen($digits) >= 4 ? substr($digits, -4) : (strlen($digits) > 0 ? str_pad($digits, 4, '0', STR_PAD_LEFT) : rand(1000, 9999));
+        $callsign = 'RADIO-' . $last4;
     }
 
     $id = $contactId ?: ('usr-cnt-' . time() . '-' . rand(100, 999));

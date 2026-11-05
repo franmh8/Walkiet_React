@@ -2280,8 +2280,12 @@ export default function NativeApp() {
     }
 
     const fullName = cleanLastName ? `${cleanFirstName} ${cleanLastName}` : cleanFirstName;
-    // Generar indicativo táctico automático estilo C5i (ej. RADIO-654)
-    const autoCallsign = `RADIO-${Math.floor(100 + Math.random() * 900)}`;
+    // Generar indicativo táctico con los últimos 4 dígitos del número celular registrado (ej. termina en 8448 -> RADIO-8448)
+    const phoneDigits = cleanPhone.replace(/\D/g, '');
+    const last4 = phoneDigits.length >= 4
+      ? phoneDigits.slice(-4)
+      : (phoneDigits ? phoneDigits.padStart(4, '0') : `${Math.floor(1000 + Math.random() * 9000)}`);
+    const autoCallsign = `RADIO-${last4}`;
 
     const newOfficer: ContactOfficer = {
       id: `off-${Date.now()}`,
@@ -2375,7 +2379,14 @@ export default function NativeApp() {
     const cleanLastName = editContactLastName.trim();
     const cleanPhone = editContactPhone.trim();
     const cleanEmail = editContactEmail.trim();
-    const cleanCallsign = editContactCallsign.trim().toUpperCase() || selectedContactForDetail.callsign || 'RADIO-654';
+
+    // Si no se asignó un indicativo manual o está vacío, tomar los últimos 4 dígitos del celular
+    const editPhoneDigits = cleanPhone.replace(/\D/g, '');
+    const editLast4 = editPhoneDigits.length >= 4
+      ? editPhoneDigits.slice(-4)
+      : (editPhoneDigits ? editPhoneDigits.padStart(4, '0') : (selectedContactForDetail.callsign.split('-')[1] || '0000'));
+    const autoPhoneCallsign = `RADIO-${editLast4}`;
+    const cleanCallsign = editContactCallsign.trim().toUpperCase() || autoPhoneCallsign;
 
     if (!cleanFirstName) {
       setEditContactError('Ingresa el nombre del oficial o contacto.');
@@ -6739,75 +6750,6 @@ export default function NativeApp() {
                 }}>
                   <ShieldIcon size={16} color="#8a1a36" strokeWidth={2} />
                 </View>
-              </View>
-            </View>
-
-            {/* Tarjeta 4: Walkie C5i • Frecuencia Táctica */}
-            <View style={{
-              backgroundColor: '#f0f9ff',
-              borderRadius: 18,
-              borderWidth: 1,
-              borderColor: '#bae6fd',
-              paddingHorizontal: 16,
-              paddingVertical: 14,
-              marginBottom: 16,
-              shadowColor: '#000000',
-              shadowOpacity: 0.03,
-              shadowRadius: 4,
-              elevation: 1,
-            }}>
-              <Text style={{
-                fontSize: 12,
-                fontWeight: '700',
-                color: '#8a1a36',
-                marginBottom: 6,
-                fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
-              }}>
-                Walkie C5i • Frecuencia Táctica
-              </Text>
-              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                  <Text style={{ fontSize: 15, fontWeight: '800', color: '#0f172a' }}>
-                    Canal Directo 1-a-1
-                  </Text>
-                  <View style={{
-                    backgroundColor: '#6b1d2f',
-                    paddingHorizontal: 8,
-                    paddingVertical: 3,
-                    borderRadius: 6,
-                    marginLeft: 8,
-                  }}>
-                    <Text style={{ color: '#ffffff', fontSize: 11, fontWeight: '700' }}>
-                      Transmitir
-                    </Text>
-                  </View>
-                </View>
-
-                {/* Botón Circular Transmitir / Radio */}
-                <TouchableOpacity
-                  style={{
-                    width: 44,
-                    height: 44,
-                    borderRadius: 22,
-                    backgroundColor: '#6b1d2f',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    shadowColor: '#6b1d2f',
-                    shadowOpacity: 0.35,
-                    shadowRadius: 6,
-                    elevation: 3,
-                  }}
-                  onPress={() => {
-                    if (selectedContactForDetail) {
-                      setIsContactDetailModalOpen(false);
-                      handleStartDirectChat(selectedContactForDetail);
-                      setCurrentTab('PTT');
-                    }
-                  }}
-                  activeOpacity={0.8}
-                >
-                  <RadioIcon size={20} color="#ffffff" strokeWidth={2.2} />
-                </TouchableOpacity>
               </View>
             </View>
           </ScrollView>
