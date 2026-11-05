@@ -2997,9 +2997,7 @@ export default function NativeApp() {
             keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator={false}
           >
-            {/* Ambient burgundy background glow */}
-            <View style={styles.ambientGlow} />
-
+           
             <View style={styles.loginCard}>
               {/* C5i Emblem Logo */}
               <Image
@@ -8653,16 +8651,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: 24,
     paddingHorizontal: 16,
-  },
-  ambientGlow: {
-    position: 'absolute',
-    width: 320,
-    height: 320,
-    borderRadius: 160,
-    backgroundColor: '#691c32',
-    opacity: 0.08,
-    top: '30%',
-    left: '10%',
   },
   loginCard: {
     backgroundColor: '#ffffff',
