@@ -33,6 +33,7 @@ import {
   UserPlusIcon,
   AlertTriangleIcon,
   CheckCircleIcon,
+  CheckIcon,
   PhoneIcon,
   MailIcon,
   ArrowLeftIcon,
@@ -214,6 +215,7 @@ export interface ContactOfficer {
   callsign: string;
   unit: string;
   phone_number?: string;
+  email?: string;
   status: 'online' | 'offline';
   role?: string;
 }
@@ -474,10 +476,11 @@ export default function NativeApp() {
   // Modal: Registrar Nuevo Contacto
   const [isAddContactModalOpen, setIsAddContactModalOpen] = useState(false);
   const [newContactName, setNewContactName] = useState('');
-  const [newContactCallsign, setNewContactCallsign] = useState('');
-  const [newContactUnit, setNewContactUnit] = useState('');
+  const [newContactLastName, setNewContactLastName] = useState('');
   const [newContactPhone, setNewContactPhone] = useState('');
+  const [newContactEmail, setNewContactEmail] = useState('');
   const [addContactError, setAddContactError] = useState<string | null>(null);
+  const [isSavingContact, setIsSavingContact] = useState(false);
 
   // Modal: Crear Grupo de Conversación
   const [isCreateGroupChatModalOpen, setIsCreateGroupChatModalOpen] = useState(false);
@@ -631,7 +634,7 @@ export default function NativeApp() {
       let res: any = null;
       if (isAlwaysdata) {
         res = await fetchWithTimeout(`${cleanUrl}/chat-messages.php?${queryParam}`, {}, 3000).catch(() => null);
-        if (res && res.status === 404) {
+        if (res && res.status >= 400) {
           isChatPhpAvailableRef.current = false;
           return;
         }
@@ -2221,23 +2224,27 @@ export default function NativeApp() {
   };
 
   const handleSaveContactSubmit = () => {
-    const cleanName = newContactName.trim();
-    const cleanCallsign = newContactCallsign.trim();
-    if (!cleanName) {
-      setAddContactError('El nombre del oficial o contacto es requerido.');
-      return;
-    }
-    if (!cleanCallsign) {
-      setAddContactError('El indicativo o clave de radio es requerido.');
+    const cleanFirstName = newContactName.trim();
+    const cleanLastName = newContactLastName.trim();
+    const cleanPhone = newContactPhone.trim();
+    const cleanEmail = newContactEmail.trim();
+
+    if (!cleanFirstName) {
+      setAddContactError('Ingresa el nombre del oficial o contacto.');
       return;
     }
 
+    const fullName = cleanLastName ? `${cleanFirstName} ${cleanLastName}` : cleanFirstName;
+    // Generar indicativo táctico automático estilo C5i (ej. RADIO-654)
+    const autoCallsign = `RADIO-${Math.floor(100 + Math.random() * 900)}`;
+
     const newOfficer: ContactOfficer = {
       id: `off-${Date.now()}`,
-      name: cleanName,
-      callsign: cleanCallsign.toUpperCase(),
-      unit: newContactUnit.trim() || 'Sector Operativo Pachuca C5i',
-      phone_number: newContactPhone.trim(),
+      name: fullName,
+      callsign: autoCallsign,
+      unit: 'Sector Operativo Hidalgo C5i',
+      phone_number: cleanPhone,
+      email: cleanEmail,
       status: 'online',
       role: 'Oficial Operativo',
     };
@@ -2251,10 +2258,14 @@ export default function NativeApp() {
           const isAlwaysdata = cleanUrl.includes('alwaysdata.net') || cleanUrl.includes('.php');
           const headers = getSafePostHeaders();
           const payload = JSON.stringify({
-            name: newOfficer.name,
+            name: fullName,
+            first_name: cleanFirstName,
+            last_name: cleanLastName,
             callsign: newOfficer.callsign,
             unit: newOfficer.unit,
-            phone_number: newOfficer.phone_number,
+            phone_number: cleanPhone,
+            email: cleanEmail,
+            correo: cleanEmail,
             user_id: currentUser?.id || 'usr-c5i-01',
             role: newOfficer.role,
           });
@@ -2265,7 +2276,7 @@ export default function NativeApp() {
               headers,
               body: payload,
             }, 4000).catch(() => null);
-            if (res && res.status === 404) {
+            if (res && res.status >= 400) {
               isContactsPhpAvailableRef.current = false;
             } else if (res && res.ok) {
               isContactsPhpAvailableRef.current = true;
@@ -2285,10 +2296,13 @@ export default function NativeApp() {
 
     setIsAddContactModalOpen(false);
     setNewContactName('');
-    setNewContactCallsign('');
-    setNewContactUnit('');
+    setNewContactLastName('');
     setNewContactPhone('');
+    setNewContactEmail('');
     setAddContactError(null);
+    try {
+      soundEngine.playIncomingChirp();
+    } catch {}
   };
 
   // Envío genérico de mensajes multimedia y tácticos
@@ -2334,6 +2348,8 @@ export default function NativeApp() {
           const headers = getSafePostHeaders();
           const payload = JSON.stringify({
             sender_id: currentUser?.id || 'usr-c5i-01',
+            sender_name: currentUser?.name || 'Oficial',
+            sender_callsign: currentUser?.callsign || currentUser?.badge || 'C5I-OP',
             channel_id: activeConversation.type === 'group' ? activeConversation.id : null,
             receiver_id: activeConversation.type === 'direct' ? (activeConversation.targetUserId || null) : null,
             text: caption,
@@ -2349,7 +2365,7 @@ export default function NativeApp() {
               headers,
               body: payload,
             }, 4000).catch(() => null);
-            if (res && res.status === 404) {
+            if (res && res.status >= 400) {
               isChatPhpAvailableRef.current = false;
             } else if (res && res.ok) {
               isChatPhpAvailableRef.current = true;
@@ -4512,23 +4528,269 @@ export default function NativeApp() {
         )}
 
         {currentTab === 'Contactos' && (
-          <ScrollView style={styles.cleanScrollSection}>
-            <Text style={styles.cleanSectionTitle}>CONTACTOS DIRECTOS</Text>
-            <Text style={styles.cleanSectionSub}>Oficiales y mandos enlazados en la red C5i</Text>
-            {[
-              { id: '1', name: 'Oficial Karla Mendoza', callsign: 'PATRULLA-04', unit: 'Sector Operativo Pachuca' },
-              { id: '2', name: 'Comandante R. Morales', callsign: 'HALCON-01', unit: 'Mando Coordinado C5i' },
-              { id: '3', name: 'Despacho Central 911', callsign: 'CENTRAL-C5I', unit: 'Centro de Comando C5i' },
-            ].map((cnt) => (
-              <View key={cnt.id} style={styles.cleanCard}>
-                <View style={styles.channelInfo}>
-                  <Text style={styles.cleanCardTitle}>{cnt.name}</Text>
-                  <Text style={styles.cleanCardMeta}>[{cnt.callsign}] • {cnt.unit}</Text>
-                </View>
-                <View style={styles.cleanOnlineIndicator} />
+          <View style={{ flex: 1, backgroundColor: '#f8fafc' }}>
+            {/* Header exacto a Imagen 1 */}
+            <View style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              paddingHorizontal: 16,
+              paddingVertical: 14,
+              backgroundColor: '#ffffff',
+              borderBottomWidth: 1,
+              borderBottomColor: '#f1f5f9',
+            }}>
+              <View style={{
+                width: 44,
+                height: 44,
+                borderRadius: 14,
+                backgroundColor: '#fdf2f4',
+                borderWidth: 1,
+                borderColor: '#fecdd3',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}>
+                <UsersIcon size={22} color="#8a1a36" strokeWidth={2.2} />
               </View>
-            ))}
-          </ScrollView>
+
+              <Text style={{
+                fontSize: 20,
+                fontWeight: '700',
+                color: '#0f172a',
+                marginLeft: 14,
+                flex: 1,
+              }}>
+                Contactos
+              </Text>
+
+              {/* Botón SOS Rojo */}
+              <TouchableOpacity
+                style={{
+                  width: 42,
+                  height: 42,
+                  borderRadius: 12,
+                  backgroundColor: '#dc2626',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  marginRight: 10,
+                  shadowColor: '#dc2626',
+                  shadowOpacity: 0.25,
+                  shadowRadius: 4,
+                  elevation: 2,
+                }}
+                onPress={handleTriggerSos}
+                activeOpacity={0.8}
+              >
+                <AlertTriangleIcon size={20} color="#ffffff" strokeWidth={2.2} />
+              </TouchableOpacity>
+
+              {/* Botón Agregar Contacto Granate */}
+              <TouchableOpacity
+                style={{
+                  width: 42,
+                  height: 42,
+                  borderRadius: 12,
+                  backgroundColor: '#6b1d2f',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  shadowColor: '#6b1d2f',
+                  shadowOpacity: 0.25,
+                  shadowRadius: 4,
+                  elevation: 2,
+                }}
+                onPress={() => {
+                  setAddContactError(null);
+                  setIsAddContactModalOpen(true);
+                }}
+                activeOpacity={0.8}
+              >
+                <UserPlusIcon size={20} color="#ffffff" strokeWidth={2.2} />
+              </TouchableOpacity>
+            </View>
+
+            {/* Barra de Búsqueda de Contactos */}
+            <View style={{
+              paddingHorizontal: 16,
+              paddingVertical: 12,
+              backgroundColor: '#ffffff',
+              borderBottomWidth: 1,
+              borderBottomColor: '#f1f5f9',
+            }}>
+              <View style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                backgroundColor: '#ffffff',
+                borderWidth: 1,
+                borderColor: '#e2e8f0',
+                borderRadius: 12,
+                paddingHorizontal: 12,
+                height: 44,
+              }}>
+                <SearchIcon size={18} color="#94a3b8" strokeWidth={2} />
+                <TextInput
+                  style={{
+                    flex: 1,
+                    marginLeft: 10,
+                    fontSize: 14,
+                    color: '#0f172a',
+                    paddingVertical: 0,
+                  }}
+                  value={contactSearchQuery}
+                  onChangeText={setContactSearchQuery}
+                  placeholder="Buscar por nombre, indicativo, teléfono o correo..."
+                  placeholderTextColor="#94a3b8"
+                />
+                {contactSearchQuery.length > 0 && (
+                  <TouchableOpacity onPress={() => setContactSearchQuery('')}>
+                    <XIcon size={16} color="#94a3b8" />
+                  </TouchableOpacity>
+                )}
+              </View>
+            </View>
+
+            {/* Lista de Contactos Tácticos C5i */}
+            <ScrollView
+              style={{ flex: 1 }}
+              contentContainerStyle={{ padding: 16, paddingBottom: 100 }}
+              keyboardShouldPersistTaps="handled"
+            >
+              {filteredOfficers.length === 0 ? (
+                <View style={{
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  paddingVertical: 60,
+                  paddingHorizontal: 20,
+                }}>
+                  <View style={{
+                    width: 72,
+                    height: 72,
+                    borderRadius: 36,
+                    backgroundColor: '#f1f5f9',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    marginBottom: 16,
+                  }}>
+                    <UserIcon size={36} color="#94a3b8" strokeWidth={1.8} />
+                  </View>
+                  <Text style={{ fontSize: 17, fontWeight: '700', color: '#1e293b', marginBottom: 6 }}>
+                    Sin contactos registrados
+                  </Text>
+                  <Text style={{ fontSize: 13, color: '#64748b', textAlign: 'center', marginBottom: 20, maxWidth: 280 }}>
+                    Agrega a tu primer oficial o contacto para iniciar una conversación encriptada.
+                  </Text>
+                  <TouchableOpacity
+                    style={{
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      backgroundColor: '#6b1d2f',
+                      paddingHorizontal: 20,
+                      paddingVertical: 12,
+                      borderRadius: 12,
+                      gap: 8,
+                    }}
+                    onPress={() => {
+                      setAddContactError(null);
+                      setIsAddContactModalOpen(true);
+                    }}
+                  >
+                    <UserPlusIcon size={18} color="#ffffff" strokeWidth={2.2} />
+                    <Text style={{ color: '#ffffff', fontWeight: '700', fontSize: 14 }}>
+                      + Agregar Contacto
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                filteredOfficers.map((cnt) => {
+                  const initialLetter = (cnt.name.trim()[0] || 'K').toLowerCase();
+                  return (
+                    <View
+                      key={cnt.id}
+                      style={{
+                        backgroundColor: '#ffffff',
+                        borderRadius: 18,
+                        padding: 14,
+                        marginBottom: 12,
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        borderWidth: 1,
+                        borderColor: '#e2e8f0',
+                        shadowColor: '#000000',
+                        shadowOpacity: 0.04,
+                        shadowRadius: 6,
+                        shadowOffset: { width: 0, height: 2 },
+                        elevation: 1,
+                      }}
+                    >
+                      {/* Avatar Izquierdo con Inicial */}
+                      <View style={{
+                        width: 48,
+                        height: 48,
+                        borderRadius: 14,
+                        backgroundColor: '#eef2ff',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                      }}>
+                        <Text style={{
+                          fontSize: 18,
+                          fontWeight: '700',
+                          color: '#0f172a',
+                        }}>
+                          {initialLetter}
+                        </Text>
+                      </View>
+
+                      {/* Nombre e Indicativo de Radio */}
+                      <View style={{ flex: 1, marginLeft: 14 }}>
+                        <Text style={{
+                          fontSize: 16,
+                          fontWeight: '700',
+                          color: '#0f172a',
+                        }}>
+                          {cnt.name}
+                        </Text>
+                        <Text style={{
+                          fontSize: 12,
+                          fontWeight: '700',
+                          color: '#7a1c30',
+                          marginTop: 2,
+                          letterSpacing: 0.5,
+                        }}>
+                          {cnt.callsign || 'RADIO-654'}
+                        </Text>
+                        {cnt.phone_number ? (
+                          <Text style={{ fontSize: 11, color: '#94a3b8', marginTop: 2 }}>
+                            {cnt.phone_number}
+                          </Text>
+                        ) : null}
+                      </View>
+
+                      {/* Botón Circular Granate con Onda de Radio / Chat */}
+                      <TouchableOpacity
+                        style={{
+                          width: 42,
+                          height: 42,
+                          borderRadius: 21,
+                          backgroundColor: '#6b1d2f',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          shadowColor: '#6b1d2f',
+                          shadowOpacity: 0.25,
+                          shadowRadius: 4,
+                          elevation: 2,
+                        }}
+                        onPress={() => {
+                          handleStartDirectChat(cnt);
+                          setCurrentTab('Chat');
+                        }}
+                        activeOpacity={0.8}
+                      >
+                        <RadioIcon size={20} color="#ffffff" strokeWidth={2.2} />
+                      </TouchableOpacity>
+                    </View>
+                  );
+                })
+              )}
+            </ScrollView>
+          </View>
         )}
 
         {currentTab === 'Perfil' && (
@@ -5627,6 +5889,7 @@ export default function NativeApp() {
       </Modal>
 
       {/* 7. MODAL: REGISTRAR NUEVO CONTACTO */}
+      {/* 7. MODAL: REGISTRAR NUEVO CONTACTO (Diseño exacto a Imagen 2) */}
       <Modal
         visible={isAddContactModalOpen}
         animationType="fade"
@@ -5637,117 +5900,231 @@ export default function NativeApp() {
         }}
       >
         <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
-          <View style={styles.chatModalBackdrop}>
-            <View style={styles.chatModalCard}>
-              <View style={styles.chatModalHeader}>
-                <View style={styles.chatModalHeaderLeft}>
-                  <View style={[styles.chatModalIconBox, { backgroundColor: '#8a1a36' }]}>
-                    <UserPlusIcon size={18} color="#ffffff" strokeWidth={2.2} />
-                  </View>
-                  <View>
-                    <Text style={styles.chatModalTitle}>Registrar Oficial / Contacto</Text>
-                    <Text style={styles.chatModalSubtitle}>
-                      Añade un contacto a la agenda táctica C5i
-                    </Text>
-                  </View>
-                </View>
+          <View style={{
+            flex: 1,
+            backgroundColor: 'rgba(15, 23, 42, 0.6)',
+            justifyContent: 'center',
+            alignItems: 'center',
+            padding: 16,
+          }}>
+            <View style={{
+              backgroundColor: '#ffffff',
+              borderRadius: 28,
+              width: '100%',
+              maxWidth: 420,
+              paddingHorizontal: 20,
+              paddingTop: 18,
+              paddingBottom: 24,
+              shadowColor: '#000000',
+              shadowOpacity: 0.15,
+              shadowRadius: 16,
+              shadowOffset: { width: 0, height: 8 },
+              elevation: 8,
+            }}>
+              {/* Header con dos circulitos para Cancelar y Guardar */}
+              <View style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                paddingBottom: 12,
+                borderBottomWidth: 1,
+                borderBottomColor: '#f1f5f9',
+              }}>
+                {/* Botón Circular Izquierdo: Cancelar */}
                 <TouchableOpacity
-                  style={styles.chatModalCloseBtn}
+                  style={{
+                    width: 38,
+                    height: 38,
+                    borderRadius: 19,
+                    backgroundColor: '#e2e8f0',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
                   onPress={() => {
                     setIsAddContactModalOpen(false);
                     setAddContactError(null);
                   }}
+                  activeOpacity={0.8}
                 >
-                  <XIcon size={18} color="#64748b" strokeWidth={2} />
+                  <XIcon size={18} color="#475569" strokeWidth={2.2} />
+                </TouchableOpacity>
+
+                {/* Título Central */}
+                <Text style={{
+                  fontSize: 18,
+                  fontWeight: '700',
+                  color: '#0f172a',
+                  textAlign: 'center',
+                }}>
+                  Nuevo Contacto
+                </Text>
+
+                {/* Botón Circular Derecho: Guardar */}
+                <TouchableOpacity
+                  style={{
+                    width: 38,
+                    height: 38,
+                    borderRadius: 19,
+                    backgroundColor: '#6b1d2f',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    shadowColor: '#6b1d2f',
+                    shadowOpacity: 0.3,
+                    shadowRadius: 4,
+                    elevation: 2,
+                  }}
+                  onPress={handleSaveContactSubmit}
+                  activeOpacity={0.8}
+                >
+                  <CheckIcon size={18} color="#ffffff" strokeWidth={2.6} />
                 </TouchableOpacity>
               </View>
 
               <ScrollView
-                style={{ maxHeight: 380 }}
-                contentContainerStyle={{ padding: 18, gap: 14 }}
+                style={{ maxHeight: 460 }}
+                contentContainerStyle={{ paddingTop: 16, paddingBottom: 6 }}
                 keyboardShouldPersistTaps="handled"
               >
+                {/* Círculo con Icono de Persona (sin agregar foto, solo persona) */}
+                <View style={{
+                  alignSelf: 'center',
+                  width: 86,
+                  height: 86,
+                  borderRadius: 43,
+                  backgroundColor: '#f8fafc',
+                  borderWidth: 2,
+                  borderColor: '#fbcfe8',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  marginBottom: 20,
+                }}>
+                  <UserIcon size={42} color="#94a3b8" strokeWidth={1.8} />
+                </View>
+
                 {addContactError && (
-                  <View style={styles.recoveryErrorBanner}>
-                    <AlertTriangleIcon size={15} color="#be123c" strokeWidth={1.8} />
-                    <Text style={styles.recoveryErrorText}>{addContactError}</Text>
+                  <View style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    backgroundColor: '#ffe4e6',
+                    paddingHorizontal: 12,
+                    paddingVertical: 8,
+                    borderRadius: 10,
+                    marginBottom: 14,
+                    gap: 8,
+                  }}>
+                    <AlertTriangleIcon size={16} color="#be123c" strokeWidth={2} />
+                    <Text style={{ color: '#be123c', fontSize: 13, fontWeight: '600', flex: 1 }}>
+                      {addContactError}
+                    </Text>
                   </View>
                 )}
 
-                <View style={styles.recoveryInputGroup}>
-                  <Text style={styles.recoveryInputLabel}>Nombre Completo del Oficial</Text>
-                  <View style={styles.recoveryInputBox}>
-                    <TextInput
-                      style={styles.recoveryInput}
-                      value={newContactName}
-                      onChangeText={setNewContactName}
-                      placeholder="Ej. Oficial Rodrigo Santos"
-                      placeholderTextColor="#94a3b8"
-                    />
-                  </View>
+                {/* Tarjeta 1: Nombre(s) y Apellidos (Opcional) */}
+                <View style={{
+                  backgroundColor: '#ffffff',
+                  borderRadius: 16,
+                  borderWidth: 1,
+                  borderColor: '#e2e8f0',
+                  paddingHorizontal: 16,
+                  paddingVertical: 10,
+                  marginBottom: 14,
+                }}>
+                  <Text style={{ fontSize: 12, fontWeight: '600', color: '#64748b', marginBottom: 2 }}>
+                    Nombre(s) *
+                  </Text>
+                  <TextInput
+                    style={{
+                      fontSize: 15,
+                      color: '#0f172a',
+                      paddingVertical: 4,
+                    }}
+                    value={newContactName}
+                    onChangeText={setNewContactName}
+                    placeholder="Ej. Juan Carlos"
+                    placeholderTextColor="#94a3b8"
+                  />
+
+                  <View style={{ height: 1, backgroundColor: '#f1f5f9', marginVertical: 8 }} />
+
+                  <Text style={{ fontSize: 12, fontWeight: '600', color: '#64748b', marginBottom: 2 }}>
+                    Apellidos (Opcional)
+                  </Text>
+                  <TextInput
+                    style={{
+                      fontSize: 15,
+                      color: '#0f172a',
+                      paddingVertical: 4,
+                    }}
+                    value={newContactLastName}
+                    onChangeText={setNewContactLastName}
+                    placeholder="Ej. Perez Hernandez"
+                    placeholderTextColor="#94a3b8"
+                  />
                 </View>
 
-                <View style={styles.recoveryInputGroup}>
-                  <Text style={styles.recoveryInputLabel}>Indicativo / Clave de Radio</Text>
-                  <View style={styles.recoveryInputBox}>
+                {/* Tarjeta 2: Número de Teléfono (directo sin selector de país) */}
+                <View style={{
+                  backgroundColor: '#ffffff',
+                  borderRadius: 16,
+                  borderWidth: 1,
+                  borderColor: '#e2e8f0',
+                  paddingHorizontal: 16,
+                  paddingVertical: 10,
+                  marginBottom: 14,
+                }}>
+                  <Text style={{ fontSize: 12, fontWeight: '600', color: '#64748b', marginBottom: 2 }}>
+                    Número de Teléfono
+                  </Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                     <TextInput
-                      style={styles.recoveryInput}
-                      value={newContactCallsign}
-                      onChangeText={setNewContactCallsign}
-                      placeholder="Ej. JAGUAR-05"
-                      placeholderTextColor="#94a3b8"
-                      autoCapitalize="characters"
-                    />
-                  </View>
-                </View>
-
-                <View style={styles.recoveryInputGroup}>
-                  <Text style={styles.recoveryInputLabel}>Unidad o Sector Operativo</Text>
-                  <View style={styles.recoveryInputBox}>
-                    <TextInput
-                      style={styles.recoveryInput}
-                      value={newContactUnit}
-                      onChangeText={setNewContactUnit}
-                      placeholder="Ej. Sector Tulancingo / Fuerza Especial"
-                      placeholderTextColor="#94a3b8"
-                    />
-                  </View>
-                </View>
-
-                <View style={styles.recoveryInputGroup}>
-                  <Text style={styles.recoveryInputLabel}>Teléfono Móvil (Opcional)</Text>
-                  <View style={styles.recoveryInputBox}>
-                    <TextInput
-                      style={styles.recoveryInput}
+                      style={{
+                        flex: 1,
+                        fontSize: 15,
+                        color: '#0f172a',
+                        paddingVertical: 4,
+                      }}
                       value={newContactPhone}
                       onChangeText={setNewContactPhone}
-                      placeholder="7711234567"
+                      placeholder="771 123 4567"
                       placeholderTextColor="#94a3b8"
                       keyboardType="phone-pad"
                     />
+                    <PhoneIcon size={18} color="#94a3b8" strokeWidth={1.8} />
+                  </View>
+                </View>
+
+                {/* Tarjeta 3: Correo Electrónico (Opcional) */}
+                <View style={{
+                  backgroundColor: '#ffffff',
+                  borderRadius: 16,
+                  borderWidth: 1,
+                  borderColor: '#e2e8f0',
+                  paddingHorizontal: 16,
+                  paddingVertical: 10,
+                  marginBottom: 8,
+                }}>
+                  <Text style={{ fontSize: 12, fontWeight: '600', color: '#64748b', marginBottom: 2 }}>
+                    Correo Electrónico (Opcional)
+                  </Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                    <TextInput
+                      style={{
+                        flex: 1,
+                        fontSize: 15,
+                        color: '#0f172a',
+                        paddingVertical: 4,
+                      }}
+                      value={newContactEmail}
+                      onChangeText={setNewContactEmail}
+                      placeholder="ejemplo@c5i.gob.mx"
+                      placeholderTextColor="#94a3b8"
+                      keyboardType="email-address"
+                      autoCapitalize="none"
+                    />
+                    <MailIcon size={18} color="#94a3b8" strokeWidth={1.8} />
                   </View>
                 </View>
               </ScrollView>
-
-              <View style={styles.chatModalFormFooter}>
-                <TouchableOpacity
-                  style={styles.chatModalCancelBtn}
-                  onPress={() => {
-                    setIsAddContactModalOpen(false);
-                    setAddContactError(null);
-                  }}
-                >
-                  <Text style={styles.chatModalCancelBtnText}>Cancelar</Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={styles.chatModalSubmitFormBtn}
-                  onPress={handleSaveContactSubmit}
-                  activeOpacity={0.85}
-                >
-                  <Text style={styles.chatModalSubmitFormBtnText}>Guardar Contacto</Text>
-                </TouchableOpacity>
-              </View>
             </View>
           </View>
         </TouchableWithoutFeedback>

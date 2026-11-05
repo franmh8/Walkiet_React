@@ -4,6 +4,7 @@ import { Feather } from '@expo/vector-icons';
 import {
   User as LucideUser,
   Lock as LucideLock,
+  Check as LucideCheck,
   Eye as LucideEye,
   EyeOff as LucideEyeOff,
   KeyRound as LucideKeyRound,
@@ -147,6 +148,20 @@ export const CheckCircleIcon: React.FC<IconProps> = ({
       <LucideCheckCircle2 size={size} color={color} strokeWidth={strokeWidth} />
     ) : (
       <Feather name="check-circle" size={size} color={color} />
+    )}
+  </View>
+);
+
+export const CheckIcon: React.FC<IconProps> = ({
+  size = 18,
+  color = '#ffffff',
+  strokeWidth = 2.4,
+}) => (
+  <View style={[styles.center, { width: size, height: size }]}>
+    {isWeb ? (
+      <LucideCheck size={size} color={color} strokeWidth={strokeWidth} />
+    ) : (
+      <Feather name="check" size={size} color={color} />
     )}
   </View>
 );

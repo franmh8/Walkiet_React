@@ -120,6 +120,7 @@ interface DbSchema {
     updated_at: string;
     callsign?: string;
     unit?: string;
+    correo?: string | null;
   }>;
   channels: Array<{
     id: string;
@@ -861,32 +862,40 @@ app.get(['/api/contacts', '/contacts.php'], (req: Request, res: Response) => {
 
 // 11. Contacts: Add Contact
 app.post(['/api/contacts', '/contacts.php'], (req: Request, res: Response) => {
-  const { user_id, contact_user_id, name, phone_number, alias, callsign, unit } = req.body;
+  const { user_id, contact_user_id, name, first_name, last_name, phone_number, email, alias, callsign, unit } = req.body;
   const db = loadDatabase();
   const userId = user_id || 'usr-c5i-01';
+  const fullName = name || [first_name, last_name].filter(Boolean).join(' ') || 'Oficial';
+  const resolvedCallsign = (callsign || alias || `RADIO-${Math.floor(100 + Math.random() * 900)}`).toUpperCase();
 
   let targetUserId = contact_user_id;
 
   // If user not in users table yet, register them
   if (!targetUserId && phone_number) {
     const cleanPhone = phone_number.replace(/\D/g, '');
-    let existingUser = db.users.find((u) => u.phone_number === cleanPhone);
-    if (!existingUser) {
-      existingUser = {
+    const foundUser = db.users.find((u) => u.phone_number === cleanPhone);
+    if (!foundUser) {
+      const newUser = {
         id: `usr-${Date.now()}`,
         phone_number: cleanPhone,
-        name: name || `Oficial ${cleanPhone.slice(-4)}`,
-        callsign: (callsign || alias || `PATRULLA-${cleanPhone.slice(-3)}`).toUpperCase(),
+        name: fullName,
+        correo: email || null,
+        callsign: resolvedCallsign,
         unit: unit || 'Sector Operativo Hidalgo',
         password_hash: '123',
         avatar_url: null,
-        status: 'online',
+        status: 'online' as const,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       };
-      db.users.push(existingUser);
+      db.users.push(newUser);
+      targetUserId = newUser.id;
+    } else {
+      foundUser.name = fullName;
+      if (email) foundUser.correo = email;
+      foundUser.callsign = resolvedCallsign;
+      targetUserId = foundUser.id;
     }
-    targetUserId = existingUser.id;
   }
 
   const newContact = {
