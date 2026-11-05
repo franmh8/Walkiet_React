@@ -48,9 +48,10 @@ if ($method === 'GET') {
     exit();
 }
 
-// 2. POST: Registrar nuevo contacto u oficial en la BD
-if ($method === 'POST') {
+// 2. POST / PUT: Registrar o Actualizar contacto u oficial en la BD
+if ($method === 'POST' || $method === 'PUT') {
     $data = getJsonInput();
+    $contactId = $data['id'] ?? $_GET['id'] ?? null;
     $firstName = trim($data['first_name'] ?? '');
     $lastName = trim($data['last_name'] ?? '');
     $name = trim($data['name'] ?? trim($firstName . ' ' . $lastName));
@@ -73,18 +74,26 @@ if ($method === 'POST') {
         $phone = '771' . rand(1000000, 9999999);
     }
 
-    $id = 'usr-cnt-' . time() . '-' . rand(100, 999);
+    $id = $contactId ?: ('usr-cnt-' . time() . '-' . rand(100, 999));
 
     try {
-        // Verificar si ya existe por teléfono
-        $check = $pdo->prepare("SELECT id, name, callsign FROM users WHERE phone_number = ? LIMIT 1");
-        $check->execute([$phone]);
-        $existing = $check->fetch();
+        $existing = null;
+        if ($contactId) {
+            $checkId = $pdo->prepare("SELECT id, name, callsign FROM users WHERE id = ? LIMIT 1");
+            $checkId->execute([$contactId]);
+            $existing = $checkId->fetch();
+        }
+        if (!$existing && $phone) {
+            // Verificar si ya existe por teléfono
+            $check = $pdo->prepare("SELECT id, name, callsign FROM users WHERE phone_number = ? LIMIT 1");
+            $check->execute([$phone]);
+            $existing = $check->fetch();
+        }
 
         if ($existing) {
             // Actualizar datos
-            $upd = $pdo->prepare("UPDATE users SET name = ?, correo = ?, callsign = ?, unit = ?, status = 'online' WHERE id = ?");
-            $upd->execute([$name, $email ?: null, $callsign, $unit, $existing['id']]);
+            $upd = $pdo->prepare("UPDATE users SET name = ?, phone_number = ?, correo = ?, callsign = ?, unit = ?, status = 'online' WHERE id = ?");
+            $upd->execute([$name, $phone, $email ?: null, $callsign, $unit, $existing['id']]);
             $savedId = $existing['id'];
         } else {
             // Insertar nuevo oficial / contacto con parámetros posicionales

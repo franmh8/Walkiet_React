@@ -39,6 +39,7 @@ import {
   Image as LucideImage,
   MapPin as LucideMapPin,
   FileText as LucideFileText,
+  Shield as LucideShield,
 } from 'lucide-react';
 
 export interface IconProps {
@@ -554,6 +555,20 @@ export const FileTextIcon: React.FC<IconProps> = ({
       <LucideFileText size={size} color={color} strokeWidth={strokeWidth} />
     ) : (
       <Feather name="file-text" size={size} color={color} />
+    )}
+  </View>
+);
+
+export const ShieldIcon: React.FC<IconProps> = ({
+  size = 18,
+  color = '#8a1a36',
+  strokeWidth = 2,
+}) => (
+  <View style={[styles.center, { width: size, height: size }]}>
+    {isWeb ? (
+      <LucideShield size={size} color={color} strokeWidth={strokeWidth} />
+    ) : (
+      <Feather name="shield" size={size} color={color} />
     )}
   </View>
 );

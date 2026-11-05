@@ -924,6 +924,64 @@ app.post(['/api/contacts', '/contacts.php'], (req: Request, res: Response) => {
   });
 });
 
+// 11b. Contacts: Update Contact (PUT)
+app.put(['/api/contacts/:id', '/api/contacts', '/contacts.php'], (req: Request, res: Response) => {
+  const contactId = req.params.id || req.body.id || (req.query.id as string);
+  const { name, first_name, last_name, phone_number, email, correo, callsign, unit } = req.body;
+  const db = loadDatabase();
+
+  const fullName = name || [first_name, last_name].filter(Boolean).join(' ');
+  const cleanPhone = phone_number ? phone_number.replace(/\D/g, '') : undefined;
+  const mail = email || correo;
+
+  // Search contact in contacts table or users table
+  const contact = db.contacts.find((c) => c.id === contactId || c.contact_user_id === contactId);
+  const user = db.users.find((u) => u.id === contactId || (contact && u.id === contact.contact_user_id));
+
+  if (user) {
+    if (fullName) user.name = fullName;
+    if (cleanPhone) user.phone_number = cleanPhone;
+    if (mail !== undefined) user.correo = mail;
+    if (callsign) user.callsign = callsign.toUpperCase();
+    if (unit) user.unit = unit;
+    user.updated_at = new Date().toISOString();
+  }
+
+  if (contact && fullName) {
+    contact.alias = fullName;
+  }
+
+  saveDatabase(db);
+
+  res.json({
+    success: true,
+    message: 'Contacto actualizado correctamente',
+    contact: {
+      id: contactId,
+      name: user?.name || fullName || 'Oficial',
+      phone_number: user?.phone_number || cleanPhone || '',
+      email: user?.correo || mail || '',
+      callsign: user?.callsign || callsign || 'RADIO-654',
+      unit: user?.unit || unit || 'Sector Operativo Hidalgo',
+      status: user?.status || 'online',
+    },
+  });
+});
+
+// 11c. Contacts: Delete Contact (DELETE)
+app.delete(['/api/contacts/:id', '/api/contacts', '/contacts.php'], (req: Request, res: Response) => {
+  const contactId = req.params.id || req.body?.id || (req.query.id as string);
+  const db = loadDatabase();
+
+  if (contactId) {
+    db.contacts = db.contacts.filter((c) => c.id !== contactId && c.contact_user_id !== contactId);
+    db.users = db.users.filter((u) => u.id !== contactId);
+    saveDatabase(db);
+  }
+
+  res.json({ success: true, message: 'Contacto eliminado de la base de datos' });
+});
+
 // 12. Voice Messages: List for Channel
 app.get(['/api/voice-messages', '/voice-messages.php', '/api/voice-messages.php'], (req: Request, res: Response) => {
   const channel_id = req.query.channel_id as string | undefined;
