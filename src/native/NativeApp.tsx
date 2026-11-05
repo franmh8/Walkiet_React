@@ -604,7 +604,23 @@ export default function NativeApp() {
           try {
             const parsed = JSON.parse(savedDeleted);
             if (Array.isArray(parsed)) {
-              parsed.forEach((id: string) => deletedContactIdsRef.current.add(id));
+              parsed.forEach((id: string) => {
+                if (id) deletedContactIdsRef.current.add(id);
+              });
+            }
+          } catch {}
+        }
+
+        // Cargar contactos cacheados para que nunca se borren al recargar la página
+        const cachedContacts = await safeStorage.getItem('c5i_officers_cache_v2');
+        if (cachedContacts) {
+          try {
+            const parsed = JSON.parse(cachedContacts);
+            if (Array.isArray(parsed) && parsed.length > 0) {
+              setOfficersList((prev) => {
+                const combined = [...parsed];
+                return combined;
+              });
             }
           } catch {}
         }
@@ -613,6 +629,13 @@ export default function NativeApp() {
       }
     })();
   }, []);
+
+  // Guardar contactos en safeStorage cada vez que cambien para que persistan entre recargas
+  useEffect(() => {
+    if (officersList && officersList.length > 0) {
+      safeStorage.setItem('c5i_officers_cache_v2', JSON.stringify(officersList)).catch(() => {});
+    }
+  }, [officersList]);
 
   // En navegador web, enviar text/plain evita preflights OPTIONS innecesarios
   const getSafePostHeaders = () => ({
@@ -2482,13 +2505,19 @@ export default function NativeApp() {
     const cleanPhone = editContactPhone.trim();
     const cleanEmail = editContactEmail.trim();
 
-    // Si no se asignó un indicativo manual o está vacío, tomar los últimos 4 dígitos del celular
+    // Si cambió el número de teléfono o la terminación, actualizar automáticamente el indicativo de radio
     const editPhoneDigits = cleanPhone.replace(/\D/g, '');
     const editLast4 = editPhoneDigits.length >= 4
       ? editPhoneDigits.slice(-4)
-      : (editPhoneDigits ? editPhoneDigits.padStart(4, '0') : (selectedContactForDetail.callsign.split('-')[1] || '0000'));
+      : (editPhoneDigits ? editPhoneDigits.padStart(4, '0') : '0000');
     const autoPhoneCallsign = `RADIO-${editLast4}`;
-    const cleanCallsign = editContactCallsign.trim().toUpperCase() || autoPhoneCallsign;
+
+    const oldDigits = (selectedContactForDetail.phone_number || '').replace(/\D/g, '');
+    const oldLast4 = oldDigits.slice(-4);
+    const phoneEndingChanged = Boolean(oldDigits && editPhoneDigits && editLast4 !== oldLast4);
+    const cleanCallsign = (phoneEndingChanged || !editContactCallsign.trim())
+      ? autoPhoneCallsign
+      : editContactCallsign.trim().toUpperCase();
 
     if (!cleanFirstName) {
       setEditContactError('Ingresa el nombre del oficial o contacto.');
@@ -7110,7 +7139,15 @@ export default function NativeApp() {
                   <TextInput
                     style={{ flex: 1, fontSize: 15, color: '#0f172a', paddingVertical: 4 }}
                     value={editContactPhone}
-                    onChangeText={setEditContactPhone}
+                    onChangeText={(text) => {
+                      setEditContactPhone(text);
+                      const digits = text.replace(/\D/g, '');
+                      if (digits.length >= 4) {
+                        setEditContactCallsign(`RADIO-${digits.slice(-4)}`);
+                      } else if (digits.length > 0) {
+                        setEditContactCallsign(`RADIO-${digits.padStart(4, '0')}`);
+                      }
+                    }}
                     placeholder="771 123 4567"
                     placeholderTextColor="#94a3b8"
                     keyboardType="phone-pad"

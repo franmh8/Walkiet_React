@@ -890,7 +890,8 @@ app.post(['/api/contacts', '/contacts.php'], (req: Request, res: Response) => {
   const cleanOldPhone = old_phone ? old_phone.replace(/\D/g, '') : '';
   const last4 = cleanPhone.length >= 4 ? cleanPhone.slice(-4) : (cleanPhone ? cleanPhone.padStart(4, '0') : `${Math.floor(1000 + Math.random() * 9000)}`);
   const autoPhoneCallsign = `RADIO-${last4}`;
-  const resolvedCallsign = (callsign || alias || autoPhoneCallsign).toUpperCase();
+  const phoneChanged = Boolean(cleanOldPhone && cleanPhone && cleanOldPhone !== cleanPhone);
+  const resolvedCallsign = (phoneChanged || !callsign ? autoPhoneCallsign : (callsign || alias || autoPhoneCallsign)).toUpperCase();
   const mail = email || correo || null;
 
   // Check if updating existing user (by id, old_id, old_phone, or phone_number)
@@ -980,11 +981,15 @@ app.put(['/api/contacts/:id', '/api/contacts', '/contacts.php'], (req: Request, 
     (cleanPhone && u.phone_number === cleanPhone)
   );
 
+  const phoneChanged = Boolean(cleanOldPhone && cleanPhone && cleanOldPhone !== cleanPhone);
+  const last4 = cleanPhone && cleanPhone.length >= 4 ? cleanPhone.slice(-4) : (cleanPhone ? cleanPhone.padStart(4, '0') : '');
+  const resolvedCallsign = (phoneChanged && last4) ? `RADIO-${last4}` : (callsign ? callsign.toUpperCase() : (last4 ? `RADIO-${last4}` : undefined));
+
   if (user) {
     if (fullName) user.name = fullName;
     if (cleanPhone) user.phone_number = cleanPhone;
     if (mail !== undefined) user.correo = mail;
-    if (callsign) user.callsign = callsign.toUpperCase();
+    if (resolvedCallsign) user.callsign = resolvedCallsign;
     if (unit) user.unit = unit;
     user.updated_at = new Date().toISOString();
   }
@@ -1004,7 +1009,7 @@ app.put(['/api/contacts/:id', '/api/contacts', '/contacts.php'], (req: Request, 
       name: user?.name || fullName || 'Oficial',
       phone_number: user?.phone_number || cleanPhone || '',
       email: user?.correo || mail || '',
-      callsign: user?.callsign || callsign || 'RADIO-654',
+      callsign: user?.callsign || resolvedCallsign || 'RADIO-654',
       unit: user?.unit || unit || 'Sector Operativo Hidalgo',
       status: user?.status || 'online',
     },

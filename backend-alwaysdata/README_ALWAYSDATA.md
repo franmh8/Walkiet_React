@@ -23,60 +23,73 @@ require_once __DIR__ . '/conexion.php';
 $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
 $data = getJsonInput();
 
-$isDeleteAction = ($method === 'DELETE') || (isset($data['action']) && $data['action'] === 'delete') || (isset($_GET['action']) && $_GET['action'] === 'delete');
+try {
+    $pdo->exec("CREATE TABLE IF NOT EXISTS `contactos` (
+        `id` VARCHAR(64) NOT NULL,
+        `name` VARCHAR(120) NOT NULL,
+        `phone_number` VARCHAR(20) NOT NULL,
+        `callsign` VARCHAR(50) DEFAULT NULL,
+        `correo` VARCHAR(120) DEFAULT NULL,
+        `unit` VARCHAR(100) DEFAULT 'Sector Operativo Hidalgo C5i',
+        `status` VARCHAR(20) DEFAULT 'online',
+        `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP,
+        `updated_at` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        PRIMARY KEY (`id`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
+} catch (Exception $e) {}
 
-if ($isDeleteAction) {
-    $deleteId = $data['id'] ?? $_GET['id'] ?? null;
-    $deletePhone = preg_replace('/\D/', '', $data['phone_number'] ?? $data['phone'] ?? $_GET['phone'] ?? '');
+$isDelete = ($method === 'DELETE') || (isset($data['action']) && $data['action'] === 'delete') || (isset($_GET['action']) && $_GET['action'] === 'delete');
+if ($isDelete) {
+    $delId = $data['id'] ?? $_GET['id'] ?? null;
+    $delPhone = preg_replace('/\D/', '', $data['phone_number'] ?? $data['phone'] ?? $_GET['phone'] ?? '');
 
-    if ($deleteId || $deletePhone) {
-        try {
-            $deletedRows = 0;
-            if ($deleteId) {
-                $del = $pdo->prepare("DELETE FROM users WHERE id = ?");
-                $del->execute([$deleteId]);
-                $deletedRows += $del->rowCount();
-            }
-            if ($deletePhone) {
-                $del2 = $pdo->prepare("DELETE FROM users WHERE phone_number = ?");
-                $del2->execute([$deletePhone]);
-                $deletedRows += $del2->rowCount();
-            }
-
-            echo json_encode([
-                'success' => true,
-                'message' => 'Contacto eliminado exitosamente de la base de datos C5i',
-                'deleted_id' => $deleteId,
-                'deleted_phone' => $deletePhone,
-                'affected_rows' => $deletedRows,
-            ]);
-            exit();
-        } catch (Exception $e) {
-            echo json_encode(['success' => false, 'message' => 'Error: ' . $e->getMessage()]);
-            exit();
+    try {
+        if ($delId) {
+            $pdo->prepare("DELETE FROM contactos WHERE id = ?")->execute([$delId]);
+            $pdo->prepare("DELETE FROM users WHERE id = ?")->execute([$delId]);
         }
+        if ($delPhone) {
+            $pdo->prepare("DELETE FROM contactos WHERE phone_number = ?")->execute([$delPhone]);
+            $pdo->prepare("DELETE FROM users WHERE phone_number = ?")->execute([$delPhone]);
+        }
+        echo json_encode(['success' => true, 'message' => 'Contacto eliminado']);
+    } catch (Exception $e) {
+        echo json_encode(['success' => false, 'message' => $e->getMessage()]);
     }
-    echo json_encode(['success' => true]);
     exit();
 }
 
 if ($method === 'GET') {
     try {
-        $stmt = $pdo->query("SELECT id, name, callsign, unit, phone_number, correo, status, role, avatar_url FROM users ORDER BY name ASC");
-        $allUsers = $stmt->fetchAll();
-        $contacts = array_map(function($u) {
-            return [
+        $stmt = $pdo->query("SELECT id, name, callsign, unit, phone_number, correo, status, 'Oficial Operativo' as role FROM contactos 
+                             UNION 
+                             SELECT id, name, callsign, unit, phone_number, correo, status, role FROM users 
+                             ORDER BY name ASC");
+        $rows = $stmt->fetchAll();
+
+        $seen = [];
+        $contacts = [];
+        foreach ($rows as $u) {
+            $key = !empty($u['phone_number']) ? $u['phone_number'] : $u['id'];
+            if (isset($seen[$key])) continue;
+            $seen[$key] = true;
+
+            $digits = preg_replace('/\D/', '', $u['phone_number'] ?? '');
+            $last4 = strlen($digits) >= 4 ? substr($digits, -4) : (strlen($digits) > 0 ? str_pad($digits, 4, '0', STR_PAD_LEFT) : '0000');
+            $callsign = !empty($u['callsign']) ? $u['callsign'] : ('RADIO-' . $last4);
+
+            $contacts[] = [
                 'id' => $u['id'],
                 'name' => $u['name'],
-                'callsign' => !empty($u['callsign']) ? $u['callsign'] : 'RADIO-' . rand(100, 999),
-                'unit' => !empty($u['unit']) ? $u['unit'] : 'Sector Operativo Hidalgo',
-                'phone_number' => !empty($u['phone_number']) ? $u['phone_number'] : '',
-                'email' => !empty($u['correo']) ? $u['correo'] : '',
-                'status' => !empty($u['status']) ? $u['status'] : 'online',
-                'role' => !empty($u['role']) ? $u['role'] : 'Oficial Operativo',
-                'avatar_url' => $u['avatar_url'] ?? null,
+                'callsign' => $callsign,
+                'unit' => !empty($u['unit']) ? $u['unit'] : 'Sector Operativo Hidalgo C5i',
+                'phone_number' => $u['phone_number'] ?? '',
+                'email' => $u['correo'] ?? '',
+                'status' => $u['status'] ?? 'online',
+                'role' => $u['role'] ?? 'Oficial Operativo',
             ];
-        }, $allUsers);
+        }
+
         echo json_encode(['success' => true, 'contacts' => $contacts, 'total' => count($contacts)]);
     } catch (Exception $e) {
         echo json_encode(['success' => true, 'contacts' => [], 'total' => 0]);
@@ -86,79 +99,67 @@ if ($method === 'GET') {
 
 if ($method === 'POST' || $method === 'PUT') {
     $contactId = $data['id'] ?? $_GET['id'] ?? null;
-    $oldId = $data['old_id'] ?? null;
     $oldPhone = preg_replace('/\D/', '', $data['old_phone'] ?? $data['old_phone_number'] ?? '');
-    $isEdit = !empty($data['is_edit']) || ($data['action'] ?? '') === 'update' || !empty($oldPhone) || ($method === 'PUT');
-
-    $firstName = trim($data['first_name'] ?? '');
-    $lastName = trim($data['last_name'] ?? '');
-    $name = trim($data['name'] ?? trim($firstName . ' ' . $lastName));
-    $callsign = strtoupper(trim($data['callsign'] ?? ''));
+    $oldId = $data['old_id'] ?? null;
+    
+    $name = trim($data['name'] ?? trim(($data['first_name'] ?? '') . ' ' . ($data['last_name'] ?? '')));
     $phone = preg_replace('/\D/', '', $data['phone_number'] ?? $data['phone'] ?? '');
     $email = trim($data['email'] ?? $data['correo'] ?? '');
     $unit = trim($data['unit'] ?? 'Sector Operativo Hidalgo C5i');
     $role = trim($data['role'] ?? 'Oficial Operativo');
 
     if (empty($name)) {
-        echo json_encode(['success' => false, 'message' => 'El nombre del contacto u oficial es requerido']);
+        echo json_encode(['success' => false, 'message' => 'El nombre es requerido']);
         exit();
     }
     if (empty($phone)) {
         $phone = '771' . rand(1000000, 9999999);
     }
-    if (empty($callsign)) {
-        $digits = preg_replace('/\D/', '', $phone);
-        $last4 = strlen($digits) >= 4 ? substr($digits, -4) : (strlen($digits) > 0 ? str_pad($digits, 4, '0', STR_PAD_LEFT) : rand(1000, 9999));
-        $callsign = 'RADIO-' . $last4;
+
+    $digits = preg_replace('/\D/', '', $phone);
+    $last4 = strlen($digits) >= 4 ? substr($digits, -4) : (strlen($digits) > 0 ? str_pad($digits, 4, '0', STR_PAD_LEFT) : '0000');
+    $autoCallsign = 'RADIO-' . $last4;
+    $callsign = strtoupper(trim($data['callsign'] ?? ''));
+
+    if (empty($callsign) || (!empty($oldPhone) && ($oldPhone !== $phone))) {
+        $callsign = $autoCallsign;
     }
 
     try {
         $existing = null;
         if ($contactId && strpos($contactId, 'off-') !== 0) {
-            $checkId = $pdo->prepare("SELECT id, name, callsign, phone_number FROM users WHERE id = ? LIMIT 1");
-            $checkId->execute([$contactId]);
-            $existing = $checkId->fetch();
-        }
-        if (!$existing && $oldId && strpos($oldId, 'off-') !== 0) {
-            $checkOldId = $pdo->prepare("SELECT id, name, callsign, phone_number FROM users WHERE id = ? LIMIT 1");
-            $checkOldId->execute([$oldId]);
-            $existing = $checkOldId->fetch();
+            $stmt = $pdo->prepare("SELECT id FROM users WHERE id = ? LIMIT 1");
+            $stmt->execute([$contactId]);
+            $existing = $stmt->fetch();
         }
         if (!$existing && $oldPhone) {
-            $checkOldPhone = $pdo->prepare("SELECT id, name, callsign, phone_number FROM users WHERE phone_number = ? LIMIT 1");
-            $checkOldPhone->execute([$oldPhone]);
-            $existing = $checkOldPhone->fetch();
+            $stmt = $pdo->prepare("SELECT id FROM users WHERE phone_number = ? LIMIT 1");
+            $stmt->execute([$oldPhone]);
+            $existing = $stmt->fetch();
         }
         if (!$existing && $phone) {
-            $checkPhone = $pdo->prepare("SELECT id, name, callsign, phone_number FROM users WHERE phone_number = ? LIMIT 1");
-            $checkPhone->execute([$phone]);
-            $existing = $checkPhone->fetch();
-        }
-        if (!$existing && $isEdit && $name) {
-            $checkName = $pdo->prepare("SELECT id, name, callsign, phone_number FROM users WHERE name = ? LIMIT 1");
-            $checkName->execute([$name]);
-            $existing = $checkName->fetch();
+            $stmt = $pdo->prepare("SELECT id FROM users WHERE phone_number = ? LIMIT 1");
+            $stmt->execute([$phone]);
+            $existing = $stmt->fetch();
         }
 
-        if ($existing) {
-            $upd = $pdo->prepare("UPDATE users SET name = ?, phone_number = ?, correo = ?, callsign = ?, unit = ?, status = 'online', updated_at = NOW() WHERE id = ?");
-            $upd->execute([$name, $phone, $email ?: null, $callsign, $unit, $existing['id']]);
-            $savedId = $existing['id'];
-            $msg = 'Contacto actualizado en la base de datos C5i';
-        } else {
-            $newId = ($contactId && strpos($contactId, 'off-') !== 0) ? $contactId : ('usr-cnt-' . time() . '-' . rand(100, 999));
-            $ins = $pdo->prepare("INSERT INTO users (id, phone_number, name, correo, password_hash, callsign, unit, status, role, created_at, updated_at) 
-                                  VALUES (?, ?, ?, ?, '123', ?, ?, 'online', ?, NOW(), NOW())");
-            $ins->execute([$newId, $phone, $name, $email ?: null, $callsign, $unit, $role]);
-            $savedId = $newId;
-            $msg = 'Contacto registrado y sincronizado en la base de datos C5i';
-        }
+        $targetId = $existing ? $existing['id'] : (($contactId && strpos($contactId, 'off-') !== 0) ? $contactId : ('usr-cnt-' . time() . '-' . rand(100, 999)));
+
+        $stmtC = $pdo->prepare("INSERT INTO contactos (id, name, phone_number, callsign, correo, unit, status) 
+                                VALUES (?, ?, ?, ?, ?, ?, 'online') 
+                                ON DUPLICATE KEY UPDATE name=VALUES(name), phone_number=VALUES(phone_number), callsign=VALUES(callsign), correo=VALUES(correo), unit=VALUES(unit), status='online'");
+        $stmtC->execute([$targetId, $name, $phone, $callsign, $email ?: null, $unit]);
+
+        $stmtU = $pdo->prepare("INSERT INTO users (id, phone_number, name, correo, password_hash, callsign, unit, status, role, created_at, updated_at) 
+                                VALUES (?, ?, ?, ?, '123', ?, ?, 'online', ?, NOW(), NOW()) 
+                                ON DUPLICATE KEY UPDATE name=VALUES(name), phone_number=VALUES(phone_number), callsign=VALUES(callsign), correo=VALUES(correo), unit=VALUES(unit), status='online', updated_at=NOW()");
+        $stmtU->execute([$targetId, $phone, $name, $email ?: null, $callsign, $unit, $role]);
 
         echo json_encode([
             'success' => true,
-            'message' => $msg,
+            'message' => 'Contacto sincronizado en tabla contactos y users',
             'contact' => [
-                'id' => $savedId,
+                'id' => $targetId,
                 'name' => $name,
                 'callsign' => $callsign,
                 'unit' => $unit,
