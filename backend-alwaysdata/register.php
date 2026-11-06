@@ -10,7 +10,8 @@ $data = getJsonInput();
 $name = trim($data['name'] ?? '');
 $phone = trim($data['phone_number'] ?? $data['phone'] ?? '');
 $correo = trim($data['correo'] ?? $data['email'] ?? '');
-$password = trim($data['password'] ?? '123456');
+$password = trim($data['password'] ?? '');
+if (strlen($password) < 6) { http_response_code(422); echo json_encode(['success' => false, 'message' => 'Ingresa una contraseña de al menos 6 caracteres.']); exit(); }
 $callsign = trim($data['callsign'] ?? '');
 $unit = trim($data['unit'] ?? 'Sector Operativo Hidalgo');
 

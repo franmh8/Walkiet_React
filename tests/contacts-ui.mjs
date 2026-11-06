@@ -6,17 +6,18 @@ try {
 const page=await browser.newPage({viewport:{width:430,height:900}});
 let contacts=[], failCreate=true, failDelete=true, failList=true, writes=0, reads=0;
 await page.addInitScript(()=>{
- localStorage.setItem('c5i_native_user',JSON.stringify({id:'test-user',name:'Usuario Prueba',badge:'TEST',role:'Operador',unit:'Pruebas'}));
+ localStorage.setItem('c5i_native_user',JSON.stringify({id:'test-user',name:'Usuario Prueba',badge:'TEST',role:'Operador',unit:'Pruebas',authToken:'a'.repeat(64)}));
  localStorage.setItem('c5i_officers_cache_v2',JSON.stringify([{id:'off-ghost',name:'Fantasma local'}]));
  localStorage.setItem('c5i_deleted_contacts_v2',JSON.stringify(['cnt-ui']));
 });
 await page.route('https://walkiet.alwaysdata.net/**',async route=>{
  const request=route.request();
- if(!request.url().endsWith('/contacts.php')) return route.fulfill({json:{success:true,channels:[]}});
+ if(request.method()==='OPTIONS') return route.fulfill({status:204,headers:{'access-control-allow-origin':'*','access-control-allow-headers':'authorization,content-type','access-control-allow-methods':'GET,POST,OPTIONS'}});
+ if(new URL(request.url()).pathname !== '/contacts.php') return route.fulfill({json:{success:true,channels:[]}});
  if(request.method()==='GET') {
   reads++;
   return failList ? route.fulfill({status:503,json:{success:false,code:'CONTACTS_TABLE_MISSING',message:'Falta la tabla contactos. Ejecuta la migración en la BD configurada.'}})
-    : route.fulfill({json:{success:true,contacts}});
+    : route.fulfill({json:{success:true,contacts:contacts.filter(c => !new URL(request.url()).searchParams.get('q') || [c.name,c.phone_number,c.email,c.callsign].some(v=>(v||'').toLowerCase().startsWith(new URL(request.url()).searchParams.get('q').toLowerCase()))),has_more:false,next_cursor:null}});
  }
  writes++;
  const data=JSON.parse(request.postData());
@@ -38,7 +39,7 @@ assert.equal(reads,initialReads);
 failList=false;
 await page.getByLabel('Actualizar contactos',{exact:true}).click();
 console.log('OK: error de consulta visible, sin sondeo fallido continuo y con reintento manual');
-await page.getByText('0 contactos en la BD',{exact:true}).waitFor();
+await page.getByText('0 contactos cargados',{exact:true}).waitFor();
 assert.equal(await page.getByText('Fantasma local',{exact:true}).count(),0);
 await page.getByText('+ Agregar Contacto',{exact:true}).click();
 await page.getByPlaceholder('Ej. Juan Carlos',{exact:true}).fill('Contacto');
@@ -53,7 +54,7 @@ console.log('OK: error PHP HTTP 200 conserva formulario y no crea éxito local')
 failCreate=false;
 await page.getByLabel('Guardar contacto',{exact:true}).click();
 assert.equal(await page.getByLabel('Guardar contacto',{exact:true}).getAttribute('aria-disabled'),'true');
-await page.getByText('1 contactos en la BD',{exact:true}).waitFor();
+await page.getByText('1 contactos cargados',{exact:true}).waitFor();
 assert.equal(writes,2);
 await page.reload();
 await page.getByText('Contactos',{exact:true}).click();
@@ -78,10 +79,10 @@ console.log('OK: fallo de eliminación conserva contacto');
 failDelete=false;
 await page.getByText('Eliminar Contacto',{exact:true}).click();
 await page.getByLabel('Confirmar acción',{exact:true}).click();
-await page.getByText('0 contactos en la BD',{exact:true}).waitFor();
+await page.getByText('0 contactos cargados',{exact:true}).waitFor();
 await page.reload();
 await page.getByText('Contactos',{exact:true}).click();
-await page.getByText('0 contactos en la BD',{exact:true}).waitFor();
+await page.getByText('0 contactos cargados',{exact:true}).waitFor();
 assert.equal(contacts.length,0);assert.equal(writes,5);
 await page.getByText('Chat',{exact:true}).click();
 await page.getByLabel('Nueva conversación',{exact:true}).click();

@@ -12,8 +12,6 @@ import {
   Platform,
   ActivityIndicator,
   Image,
-  SafeAreaView,
-  LogBox,
   Modal,
   KeyboardAvoidingView,
   Animated,
@@ -23,8 +21,9 @@ import {
   TouchableWithoutFeedback,
   Linking,
 } from 'react-native';
+import { SafeAreaView, SafeAreaProvider } from 'react-native-safe-area-context';
 import { safeStorage } from './storage';
-import type { DirectoryContact as ContactOfficer } from '../services/contactsApi';
+import { logoutContactSession, type DirectoryContact as ContactOfficer } from '../services/contactsApi';
 import { ContactsScreen, type ContactsScreenHandle } from './contacts/ContactsScreen';
 import { useContactsDirectory } from './contacts/useContactsDirectory';
 import { useNativeFeedback } from './components/NativeFeedback';
@@ -83,9 +82,6 @@ function ensureWebQrScannerLoaded() {
     document.head.appendChild(s);
   } catch {}
 }
-
-// Silenciar advertencia informativa de SafeAreaView en React Native
-LogBox.ignoreLogs(['SafeAreaView has been deprecated']);
 
 // Componente de cámara nativa con resolución protegida contra fallos nativos
 let NativeCameraView: any = null;
@@ -160,6 +156,7 @@ interface User {
   callsign?: string;
   email?: string;
   loginIdentifier?: string;
+  authToken?: string;
 }
 
 interface Channel {
@@ -332,7 +329,7 @@ async function fetchWithTimeout(url: string, options: any = {}, timeoutMs = 3500
   }
 }
 
-export default function NativeApp() {
+function NativeAppScreen() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
@@ -532,7 +529,6 @@ export default function NativeApp() {
 
   // Modals for Chat & Contacts
   const [isNewChatModalOpen, setIsNewChatModalOpen] = useState(false);
-  const [chatContactSearchQuery, setChatContactSearchQuery] = useState('');
 
   // Modal: Crear Grupo de Conversación
   const [isCreateGroupChatModalOpen, setIsCreateGroupChatModalOpen] = useState(false);
@@ -541,7 +537,7 @@ export default function NativeApp() {
   const [createGroupError, setCreateGroupError] = useState<string | null>(null);
 
   const { showTacticalToast, feedback } = useNativeFeedback();
-  const contactsDirectory = useContactsDirectory(serverUrl, Boolean(currentUser));
+  const contactsDirectory = useContactsDirectory(serverUrl, currentUser ? { userId: currentUser.id, token: currentUser.authToken || '' } : null);
   const officersList = contactsDirectory.contacts;
   const contactsScreenRef = useRef<ContactsScreenHandle>(null);
 
@@ -1561,7 +1557,7 @@ export default function NativeApp() {
             data = JSON.parse(rawText);
           } catch {}
 
-          if (res && res.ok && data && data.success && data.user) {
+          if (res && res.ok && data && data.success && data.user && typeof data.token === 'string') {
             remoteUser = {
               id: String(data.user.id || data.user.phone_number || cleanIdentifier),
               name: data.user.name,
@@ -1572,7 +1568,10 @@ export default function NativeApp() {
               callsign: data.user.callsign,
               email: data.user.correo || (cleanIdentifier.includes('@') ? cleanIdentifier : undefined),
               loginIdentifier: cleanIdentifier,
+              authToken: data.token,
             };
+          } else if (res?.ok && data?.success && data?.user && !data?.token) {
+            loginErrorMsg = 'El servidor necesita actualizarse para iniciar una sesión privada. Contacta al administrador.';
           } else if (data && (data.message || data.code)) {
             const errorCode = data?.code || '';
             const msg = data?.message || '';
@@ -1902,18 +1901,7 @@ export default function NativeApp() {
 
   // Métodos del flujo de Recuperar Contraseña (Image 1 / ForgotPasswordModal)
   const openRecoveryModal = () => {
-    setRecoverVisible(true);
-    setRecoverStep('identify');
-    setRecoverIdentifier(identifier || '');
-    setRecoverMatchedUser(null);
-    setRecoverGeneratedCode(null);
-    setRecoverTokenString('');
-    setRecoverNewPassword('');
-    setRecoverConfirmPassword('');
-    setRecoverShowNewPass(false);
-    setRecoverShowConfirmPass(false);
-    setRecoverErrorMessage(null);
-    setRecoverLoading(false);
+    setInlineWarning('Para recuperar acceso, solicita al administrador la recuperación de tu cuenta.');
   };
 
   const handleIdentifySubmit = async () => {
@@ -2117,6 +2105,12 @@ export default function NativeApp() {
   };
 
   const handleLogout = async () => {
+    void logoutContactSession(serverUrl, currentUser?.authToken).catch(() => {});
+    setConversations([]);
+    setActiveConversation(null);
+    setSelectedGroupMembers([]);
+    setIsNewChatModalOpen(false);
+    setIsCreateGroupChatModalOpen(false);
     pttPressedRef.current = false;
     pttChannelAtPressRef.current = null;
     pttUserAtPressRef.current = null;
@@ -2255,32 +2249,25 @@ export default function NativeApp() {
     });
   }, [conversations, selectedChatFilter, chatSearchQuery]);
 
-  const filteredOfficers = useMemo(() => {
-    if (!chatContactSearchQuery.trim()) return officersList;
-    const q = chatContactSearchQuery.toLowerCase();
-    return officersList.filter((off) => {
-      return (
-        off.name.toLowerCase().includes(q) ||
-        off.callsign.toLowerCase().includes(q) ||
-        (off.phone_number && off.phone_number.includes(q)) ||
-        (off.email && off.email.toLowerCase().includes(q)) ||
-        (off.unit && off.unit.toLowerCase().includes(q))
-      );
-    });
-  }, [officersList, chatContactSearchQuery]);
+  const filteredOfficers = officersList;
 
   const totalChatCount = conversations.length;
   const groupsChatCount = conversations.filter((c) => c.type === 'group').length;
   const directChatCount = conversations.filter((c) => c.type === 'direct').length;
 
   const handleStartDirectChat = (officer: ContactOfficer) => {
+    if (!officer.registered_user_id) {
+      showTacticalToast('Este contacto aún no tiene cuenta en la app. Puedes llamarle por teléfono.', 'info');
+      return false;
+    }
+    const recipient = officer.registered_user_id;
     const existing = conversations.find(
-      (c) => c.type === 'direct' && (c.targetUserId === officer.id || c.name === officer.name)
+      (c) => c.type === 'direct' && (c.targetUserId === recipient || c.name === officer.name)
     );
     if (existing) {
       setActiveConversation(existing);
       setIsNewChatModalOpen(false);
-      return;
+      return true;
     }
 
     const newConv: Conversation = {
@@ -2289,7 +2276,7 @@ export default function NativeApp() {
       name: officer.name,
       callsign: officer.callsign,
       unit: officer.unit,
-      targetUserId: officer.id,
+      targetUserId: recipient,
       lastMessage: '',
       lastMessageTime: '',
       unreadCount: 0,
@@ -2303,6 +2290,7 @@ export default function NativeApp() {
     try {
       soundEngine.playIncomingChirp();
     } catch {}
+    return true;
   };
 
   const handleCreateGroupChatSubmit = () => {
@@ -2337,9 +2325,9 @@ export default function NativeApp() {
   };
 
   const handleContactUpdated = (contact: ContactOfficer) => {
-    setConversations(prev => prev.map(c => c.type === 'direct' && c.targetUserId === contact.id
+    setConversations(prev => prev.map(c => c.type === 'direct' && c.targetUserId === contact.registered_user_id
       ? { ...c, name: contact.name, callsign: contact.callsign } : c));
-    setActiveConversation(prev => prev?.type === 'direct' && prev.targetUserId === contact.id
+    setActiveConversation(prev => prev?.type === 'direct' && prev.targetUserId === contact.registered_user_id
       ? { ...prev, name: contact.name, callsign: contact.callsign } : prev);
   };
   const openContactRegistration = () => {
@@ -3613,7 +3601,10 @@ export default function NativeApp() {
                 activeOpacity={0.7}
               >
                 <Text style={styles.cleanChannelLabel}>CANAL ACTUAL</Text>
-                <Text style={styles.cleanChannelTitle} numberOfLines={1}>
+                <Text
+                  style={[styles.cleanChannelTitle, Platform.OS === 'android' && styles.cleanChannelTitleAndroid]}
+                  numberOfLines={Platform.OS === 'android' ? 3 : 1}
+                >
                   {channelTitle}
                 </Text>
               </TouchableOpacity>
@@ -4541,7 +4532,7 @@ export default function NativeApp() {
         )}
 
         <ContactsScreen ref={contactsScreenRef} visible={currentTab === 'Contactos'} serverUrl={serverUrl}
-          directory={contactsDirectory} onSos={handleTriggerSos} onStartChat={contact => { handleStartDirectChat(contact); setCurrentTab('Chat'); }}
+          directory={contactsDirectory} onSos={handleTriggerSos} onStartChat={contact => { if (handleStartDirectChat(contact)) setCurrentTab('Chat'); }}
           onContactUpdated={handleContactUpdated} onOpenCamera={handleOpenCamera} />
 
         {currentTab === 'Perfil' && (
@@ -5503,7 +5494,7 @@ export default function NativeApp() {
         transparent
         onRequestClose={() => {
           setIsNewChatModalOpen(false);
-          setChatContactSearchQuery('');
+          contactsDirectory.setQuery('');
         }}
       >
         <View style={styles.chatModalBackdrop}>
@@ -5512,7 +5503,7 @@ export default function NativeApp() {
             activeOpacity={1}
             onPress={() => {
               setIsNewChatModalOpen(false);
-              setChatContactSearchQuery('');
+              contactsDirectory.setQuery('');
             }}
           />
           <View style={styles.chatModalCard}>
@@ -5533,7 +5524,7 @@ export default function NativeApp() {
                   style={styles.chatModalCloseBtn}
                   onPress={() => {
                     setIsNewChatModalOpen(false);
-                    setChatContactSearchQuery('');
+                    contactsDirectory.setQuery('');
                   }}
                   hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
                 >
@@ -5567,13 +5558,13 @@ export default function NativeApp() {
                 <SearchIcon size={16} color="#94a3b8" strokeWidth={2} />
                 <TextInput
                   style={styles.chatModalSearchInput}
-                  value={chatContactSearchQuery}
-                  onChangeText={setChatContactSearchQuery}
+                  value={contactsDirectory.query}
+                  onChangeText={contactsDirectory.setQuery}
                   placeholder="Buscar por nombre, indicativo o teléfono..."
                   placeholderTextColor="#94a3b8"
                 />
-                {Boolean(chatContactSearchQuery) && (
-                  <TouchableOpacity onPress={() => setChatContactSearchQuery('')}>
+                {Boolean(contactsDirectory.query) && (
+                  <TouchableOpacity onPress={() => contactsDirectory.setQuery('')}>
                     <XIcon size={14} color="#94a3b8" />
                   </TouchableOpacity>
                 )}
@@ -5639,6 +5630,9 @@ export default function NativeApp() {
                       </View>
                     </TouchableOpacity>
                   ))}
+                  {contactsDirectory.hasMore && <TouchableOpacity onPress={() => contactsDirectory.loadMore()} disabled={contactsDirectory.loading}>
+                    <Text style={{ padding: 16, color: '#6b1d2f' }}>Cargar más contactos</Text>
+                  </TouchableOpacity>}
                 </ScrollView>
               )}
             </View>
@@ -5722,9 +5716,11 @@ export default function NativeApp() {
                     Marca los oficiales que participarán en el grupo cifrado
                   </Text>
 
+                  <TextInput value={contactsDirectory.query} onChangeText={contactsDirectory.setQuery}
+                    placeholder="Buscar miembros por nombre o teléfono..." style={styles.recoveryInput} />
                   <View style={{ gap: 8, marginTop: 8 }}>
-                    {officersList.map((off) => {
-                      const isChecked = selectedGroupMembers.includes(off.id);
+                    {officersList.filter(off => off.registered_user_id).map((off) => {
+                      const isChecked = selectedGroupMembers.includes(off.registered_user_id!);
                       return (
                         <TouchableOpacity
                           key={off.id}
@@ -5732,7 +5728,7 @@ export default function NativeApp() {
                             styles.chatGroupMemberItem,
                             isChecked && styles.chatGroupMemberItemChecked,
                           ]}
-                          onPress={() => toggleGroupMemberSelection(off.id)}
+                          onPress={() => toggleGroupMemberSelection(off.registered_user_id!)}
                           activeOpacity={0.7}
                         >
                           <View
@@ -5753,6 +5749,9 @@ export default function NativeApp() {
                       );
                     })}
                   </View>
+                  {contactsDirectory.hasMore && <TouchableOpacity onPress={() => contactsDirectory.loadMore()} disabled={contactsDirectory.loading}>
+                    <Text style={{ padding: 16, color: '#6b1d2f' }}>Cargar más contactos</Text>
+                  </TouchableOpacity>}
                 </View>
               </ScrollView>
 
@@ -5867,6 +5866,15 @@ export default function NativeApp() {
   );
 }
 
+// El proveedor permite que Android/iOS respeten la barra de estado y la navegación inferior.
+export default function NativeApp() {
+  return (
+    <SafeAreaProvider style={{ flex: 1, backgroundColor: '#f8fafc' }}>
+      <NativeAppScreen />
+    </SafeAreaProvider>
+  );
+}
+
 const styles = StyleSheet.create({
   cleanContainer: {
     flex: 1,
@@ -5881,7 +5889,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingHorizontal: 20,
     paddingTop: 16,
-    paddingBottom: 24,
+    paddingBottom: Platform.OS === 'android' ? 16 : 24,
   },
   cleanTopBar: {
     flexDirection: 'row',
@@ -5906,6 +5914,11 @@ const styles = StyleSheet.create({
     color: '#0f172a',
     letterSpacing: -0.5,
     marginTop: 2,
+  },
+  // Solo Android: los nombres largos de canales no se cortan tan pronto.
+  cleanChannelTitleAndroid: {
+    fontSize: 18,
+    lineHeight: 22,
   },
   cleanHeaderActions: {
     flexDirection: 'row',

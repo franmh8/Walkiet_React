@@ -1,141 +1,150 @@
-# Desplegar la corrección de contactos
+# Agendas privadas de contactos
 
-El 6 de noviembre de 2026, la consulta de solo lectura a
-`https://walkiet.alwaysdata.net/contacts.php` devolvió HTTP 200 con un error de
-sintaxis PHP: `unexpected end of file`, línea 161. La app anterior mostraba éxito
-antes de comprobar la respuesta y retenía contactos locales.
+`users` contiene las cuentas registradas y sus credenciales. `contactos` contiene
+las fichas que cada cuenta guarda en su agenda. El CRUD de contactos nunca crea,
+edita ni elimina cuentas. Un contacto puede existir sin tener una cuenta en la app.
+La tabla antigua `contacts` no se usa en este flujo; se conserva como legado.
 
-## HTTP 500 después de sustituir el PHP
+## Modelo y consultas
 
-El registro PHP del servidor confirmó:
-`SQLSTATE[42S02]: 1146 Table 'walkiet_c5i.contactos' doesn't exist`.
-Para ese caso, seleccionar **walkiet_c5i** en phpMyAdmin y aplicar una sola vez
-`migrations/001_contacts.sql`. El PHP puede conectar con MySQL y aun así fallar
-si no existe esta tabla. La separación de React no crea tablas en el servidor.
+- `contactos.owner_user_id` identifica al dueño y referencia `users.id` con clave
+  foránea. Tras asignar los registros antiguos se establece como NOT NULL.
+- `UNIQUE(owner_user_id, phone_number)` evita duplicados en una agenda. Distintas
+  cuentas pueden guardar el mismo teléfono con nombres/correos diferentes.
+- `(owner_user_id, name, id)` sirve para listar por nombre y avanzar mediante cursor.
+  También hay índices por propietario/teléfono, correo e indicativo para búsqueda.
+- Cada petición devuelve 50 contactos; el servidor acepta como máximo 100. Devuelve
+  `has_more` y `next_cursor`, sin contar ni descargar toda la agenda.
+- La búsqueda usa prefijos de nombre, teléfono, correo e indicativo. Cada rama de
+  búsqueda está acotada al dueño y dispone de índice. Los comodines se escapan.
+- La vinculación con cuentas registradas se consulta por teléfono para un máximo
+  de una página de contactos, en una sola consulta adicional con `IN`. No hay una
+  consulta por fila ni un JOIN entre columnas con collations incompatibles.
+- `registered_user_id` es una respuesta calculada de solo lectura para chat/PTT.
+  El ID de una ficha privada no se usa como ID de cuenta.
 
-Si el endpoint devuelve JSON con `success:false`, ya se está ejecutando el PHP,
-pero no se confirmó el acceso al directorio. El mensaje genérico no permite
-atribuirlo a una tabla ausente, una columna o permisos sin revisar el log.
-El indicador ONLINE de `status.php` tampoco comprueba la tabla `contactos`.
+## Identidad y aislamiento
 
-Subir las versiones actuales de **ambos** PHP y volver a abrir `/contacts.php`.
-La respuesta incluirá uno de estos códigos cuando PDO identifica la causa:
+El login verifica la contraseña y devuelve un token aleatorio de 256 bits con
+caducidad de siete días. Solo su SHA-256 se guarda en `auth_sessions`, separada de
+`users`. La agenda exige `Authorization: Bearer TOKEN` y obtiene el dueño desde la
+sesión validada. Cualquier `owner_user_id`/`user_id` recibido en body o query se
+ignora. Lectura, edición y borrado siempre incluyen el propietario en SQL. Un ID
+ajeno devuelve 404; una sesión ausente, vencida o revocada devuelve 401.
 
-| Código | Acción |
-| --- | --- |
-| `CONTACTS_TABLE_MISSING` | Crear `contactos` con la migración en la BD que usa `conexion.php`. |
-| `CONTACTS_SCHEMA_MISMATCH` | Comparar las columnas existentes con la migración y corregir las diferencias. |
-| `CONTACTS_DATABASE_PERMISSIONS` | Dar al usuario de conexión permisos sobre esa tabla. |
-| `CONTACTS_DATABASE_UNAVAILABLE` | Revisar la conexión al host MySQL. |
-| `CONTACTS_SERVER_ERROR` | Consultar la línea `Contacts API:` del registro PHP de Alwaysdata. |
+En producción se usa HTTPS para enviar el token.
 
-Estos diagnósticos responden con HTTP 503 para errores reconocidos de BD;
-los detalles SQL se registran únicamente en el servidor. No se simula éxito.
-Para verificar la BD seleccionada sin modificar datos, ejecutar en phpMyAdmin:
+El logout revoca el token y limpia la agenda, conversaciones y selecciones locales.
+Las respuestas pendientes de otra cuenta se descartan. La app no usa contactos de
+muestra ni una caché compartida. Las sesiones antiguas sin token deben cerrar e
+iniciar sesión de nuevo. Los placeholders `hash_demo` no autentican cuentas.
+El endpoint antiguo de cambio de contraseña también exige sesión y actúa solo sobre
+su titular; revoca todas sus sesiones al cambiar la clave. Se retiró el flujo de
+recuperación pública que entregaba códigos al solicitante o permitía cambiar una
+clave con solo el teléfono. Recuperar acceso sin sesión requiere al administrador
+hasta integrar un canal de verificación real.
+
+## Actualización de una BD existente
+
+Usar la misma BD que utiliza `conexion.php`. Exportar `users` y `contactos` antes
+de migrar. Durante el cambio, pausar las altas/ediciones de la versión anterior.
+
+1. Ejecutar **`migrations/002_private_contacts.sql`**. Sirve también si falta
+   `contactos`. Toma el tipo y la collation de `users.id` para la relación; elimina
+   la unicidad global del teléfono e incorpora los índices privados y sesiones.
+   Se probó al repetirla y con collations `unicode_ci`/`uca1400_ai_ci` diferentes.
+2. Los registros existentes quedan sin dueño y no aparecen en ninguna agenda
+   hasta asignarlos. En **`003_assign_existing_contacts.sql`**, sustituir
+   `REEMPLAZAR_TELEFONO` por el teléfono de la cuenta elegida y ejecutar. El script
+   resuelve su ID en `users`, asigna únicamente filas sin dueño y, si todas quedan
+   asignadas, exige NOT NULL. Si la cuenta no existe no asigna datos. Si hay un
+   teléfono que ya está en la agenda destino, resolver el duplicado antes de
+   repetir la asignación; la restricción evita sobrescribir fichas.
+3. Verificar que `contactos_asignados`, `propietario` y `resultado` sean correctos.
+   Las filas que ya tengan dueño conservan su propietario.
+
+La elección de propietario se proporciona durante la instalación; no se guarda
+un teléfono real en el repositorio público. No repetir la migración global 001 ni
+el INSERT que copiaba todas las cuentas `users`. No borrar cuentas antiguas para
+limpiar contactos: su procedencia debe revisarse por separado.
+
+## Archivos que se suben a Alwaysdata
+
+Después de las migraciones, subir primero los helpers y luego las entradas:
+
+- `auth-session.php`, `contacts-handler.php`.
+- `contacts.php`, `login.php`, `logout.php`, `reset-password.php`, `register.php`, `api/login.php`, `api/register.php`.
+- `.htaccess`, que deja pasar Authorization y evita cabeceras CORS de origen duplicadas.
+
+Conservar `conexion.php` y `cors.php`. Se necesita SELECT sobre cuentas y sesiones,
+CRUD sobre agenda/sesiones y los permisos DDL necesarios durante la migración.
+`database_schema.sql` ya no inserta usuarios demo; no hace falta volver a ejecutarlo
+sobre una instalación existente.
+
+Actualizar también la app y cerrar/iniciar sesión. Abrir `contacts.php` directamente
+sin token ahora debe devolver **401**: no es una prueba de fallo de conexión. Para
+probar, entrar con A, guardar un contacto, cambiar a B y verificar su agenda propia.
+Después intentar editar/borrar un ID de A con el token de B: debe responder 404.
+
+Node usa la misma BD, esquema y tokens que PHP. Login y registro devuelven error si
+MySQL no está disponible; no simulan una cuenta persistida en `.walkiet_db.json`.
+Node requiere `npm install` para incorporar `bcryptjs` y validar hashes compatibles.
+Admite `DB_SOCKET` para una conexión Unix local, además de `DB_HOST`/`DB_PORT` para TCP.
+
+## App
+
+- `src/native/contacts/ContactsScreen.tsx`: listado virtualizado con SectionList,
+  búsqueda en servidor, ficha y formularios de CRUD, y botón Cargar más contactos.
+- `useContactsDirectory.ts`: estado acotado a usuario/token/servidor, búsqueda con
+  debounce de 350 ms, cursor, invalidación de respuestas antiguas y recarga tras
+  escrituras. No realiza sondeos periódicos de toda la agenda.
+- `src/services/contactsApi.ts`: contrato HTTP, token, validación y páginas acotadas.
+- `NativeApp.tsx`: login/logout y uso de la misma agenda en chat y selección de grupo.
+  Los contactos sin cuenta registrada pueden guardarse y llamarse por teléfono;
+  chat/grupos solo utilizan IDs de cuentas existentes.
+
+## Mantenimiento y rendimiento
+
+Programar, por ejemplo cada hora, una tarea en Alwaysdata que ejecute por lotes:
 
 ```sql
-SELECT DATABASE() AS base_actual;
-SHOW TABLES LIKE 'contactos';
+DELETE FROM auth_sessions WHERE expires_at <= UTC_TIMESTAMP() LIMIT 1000;
 ```
 
-## Base de datos
-
-En phpMyAdmin, seleccionar la misma BD que usa `conexion.php`. Hacer respaldo de
-`contactos` antes de aplicar `migrations/001_contacts.sql`, una sola vez:
-
-1. Crear la tabla si falta.
-2. Consultar duplicados de teléfono. Resolverlos antes de añadir el índice único;
-   la migración no borra registros ni elige automáticamente cuál conservar.
-3. Añadir el índice único y copiar al directorio los usuarios existentes que aún
-   no están en `contactos`. No repetir la importación después de eliminar contactos.
-
-El CRUD opera sobre el directorio global `contactos`. Las cuentas y contraseñas
-de `users` permanecen independientes; registrar un contacto no crea una cuenta
-de acceso. Los usuarios importados conservan su ID para las conversaciones existentes.
-Los registros locales que nunca llegaron a la BD ya no se muestran como guardados;
-se deben registrar otra vez después de corregir el servidor.
-
-## Archivos del servidor
-
-Si la creación terminó pero la importación devuelve **1267 / Illegal mix of
-collations**, ejecutar únicamente este INSERT corregido, una vez, para completar
-la importación inicial. No hace falta repetir CREATE ni añadir otra vez el índice:
+El índice de caducidad evita recorrer sesiones vigentes. El borrado de una cuenta
+elimina sus sesiones y su agenda mediante claves foráneas. Un borrado de contacto
+elimina solo esa ficha. Verificar el plan con el ID real de un propietario:
 
 ```sql
-INSERT INTO contactos (id, name, phone_number, callsign, correo, unit, status)
-SELECT u.id, u.name, u.phone_number, u.callsign, u.correo, u.unit, u.status
-FROM users u
-WHERE NOT EXISTS (
-  SELECT 1 FROM contactos c
-  WHERE c.id COLLATE utf8mb4_unicode_ci = u.id COLLATE utf8mb4_unicode_ci
-     OR c.phone_number COLLATE utf8mb4_unicode_ci = u.phone_number COLLATE utf8mb4_unicode_ci
-);
+EXPLAIN SELECT id, name FROM contactos
+WHERE owner_user_id = 'ID_DEL_USUARIO'
+ORDER BY name, id LIMIT 51;
 ```
 
-Las comparaciones usan una collation explícita común a ambas tablas, aunque la
-BD haya heredado `utf8mb4_uca1400_ai_ci` para la tabla nueva. Esta consulta no
-modifica la estructura de `users` ni de `contactos`. La migración actualizada
-también declara la collation al crear una tabla nueva.
+En las pruebas MariaDB usó `idx_contactos_owner_name`. Las páginas con cursor evitan
+el costo creciente de OFFSET y la app virtualiza la lista. No se promete un tiempo
+universal: depende del volumen, hardware y consultas; medir planes en la BD real
+antes de añadir índices o cambios de infraestructura.
 
-Subir juntos al directorio del backend, normalmente `/home/walkiet/www/`:
+## Validación reproducible
 
-- `contacts.php`
-- `contacts-handler.php`
-- `.htaccess` (incluye las rutas `/api/contacts` y `/api/contacts/:id`)
-
-Reutilizar `conexion.php` y `cors.php` existentes. No cambiar sus credenciales.
-El proceso PHP debe tener permisos SELECT, INSERT, UPDATE y DELETE en `contactos`.
-Las operaciones HTTP son GET (lista), POST con `action: create|update|delete`,
-PUT (edición) y DELETE (eliminación). Actualizar/eliminar requiere el ID persistido.
-Los errores tienen `success:false` y HTTP 4xx/5xx; no se devuelve una lista vacía
-cuando falla SQL. Las escrituras usan consultas preparadas y responden después
-de confirmar la transacción. Teléfono único, de 10 a 15 dígitos, y correo opcional.
-
-## Organización del código de la app
-
-- `src/native/contacts/ContactsScreen.tsx`: listado, búsqueda, ficha, formularios y confirmación de eliminación.
-- `src/native/contacts/useContactsDirectory.ts`: estado del directorio, consultas, escrituras y sondeo compartidos con chat/grupos. Reintenta cada 15 s si está disponible y cada 60 s tras un error, además del botón manual.
-- `src/services/contactsApi.ts`: contrato HTTP y validación de las respuestas.
-- `src/native/components/NativeFeedback.tsx`: avisos y confirmaciones reutilizables.
-- `NativeApp.tsx`: integración con navegación, conversaciones y selección de miembros; sin formularios ni peticiones de contactos.
-
-## Aplicación y Node
-
-Publicar la app actualizada o reiniciar Expo con esta rama. Al abrir Contactos se
-consulta la BD; el botón **Actualizar contactos** permite reintentar. Las operaciones
-mantienen abierto el formulario con el error si el servidor no confirma el cambio.
-En caso de timeout, consultar de nuevo antes de reintentar: la escritura pudo
-completarse aunque no llegara la respuesta.
-
-Si se usa `server.ts`, configurar sus variables MySQL para apuntar a la misma BD y
-aplicar la misma migración. Contactos devuelve 503 si MySQL no está disponible;
-ya no escribe `.walkiet_db.json` para aparentar una sincronización.
-
-## Validación
+La preparación del entorno temporal está en `tests/fixtures/README.md`.
 
 - `npm run build`
 - `node --import tsx tests/contacts-api.test.ts`
-- `node --import tsx tests/contacts-directory.test.ts`
-- `php -l backend-alwaysdata/contacts.php`
-- `php -l backend-alwaysdata/contacts-handler.php`
-- `php tests/contacts-php.php` (requiere PDO SQLite; usa una BD en memoria)
+- `node --import tsx tests/contacts-directory.test.ts` (las pruebas MariaDB necesitan
+  `CONTACTS_TEST_SOCKET` y una BD exclusiva `contacts_test_node` con la migración).
+- `php tests/contacts-php.php` usa PDO SQLite en memoria. Para probar MariaDB,
+  `CONTACTS_TEST_DSN` debe apuntar a una BD cuyo nombre empiece por `contacts_test_`.
+  **Esas pruebas eliminan datos de las tablas de la BD de pruebas. Nunca usar producción.**
+- `node tests/contacts-ui.mjs` usa Chromium con backend interceptado para fallos,
+  formularios conservados, recarga, edición/baja y registro desde chat.
+- `node tests/contacts-private-ui.mjs` exige `CONTACTS_TEST_BACKEND` local, con PHP,
+  MariaDB y dos cuentas de prueba; verifica sesiones reales, páginas y aislamiento
+  al cambiar de cuenta. Necesita Playwright y una app local en puerto 3000.
 
-Las pruebas PHP comprueban CRUD y persistencia al volver a consultar usando PDO
-SQLite. Las de Node comprueban el contrato y el driver simulado; no sustituyen una
-prueba con MySQL desplegado. Después del despliegue, crear un contacto de prueba,
-recargar, editar teléfono/correo, recargar y eliminar; verificar la fila en
-phpMyAdmin después de cada operación y limpiar el contacto de prueba.
+También hay pruebas HTTP del servidor Node en `tests/contacts-node-http.mjs` y
+sesiones PHP ↔ Node en `tests/contacts-session-interop.test.ts`; consultar las fixtures.
 
-Este cambio no despliega archivos ni ejecuta migraciones en producción.
-
-## Regresión de navegador (opcional)
-
-Con la app local en el puerto 3000 (`npm run build` y `npm run preview`),
-instalar Playwright para pruebas con `npm install --no-save --package-lock=false playwright`
-y su navegador (`npx playwright install chromium`). Ejecutar
-`node tests/contacts-ui.mjs`. Admite `CHROMIUM_PATH` para usar Chromium del sistema.
-Todas las peticiones al backend remoto se interceptan con datos de prueba.
-Se comprueban error PHP con HTTP 200, formulario conservado, bloqueo durante
-guardado, recarga, edición y borrado con fallo/éxito, sin contactos locales fantasma.
-También se verifica el error de consulta, el reintento manual sin sondeo continuo,
-el alta desde chat y la búsqueda por correo en la pantalla separada.
+La compilación, ambas capas contra MariaDB y el flujo de navegador se verificaron
+localmente. Esta rama no despliega PHP ni ejecuta cambios en la BD de producción.

@@ -1,5 +1,5 @@
 import React, { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
-import { View, Text, TouchableOpacity, TextInput, ScrollView, StyleSheet, Modal, SafeAreaView, ActivityIndicator, Platform, Clipboard, Linking } from 'react-native';
+import { View, Text, TouchableOpacity, TextInput, ScrollView, SectionList, StyleSheet, Modal, SafeAreaView, ActivityIndicator, Platform, Clipboard, Linking } from 'react-native';
 import { UserIcon, UsersIcon, UserPlusIcon, AlertTriangleIcon, SearchIcon, XIcon, CheckIcon, PhoneIcon, MailIcon, ArrowLeftIcon, MicIcon, MessageSquareIcon, CopyIcon, ShieldIcon, TrashIcon, VideoIcon } from '../icons';
 import type { DirectoryContact as ContactOfficer } from '../../services/contactsApi';
 import type { ContactsDirectory } from './useContactsDirectory';
@@ -24,7 +24,8 @@ export const ContactsScreen = forwardRef<ContactsScreenHandle, Props>(function C
   const isLoadingContacts = directory.loading;
   const serverRef = useRef(serverUrl);
   serverRef.current = serverUrl;
-  const [contactSearchQuery, setContactSearchQuery] = useState('');
+  const contactSearchQuery = directory.query;
+  const setContactSearchQuery = directory.setQuery;
   const [isDeletingContact, setIsDeletingContact] = useState(false);
   const { showTacticalAlert, showTacticalToast, closeAlert, feedback } = useNativeFeedback(isDeletingContact);
   // Modal: Registrar Nuevo Contacto
@@ -58,12 +59,8 @@ export const ContactsScreen = forwardRef<ContactsScreenHandle, Props>(function C
     setIsEditContactModalOpen(false);
     setIsContactDetailModalOpen(false);
     setSelectedContactForDetail(null);
-  }, [serverUrl]);
-  const filteredOfficers = useMemo(() => officersList.filter(contact => {
-    const query = contactSearchQuery.trim().toLowerCase();
-    return !query || [contact.name, contact.callsign, contact.phone_number, contact.email, contact.unit]
-      .some(value => value?.toLowerCase().includes(query));
-  }), [officersList, contactSearchQuery]);
+  }, [serverUrl, directory.scope]);
+  const filteredOfficers = officersList;
   // Agrupación alfabética de contactos por letra (ej. A -> Alex, V -> Valeria)
   const groupedOfficers = useMemo(() => {
     const map = new Map<string, ContactOfficer[]>();
@@ -309,7 +306,7 @@ export const ContactsScreen = forwardRef<ContactsScreenHandle, Props>(function C
 
             <View style={{ paddingHorizontal: 16, paddingVertical: 8, backgroundColor: contactsError ? '#fff1f2' : '#ffffff' }}>
               <Text accessibilityLiveRegion="polite" style={{ color: contactsError ? '#be123c' : '#64748b', fontSize: 13 }}>
-                {contactsError || (isLoadingContacts ? 'Consultando contactos…' : `${officersList.length} contactos en la BD`)}
+                {contactsError || (isLoadingContacts ? 'Consultando contactos…' : `${officersList.length} contactos cargados`)}
               </Text>
               <TouchableOpacity accessibilityLabel="Actualizar contactos" onPress={() => directory.refresh()}
                 disabled={isLoadingContacts || isSavingContact || isSavingEditContact || isDeletingContact}>
@@ -317,14 +314,21 @@ export const ContactsScreen = forwardRef<ContactsScreenHandle, Props>(function C
               </TouchableOpacity>
             </View>
 
-            {/* Lista de Contactos Tácticos C5i: Dividido solo por una línea entre uno y otro, división por letra, solo nombre */}
-            <ScrollView
+            <SectionList
+              sections={groupedOfficers.map(group => ({ ...group, data: group.contacts }))}
+              keyExtractor={contact => contact.id}
+              initialNumToRender={20} maxToRenderPerBatch={20} windowSize={7}
               style={{ flex: 1, backgroundColor: '#ffffff' }}
-              contentContainerStyle={{ paddingBottom: 100 }}
-              keyboardShouldPersistTaps="handled"
-            >
-              {filteredOfficers.length === 0 ? (
-                <View style={{
+              contentContainerStyle={{ paddingBottom: 100 }} keyboardShouldPersistTaps="handled"
+              renderSectionHeader={({ section }) => <View style={{ backgroundColor: '#f8fafc', paddingHorizontal: 20, paddingVertical: 8 }}>
+                <Text style={{ fontSize: 15, fontWeight: '800', color: '#6b1d2f' }}>{section.letter}</Text>
+              </View>}
+              renderItem={({ item }) => <TouchableOpacity onPress={() => handleOpenContactDetail(item)}
+                style={{ paddingHorizontal: 20, paddingVertical: 16, backgroundColor: '#ffffff' }}>
+                <Text style={{ fontSize: 16, fontWeight: '600', color: '#0f172a' }}>{item.name}</Text>
+              </TouchableOpacity>}
+              ItemSeparatorComponent={() => <View style={{ height: 1, backgroundColor: '#f1f5f9', marginHorizontal: 20 }} />}
+              ListEmptyComponent={(<View style={{
                   alignItems: 'center',
                   justifyContent: 'center',
                   paddingVertical: 60,
@@ -367,60 +371,13 @@ export const ContactsScreen = forwardRef<ContactsScreenHandle, Props>(function C
                       + Agregar Contacto
                     </Text>
                   </TouchableOpacity>
-                </View>
-              ) : (
-                groupedOfficers.map((group) => (
-                  <View key={group.letter}>
-                    {/* División por letra (ej. A, V) */}
-                    <View style={{
-                      backgroundColor: '#f8fafc',
-                      paddingHorizontal: 20,
-                      paddingVertical: 8,
-                      borderTopWidth: 1,
-                      borderBottomWidth: 1,
-                      borderColor: '#f1f5f9',
-                    }}>
-                      <Text style={{
-                        fontSize: 15,
-                        fontWeight: '800',
-                        color: '#6b1d2f',
-                        letterSpacing: 0.5,
-                      }}>
-                        {group.letter}
-                      </Text>
-                    </View>
-
-                    {/* Contactos bajo esta letra: solo el nombre, divididos por una sola línea */}
-                    {group.contacts.map((cnt, idx) => (
-                      <React.Fragment key={cnt.id}>
-                        <TouchableOpacity
-                          style={{
-                            paddingHorizontal: 20,
-                            paddingVertical: 16,
-                            backgroundColor: '#ffffff',
-                          }}
-                          onPress={() => handleOpenContactDetail(cnt)}
-                          activeOpacity={0.6}
-                        >
-                          <Text style={{
-                            fontSize: 16,
-                            fontWeight: '600',
-                            color: '#0f172a',
-                          }}>
-                            {cnt.name}
-                          </Text>
-                        </TouchableOpacity>
-
-                        {/* Línea divisoria simple entre uno y otro */}
-                        {idx < group.contacts.length - 1 && (
-                          <View style={{ height: 1, backgroundColor: '#f1f5f9', marginHorizontal: 20 }} />
-                        )}
-                      </React.Fragment>
-                    ))}
-                  </View>
-                ))
-              )}
-            </ScrollView>
+                </View>)}
+              ListFooterComponent={directory.hasMore ? <TouchableOpacity accessibilityLabel="Cargar más contactos"
+                disabled={directory.loading || directory.writing} onPress={() => directory.loadMore()}
+                style={{ padding: 18, alignItems: 'center' }}>
+                <Text style={{ color: '#6b1d2f', fontWeight: '700' }}>{directory.loading ? 'Cargando…' : 'Cargar más contactos'}</Text>
+              </TouchableOpacity> : undefined}
+            />
           </View>
         )}
 

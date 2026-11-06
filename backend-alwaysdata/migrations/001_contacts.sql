@@ -1,3 +1,5 @@
+-- HISTÓRICA: modelo global. Para agendas privadas usar únicamente 002_private_contacts.sql.
+-- No repetir esta migración después de pasar al modelo privado.
 -- Ejecutar UNA VEZ en la BD seleccionada en phpMyAdmin (Alwaysdata).
 -- No cambia users, sus contraseñas ni sus relaciones.
 CREATE TABLE IF NOT EXISTS contactos (
