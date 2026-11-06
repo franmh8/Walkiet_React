@@ -57,6 +57,26 @@ se deben registrar otra vez después de corregir el servidor.
 
 ## Archivos del servidor
 
+Si la creación terminó pero la importación devuelve **1267 / Illegal mix of
+collations**, ejecutar únicamente este INSERT corregido, una vez, para completar
+la importación inicial. No hace falta repetir CREATE ni añadir otra vez el índice:
+
+```sql
+INSERT INTO contactos (id, name, phone_number, callsign, correo, unit, status)
+SELECT u.id, u.name, u.phone_number, u.callsign, u.correo, u.unit, u.status
+FROM users u
+WHERE NOT EXISTS (
+  SELECT 1 FROM contactos c
+  WHERE c.id COLLATE utf8mb4_unicode_ci = u.id COLLATE utf8mb4_unicode_ci
+     OR c.phone_number COLLATE utf8mb4_unicode_ci = u.phone_number COLLATE utf8mb4_unicode_ci
+);
+```
+
+Las comparaciones usan una collation explícita común a ambas tablas, aunque la
+BD haya heredado `utf8mb4_uca1400_ai_ci` para la tabla nueva. Esta consulta no
+modifica la estructura de `users` ni de `contactos`. La migración actualizada
+también declara la collation al crear una tabla nueva.
+
 Subir juntos al directorio del backend, normalmente `/home/walkiet/www/`:
 
 - `contacts.php`
