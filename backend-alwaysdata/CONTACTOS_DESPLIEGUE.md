@@ -5,6 +5,39 @@ El 6 de noviembre de 2026, la consulta de solo lectura a
 sintaxis PHP: `unexpected end of file`, línea 161. La app anterior mostraba éxito
 antes de comprobar la respuesta y retenía contactos locales.
 
+## HTTP 500 después de sustituir el PHP
+
+El registro PHP del servidor confirmó:
+`SQLSTATE[42S02]: 1146 Table 'walkiet_c5i.contactos' doesn't exist`.
+Para ese caso, seleccionar **walkiet_c5i** en phpMyAdmin y aplicar una sola vez
+`migrations/001_contacts.sql`. El PHP puede conectar con MySQL y aun así fallar
+si no existe esta tabla. La separación de React no crea tablas en el servidor.
+
+Si el endpoint devuelve JSON con `success:false`, ya se está ejecutando el PHP,
+pero no se confirmó el acceso al directorio. El mensaje genérico no permite
+atribuirlo a una tabla ausente, una columna o permisos sin revisar el log.
+El indicador ONLINE de `status.php` tampoco comprueba la tabla `contactos`.
+
+Subir las versiones actuales de **ambos** PHP y volver a abrir `/contacts.php`.
+La respuesta incluirá uno de estos códigos cuando PDO identifica la causa:
+
+| Código | Acción |
+| --- | --- |
+| `CONTACTS_TABLE_MISSING` | Crear `contactos` con la migración en la BD que usa `conexion.php`. |
+| `CONTACTS_SCHEMA_MISMATCH` | Comparar las columnas existentes con la migración y corregir las diferencias. |
+| `CONTACTS_DATABASE_PERMISSIONS` | Dar al usuario de conexión permisos sobre esa tabla. |
+| `CONTACTS_DATABASE_UNAVAILABLE` | Revisar la conexión al host MySQL. |
+| `CONTACTS_SERVER_ERROR` | Consultar la línea `Contacts API:` del registro PHP de Alwaysdata. |
+
+Estos diagnósticos responden con HTTP 503 para errores reconocidos de BD;
+los detalles SQL se registran únicamente en el servidor. No se simula éxito.
+Para verificar la BD seleccionada sin modificar datos, ejecutar en phpMyAdmin:
+
+```sql
+SELECT DATABASE() AS base_actual;
+SHOW TABLES LIKE 'contactos';
+```
+
 ## Base de datos
 
 En phpMyAdmin, seleccionar la misma BD que usa `conexion.php`. Hacer respaldo de
@@ -37,6 +70,14 @@ PUT (edición) y DELETE (eliminación). Actualizar/eliminar requiere el ID persi
 Los errores tienen `success:false` y HTTP 4xx/5xx; no se devuelve una lista vacía
 cuando falla SQL. Las escrituras usan consultas preparadas y responden después
 de confirmar la transacción. Teléfono único, de 10 a 15 dígitos, y correo opcional.
+
+## Organización del código de la app
+
+- `src/native/contacts/ContactsScreen.tsx`: listado, búsqueda, ficha, formularios y confirmación de eliminación.
+- `src/native/contacts/useContactsDirectory.ts`: estado del directorio, consultas, escrituras y sondeo compartidos con chat/grupos. Reintenta cada 15 s si está disponible y cada 60 s tras un error, además del botón manual.
+- `src/services/contactsApi.ts`: contrato HTTP y validación de las respuestas.
+- `src/native/components/NativeFeedback.tsx`: avisos y confirmaciones reutilizables.
+- `NativeApp.tsx`: integración con navegación, conversaciones y selección de miembros; sin formularios ni peticiones de contactos.
 
 ## Aplicación y Node
 
@@ -76,3 +117,5 @@ y su navegador (`npx playwright install chromium`). Ejecutar
 Todas las peticiones al backend remoto se interceptan con datos de prueba.
 Se comprueban error PHP con HTTP 200, formulario conservado, bloqueo durante
 guardado, recarga, edición y borrado con fallo/éxito, sin contactos locales fantasma.
+También se verifica el error de consulta, el reintento manual sin sondeo continuo,
+el alta desde chat y la búsqueda por correo en la pantalla separada.

@@ -24,7 +24,10 @@ import {
   Linking,
 } from 'react-native';
 import { safeStorage } from './storage';
-import { createContactsApi } from '../services/contactsApi';
+import type { DirectoryContact as ContactOfficer } from '../services/contactsApi';
+import { ContactsScreen, type ContactsScreenHandle } from './contacts/ContactsScreen';
+import { useContactsDirectory } from './contacts/useContactsDirectory';
+import { useNativeFeedback } from './components/NativeFeedback';
 import c5iLogoImg from '../../assets/c5i-logo.png';
 import {
   UserIcon,
@@ -155,6 +158,8 @@ interface User {
   unit: string;
   phone_number?: string;
   callsign?: string;
+  email?: string;
+  loginIdentifier?: string;
 }
 
 interface Channel {
@@ -211,62 +216,107 @@ export interface Conversation {
   messages: ChatMessage[];
 }
 
-export interface ContactOfficer {
-  id: string;
-  name: string;
-  callsign: string;
-  unit: string;
-  phone_number?: string;
-  email?: string;
-  status: 'online' | 'offline';
-  role?: string;
-}
-
-const INITIAL_OFFICERS: ContactOfficer[] = [
-  {
-    id: 'usr-c5i-01',
-    name: 'Comandante Roberto Morales',
-    callsign: 'HALCÓN-01',
-    unit: 'Fuerza Especial de Reacción C5i',
-    phone_number: '7711234567',
-    status: 'online',
-    role: 'Mando Operativo',
-  },
-  {
-    id: 'usr-c5i-02',
-    name: 'Oficial Karla Mendoza',
-    callsign: 'PATRULLA-04',
-    unit: 'Sector Operativo Pachuca Sur',
-    phone_number: '7719876543',
-    status: 'online',
-    role: 'Elemento Táctico',
-  },
-  {
-    id: 'usr-c5i-03',
-    name: 'Oficial Diego Navarrete',
-    callsign: 'COBRA-09',
-    unit: 'Vialidad y Tránsito Estatal',
-    phone_number: '7714567890',
-    status: 'online',
-    role: 'Vialidad',
-  },
-  {
-    id: 'usr-c5i-04',
-    name: 'Despacho Central 911',
-    callsign: 'CENTRAL-C5I',
-    unit: 'Centro de Comando C5i Hidalgo',
-    phone_number: '7710009911',
-    status: 'online',
-    role: 'Despachador 911',
-  },
-];
-
 const DEFAULT_CHANNELS: Channel[] = [
   { id: 'chan-01', name: 'LOLO', code: 'CH-10', frequency: '154.800 MHz', category: 'Táctico', isEncrypted: true, activeUsers: 1, pin: '1090', accessCode: 'C5I-TAC-10' },
   { id: 'chan-02', name: 'OPERACIONES ESPECIALES TÁCTICAS', code: 'CH-20', frequency: '156.200 MHz', category: 'Táctico', isEncrypted: true, activeUsers: 14, pin: '2040', accessCode: 'C5I-OP-20' },
   { id: 'chan-03', name: 'DESPACHO EMERGENCIAS 911', code: 'CH-91', frequency: '158.450 MHz', category: 'Emergencia', isEncrypted: true, activeUsers: 22, pin: '9110', accessCode: 'C5I-EM-91' },
   { id: 'chan-04', name: 'VIALIDAD Y TRÁNSITO PACHUCA', code: 'CH-44', frequency: '153.950 MHz', category: 'Vialidad', isEncrypted: true, activeUsers: 12, pin: '4410', accessCode: 'C5I-VI-44' },
 ];
+
+// Preferencia de grupo por cuenta. No guardar un canal en una clave global:
+// una cuenta diferente no debe heredar el grupo de otro usuario.
+interface SavedChannelSelection {
+  id: string;
+  name: string;
+  code?: string;
+}
+
+const lastChannelStorageKey = (userId: string) =>
+  `c5i_last_selected_channel_${encodeURIComponent(String(userId))}`;
+
+const normalizeChannelName = (value: string) =>
+  String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().replace(/\s+/g, ' ').toUpperCase();
+
+function getChannelPreferenceKeys(user: User): string[] {
+  // El ID del backend tiene prioridad. Correo/teléfono/identificador de acceso
+  // permiten recuperar la preferencia aun si cambió el ID entregado por la API.
+  const identifiers: string[] = [];
+  const id = String(user.id || '').trim();
+  if (id) identifiers.push(lastChannelStorageKey(id)); // Compatibilidad con versiones anteriores.
+  const phone = String(user.phone_number || '').replace(/\D/g, '');
+  if (phone.length >= 10) identifiers.push(`c5i_last_channel_phone_${phone}`);
+  const email = String(user.email || '').trim().toLowerCase();
+  if (email.includes('@')) identifiers.push(`c5i_last_channel_email_${encodeURIComponent(email)}`);
+  const login = String(user.loginIdentifier || '').trim().toLowerCase();
+  if (login.includes('@')) identifiers.push(`c5i_last_channel_email_${encodeURIComponent(login)}`);
+  else if (/^\d{10,}$/.test(login.replace(/\D/g, ''))) {
+    identifiers.push(`c5i_last_channel_phone_${login.replace(/\D/g, '')}`);
+  }
+  return [...new Set(identifiers)];
+}
+
+function parseSavedChannel(value: string | null): SavedChannelSelection | null {
+  if (!value) return null;
+  try {
+    const item = JSON.parse(value);
+    if (item && String(item.id || '').trim() && String(item.name || '').trim()) {
+      return {
+        id: String(item.id).trim(),
+        name: String(item.name).trim(),
+        code: item.code ? String(item.code) : undefined,
+      };
+    }
+  } catch (error) {
+    console.warn('[Walkiet] Datos antiguos del grupo guardado no válidos:', error);
+  }
+  return null;
+}
+
+async function readSavedChannelSelection(user: User): Promise<SavedChannelSelection | null> {
+  for (const key of getChannelPreferenceKeys(user)) {
+    let raw: string | null = null;
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      // Esta lectura es persistente, no depende del fallback temporal en memoria.
+      try { raw = window.localStorage.getItem(key); }
+      catch (error) { console.warn('[Walkiet] No se pudo leer localStorage:', error); }
+    }
+    if (raw === null) raw = await safeStorage.getItem(key);
+    const parsed = parseSavedChannel(raw);
+    if (parsed) return parsed;
+  }
+  return null;
+}
+
+async function writeSavedChannelSelection(user: User, channel: Channel | null): Promise<void> {
+  const keys = getChannelPreferenceKeys(user);
+  if (!keys.length) throw new Error('La cuenta no tiene identificador estable para guardar el grupo.');
+  const value = channel ? JSON.stringify({ id: String(channel.id), name: channel.name, code: channel.code }) : null;
+  for (const key of keys) {
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      // Guardado síncrono: el usuario puede cerrar sesión inmediatamente
+      // después de tocar SINTONIZAR sin perder la preferencia.
+      if (value === null) window.localStorage.removeItem(key);
+      else window.localStorage.setItem(key, value);
+      if (window.localStorage.getItem(key) !== value) {
+        throw new Error('El navegador no confirmó el almacenamiento del grupo.');
+      }
+    } else if (value === null) {
+      await safeStorage.removeItem(key);
+    } else {
+      await safeStorage.setItem(key, value);
+    }
+  }
+}
+
+function findRestoredChannel(channels: Channel[], saved: SavedChannelSelection): Channel | null {
+  // No sintonizar un grupo solo porque reutiliza un ID. Se exige también el nombre.
+  const name = normalizeChannelName(saved.name);
+  const exact = channels.find(ch => String(ch.id) === saved.id && normalizeChannelName(ch.name) === name);
+  if (exact) return exact;
+  // El backend puede reasignar IDs; admitir solo una coincidencia inequívoca.
+  const sameName = channels.filter(ch => normalizeChannelName(ch.name) === name);
+  return sameName.length === 1 ? sameName[0] : null;
+}
 
 // Helper con timeout para peticiones en red móvil/wifi
 async function fetchWithTimeout(url: string, options: any = {}, timeoutMs = 3500) {
@@ -348,7 +398,17 @@ export default function NativeApp() {
   
   // Radio & PTT State
   const [channels, setChannels] = useState<Channel[]>(DEFAULT_CHANNELS);
-  const [selectedChannel, setSelectedChannel] = useState<Channel>(DEFAULT_CHANNELS[0]);
+  // Evita restaurar una coincidencia engañosa de los canales de ejemplo:
+  // sus IDs no necesariamente coinciden con los que devuelve la API.
+  const [channelsSyncedFromServer, setChannelsSyncedFromServer] = useState(false);
+  // Se recupera el canal elegido por este usuario, si sigue disponible.
+  const [selectedChannel, setSelectedChannel] = useState<Channel | null>(null);
+  const [pendingSavedChannel, setPendingSavedChannel] = useState<{
+    userId: string;
+    channel: SavedChannelSelection;
+    revision: number;
+  } | null>(null);
+  const channelChoiceRevisionRef = useRef(0);
   const [isTransmitting, setIsTransmitting] = useState(false);
   const [txDuration, setTxDuration] = useState(0);
   const [signalStrength] = useState(98);
@@ -472,32 +532,7 @@ export default function NativeApp() {
 
   // Modals for Chat & Contacts
   const [isNewChatModalOpen, setIsNewChatModalOpen] = useState(false);
-  const [contactSearchQuery, setContactSearchQuery] = useState('');
-  const [officersList, setOfficersList] = useState<ContactOfficer[]>([]);
-
-  // Modal: Registrar Nuevo Contacto
-  const [isAddContactModalOpen, setIsAddContactModalOpen] = useState(false);
-  const [newContactName, setNewContactName] = useState('');
-  const [newContactLastName, setNewContactLastName] = useState('');
-  const [newContactPhone, setNewContactPhone] = useState('');
-  const [newContactEmail, setNewContactEmail] = useState('');
-  const [addContactError, setAddContactError] = useState<string | null>(null);
-  const [isSavingContact, setIsSavingContact] = useState(false);
-
-  // Modal: Detalle de Contacto / Perfil (Diseño exacto Imagen Captura 11.27.13)
-  const [selectedContactForDetail, setSelectedContactForDetail] = useState<ContactOfficer | null>(null);
-  const [isContactDetailModalOpen, setIsContactDetailModalOpen] = useState(false);
-  const [copiedDetailField, setCopiedDetailField] = useState<string | null>(null);
-
-  // Modal: Editar Contacto (CRUD)
-  const [isEditContactModalOpen, setIsEditContactModalOpen] = useState(false);
-  const [editContactName, setEditContactName] = useState('');
-  const [editContactLastName, setEditContactLastName] = useState('');
-  const [editContactPhone, setEditContactPhone] = useState('');
-  const [editContactEmail, setEditContactEmail] = useState('');
-  const [editContactCallsign, setEditContactCallsign] = useState('');
-  const [editContactError, setEditContactError] = useState<string | null>(null);
-  const [isSavingEditContact, setIsSavingEditContact] = useState(false);
+  const [chatContactSearchQuery, setChatContactSearchQuery] = useState('');
 
   // Modal: Crear Grupo de Conversación
   const [isCreateGroupChatModalOpen, setIsCreateGroupChatModalOpen] = useState(false);
@@ -505,85 +540,24 @@ export default function NativeApp() {
   const [selectedGroupMembers, setSelectedGroupMembers] = useState<string[]>([]);
   const [createGroupError, setCreateGroupError] = useState<string | null>(null);
 
-  // Modal de Alerta y Confirmación Táctica C5i (reemplaza window.confirm y Alert.alert)
-  const [tacticalAlertModal, setTacticalAlertModal] = useState<{
-    isOpen: boolean;
-    title: string;
-    message: string;
-    type: 'confirm_delete' | 'warning' | 'info' | 'success';
-    confirmText?: string;
-    cancelText?: string;
-    onConfirm?: () => void;
-    onCancel?: () => void;
-  }>({
-    isOpen: false,
-    title: '',
-    message: '',
-    type: 'info',
-  });
+  const { showTacticalToast, feedback } = useNativeFeedback();
+  const contactsDirectory = useContactsDirectory(serverUrl, Boolean(currentUser));
+  const officersList = contactsDirectory.contacts;
+  const contactsScreenRef = useRef<ContactsScreenHandle>(null);
 
-  const showTacticalAlert = useCallback((
-    title: string,
-    message: string,
-    options?: {
-      type?: 'confirm_delete' | 'warning' | 'info' | 'success';
-      confirmText?: string;
-      cancelText?: string;
-      onConfirm?: () => void;
-      onCancel?: () => void;
-    }
-  ) => {
-    setTacticalAlertModal({
-      isOpen: true,
-      title,
-      message,
-      type: options?.type || 'info',
-      confirmText: options?.confirmText || (options?.onConfirm ? 'Confirmar' : 'Entendido'),
-      cancelText: options?.cancelText || (options?.onConfirm ? 'Cancelar' : undefined),
-      onConfirm: options?.onConfirm,
-      onCancel: options?.onCancel,
-    });
-  }, []);
-
-  // Notificación Toast flotante táctica C5i
-  const [tacticalToast, setTacticalToast] = useState<{
-    visible: boolean;
-    message: string;
-    type: 'success' | 'info' | 'warning';
-  }>({
-    visible: false,
-    message: '',
-    type: 'info',
-  });
-  const toastTimerRef = useRef<any>(null);
-
-  const showTacticalToast = useCallback((message: string, type: 'success' | 'info' | 'warning' = 'success') => {
-    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
-    setTacticalToast({ visible: true, message, type });
-    toastTimerRef.current = setTimeout(() => {
-      setTacticalToast((prev) => ({ ...prev, visible: false }));
-    }, 2800);
-  }, []);
-
-  const [contactsError, setContactsError] = useState<string | null>(null);
-  const [isLoadingContacts, setIsLoadingContacts] = useState(false);
-  const [isDeletingContact, setIsDeletingContact] = useState(false);
-  const contactMutationRef = useRef(false);
-  const contactRevisionRef = useRef(0);
-  const contactReadRef = useRef(0);
-  const contactsServerRef = useRef(serverUrl);
-  contactsServerRef.current = serverUrl;
-
-  const timerRef = useRef<any>(null);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Referencias de PTT: impiden liberaciones duplicadas y cierres con estado antiguo.
+  const pttPressedRef = useRef(false);
+  const pttStartedAtRef = useRef(0);
+  const pttChannelAtPressRef = useRef<Channel | null>(null);
+  const pttUserAtPressRef = useRef<User | null>(null);
 
   // Circuit breaker para endpoints PHP en Alwaysdata (evita spam de 404 en consola si aún no se han subido los archivos)
   const isChatPhpAvailableRef = useRef<boolean | null>(null);
   const lastChatProbeTimeRef = useRef<number>(0);
 
-  // Concentric animated soundwave rings for PTT (expanding circles)
-  const waveAnim1 = useRef(new Animated.Value(0)).current;
-  const waveAnim2 = useRef(new Animated.Value(0)).current;
-  const waveAnim3 = useRef(new Animated.Value(0)).current;
+  // Las ondas del PTT se muestran como aros estáticos para evitar fallos
+  // al detener Animated.loop en la versión web de React Native.
 
   // Carga inicial de preferencias guardadas en dispositivo
   useEffect(() => {
@@ -608,6 +582,63 @@ export default function NativeApp() {
       }
     })();
   }, []);
+
+  // Restaurar la selección solo del usuario autenticado. Una elección manual más
+  // reciente tiene prioridad sobre cualquier lectura asíncrona de la memoria.
+  useEffect(() => {
+    if (!currentUser?.id) {
+      setPendingSavedChannel(null);
+      return;
+    }
+    let active = true;
+    const userId = String(currentUser.id);
+    const revision = channelChoiceRevisionRef.current;
+
+    readSavedChannelSelection(currentUser)
+      .then((saved) => {
+        if (!active || revision !== channelChoiceRevisionRef.current || !saved) return;
+        setPendingSavedChannel({ userId, channel: saved, revision });
+      })
+      .catch((error) => console.warn('No se pudo recuperar el último canal:', error));
+
+    return () => { active = false; };
+  }, [currentUser?.id]);
+
+  // Esperar a que el canal exista en la lista (local o sincronizada).
+  // Comprobamos también el nombre para no sintonizar otro grupo si el servidor
+  // reutiliza un identificador.
+  useEffect(() => {
+    if (!currentUser?.id || !pendingSavedChannel) return;
+    if (String(currentUser.id) !== pendingSavedChannel.userId ||
+        channelChoiceRevisionRef.current !== pendingSavedChannel.revision) return;
+    // Si todavía no sincroniza el servidor, permitir una restauración
+    // provisional por nombre/ID, pero conservar la preferencia pendiente para
+    // volver a validar la selección cuando llegue la lista real de canales.
+    const restored = findRestoredChannel(channels, pendingSavedChannel.channel);
+    if (restored && channelsSyncedFromServer) {
+      setSelectedChannel(restored);
+      setPendingSavedChannel(null);
+    } else if (channelsSyncedFromServer) {
+      // El canal guardado ya no figura entre los canales del servidor.
+      // No sintonizar automáticamente un canal distinto o solo de ejemplo.
+      setSelectedChannel(null);
+      setPendingSavedChannel(null);
+    }
+  }, [currentUser?.id, pendingSavedChannel, channels, channelsSyncedFromServer]);
+
+  // Sintonizar / abandonar un grupo y recordar esa elección por usuario.
+  const chooseAndRememberChannel = useCallback((channel: Channel | null) => {
+    channelChoiceRevisionRef.current += 1;
+    setPendingSavedChannel(null);
+    setSelectedChannel(channel);
+    if (!currentUser?.id) return;
+
+    writeSavedChannelSelection(currentUser, channel)
+      .catch((error) => {
+        console.warn('No se pudo guardar la selección del canal:', error);
+        setInlineWarning('El grupo se seleccionó, pero tu navegador no permitió guardarlo. Revisa los permisos de almacenamiento del sitio.');
+      });
+  }, [currentUser?.id]);
 
   // En navegador web, enviar text/plain evita preflights OPTIONS innecesarios
   const getSafePostHeaders = () => ({
@@ -641,6 +672,14 @@ export default function NativeApp() {
             isPrivate: Boolean(ch.is_private),
           }));
           setChannels(mapped);
+          setChannelsSyncedFromServer(true);
+          // Mantener la selección manual si el canal sigue disponible;
+          // nunca sintonizar el primer canal automáticamente al sincronizar.
+          setSelectedChannel((prev) =>
+            prev ? findRestoredChannel(mapped, {
+              id: String(prev.id), name: prev.name, code: prev.code,
+            }) : null
+          );
           setDbStatus('ONLINE');
         }
       }
@@ -649,36 +688,6 @@ export default function NativeApp() {
       setDbStatus('STANDBY');
     }
   }, []);
-
-  // La BD es la fuente del directorio. Nunca fusionar registros locales no confirmados.
-  const refreshContacts = useCallback(async (baseUrl: string) => {
-    if (contactMutationRef.current) return;
-    const revision = contactRevisionRef.current;
-    const read = ++contactReadRef.current;
-    setIsLoadingContacts(true);
-    try {
-      const contacts = await createContactsApi(baseUrl).list();
-      if (baseUrl !== contactsServerRef.current || revision !== contactRevisionRef.current || read !== contactReadRef.current) return;
-      setOfficersList(contacts);
-      setContactsError(null);
-    } catch (error) {
-      if (baseUrl === contactsServerRef.current && revision === contactRevisionRef.current && read === contactReadRef.current) {
-        setContactsError(error instanceof Error ? error.message : 'No se pudieron consultar los contactos.');
-      }
-    } finally {
-      if (read === contactReadRef.current) setIsLoadingContacts(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    ++contactRevisionRef.current;
-    setOfficersList([]);
-    setSelectedContactForDetail(null);
-    setIsContactDetailModalOpen(false);
-    setIsEditContactModalOpen(false);
-    setIsAddContactModalOpen(false);
-    setContactsError(null);
-  }, [serverUrl]);
 
   // Sincronizar mensajes del chat activo desde el backend (con Circuit Breaker inteligente)
   const syncConversationMessages = useCallback(async (conv: Conversation) => {
@@ -741,26 +750,24 @@ export default function NativeApp() {
     } catch {}
   }, [serverUrl, currentUser]);
 
-  // Sincronización continua de canales, contactos y chat activo para paridad Web / Físico
+  // Sincronización de canales y chat; contactos administra su propio sondeo.
   useEffect(() => {
     if (serverUrl) {
       refreshChannels(serverUrl);
-      refreshContacts(serverUrl);
       const timer = setInterval(() => {
         refreshChannels(serverUrl);
-        // refreshContacts y syncConversationMessages respetan el circuit breaker y no spamean 404s
-        refreshContacts(serverUrl);
+        // El chat respeta el circuit breaker de sus endpoints.
         if (activeConversation) {
           syncConversationMessages(activeConversation);
         }
       }, 4000);
       return () => clearInterval(timer);
     }
-  }, [serverUrl, refreshChannels, refreshContacts, syncConversationMessages, activeConversation]);
+  }, [serverUrl, refreshChannels, syncConversationMessages, activeConversation]);
 
   // Confirmación exitosa con diseño y colorimetría C5i (reemplaza alert gris del sistema)
   const handleChannelScanSuccess = useCallback((channel: Channel, source: 'qr' | 'pin' = 'qr') => {
-    setSelectedChannel(channel);
+    chooseAndRememberChannel(channel);
     setIsJoinScanning(false);
     setIsJoinModalOpen(false);
     setJoinPinDigits('');
@@ -770,11 +777,11 @@ export default function NativeApp() {
       pin: channel.pin || '1090',
       source,
     });
-  }, []);
+  }, [chooseAndRememberChannel]);
 
   // Sintonizar canal con modal táctico C5i (reemplaza alert gris del sistema)
   const handleTuneChannel = useCallback((channel: Channel) => {
-    setSelectedChannel(channel);
+    chooseAndRememberChannel(channel);
     try {
       soundEngine.playIncomingChirp();
     } catch {}
@@ -786,16 +793,14 @@ export default function NativeApp() {
       customTitle: 'Canal Sintonizado',
       customSubtitle: `Radio enlazado a ${channel.name} (${channel.frequency || '154.800 MHz'}).`,
     });
-  }, []);
+  }, [chooseAndRememberChannel]);
 
   // Salir del canal / grupo
   const handleLeaveChannel = useCallback((channel: Channel) => {
     setIsConfigModalOpen(false);
-    const remaining = channels.filter((c) => c.id !== channel.id);
-    const nextChannel = remaining.length > 0 ? remaining[0] : DEFAULT_CHANNELS[0];
-
-    if (selectedChannel.id === channel.id) {
-      setSelectedChannel(nextChannel);
+    if (selectedChannel?.id === channel.id) {
+      chooseAndRememberChannel(null);
+      setIsMembersModalOpen(false);
     }
 
     try {
@@ -804,23 +809,23 @@ export default function NativeApp() {
 
     setScanSuccessModal({
       isOpen: true,
-      channel: nextChannel,
-      pin: nextChannel.pin || '1090',
+      channel,
+      pin: channel.pin || '1090',
       source: 'leave',
       customTitle: 'Has Salido del Grupo',
-      customSubtitle: `Te has desconectado de ${channel.name}. Tu radio se ha reubicado en ${nextChannel.name}.`,
+      customSubtitle: `Te has desconectado de ${channel.name}. Selecciona otro grupo manualmente para comunicarte.`,
     });
-  }, [channels, selectedChannel]);
+  }, [selectedChannel, chooseAndRememberChannel]);
 
   // Eliminar el canal / grupo
   const handleDeleteChannel = useCallback((channel: Channel) => {
     setIsConfigModalOpen(false);
     const remaining = channels.filter((c) => c.id !== channel.id);
-    const nextChannel = remaining.length > 0 ? remaining[0] : DEFAULT_CHANNELS[0];
 
     setChannels(remaining);
-    if (selectedChannel.id === channel.id) {
-      setSelectedChannel(nextChannel);
+    if (selectedChannel?.id === channel.id) {
+      chooseAndRememberChannel(null);
+      setIsMembersModalOpen(false);
     }
 
     if (serverUrl && channel.id) {
@@ -852,13 +857,13 @@ export default function NativeApp() {
 
     setScanSuccessModal({
       isOpen: true,
-      channel: nextChannel,
-      pin: nextChannel.pin || '1090',
+      channel,
+      pin: channel.pin || '1090',
       source: 'delete',
       customTitle: 'Canal Táctico Eliminado',
       customSubtitle: `El canal ${channel.name} ha sido eliminado de la red táctica C5i.`,
     });
-  }, [channels, selectedChannel, serverUrl]);
+  }, [channels, selectedChannel, serverUrl, chooseAndRememberChannel]);
 
   // Referencia para evitar múltiples lecturas seguidas del mismo QR
   const isHandlingScanRef = useRef(false);
@@ -904,7 +909,8 @@ export default function NativeApp() {
         }
 
         if (!found) {
-          found = channels[0];
+          showTacticalToast('El código QR no corresponde a ningún canal disponible.', 'warning');
+          return;
         }
 
         try {
@@ -917,7 +923,7 @@ export default function NativeApp() {
         }, 2200);
       }
     },
-    [channels, handleChannelScanSuccess]
+    [channels, handleChannelScanSuccess, showTacticalToast]
   );
 
   // Manejador robusto de permisos de cámara utilizando Expo's Permission API
@@ -1147,11 +1153,11 @@ export default function NativeApp() {
 
     // Posicionar el canal actualmente sintonizado/activo en la parte superior de la lista
     return list.slice().sort((a, b) => {
-      const aIsActive = a.id === selectedChannel.id ? 1 : 0;
-      const bIsActive = b.id === selectedChannel.id ? 1 : 0;
+      const aIsActive = a.id === selectedChannel?.id ? 1 : 0;
+      const bIsActive = b.id === selectedChannel?.id ? 1 : 0;
       return bIsActive - aIsActive;
     });
-  }, [channels, selectedCategory, channelSearchText, selectedChannel.id]);
+  }, [channels, selectedCategory, channelSearchText, selectedChannel?.id]);
 
   // Abrir modal de configuración y QR de un canal (Seguro para iPhone y Web sin error de canvas)
   const openChannelConfig = (ch: Channel) => {
@@ -1231,6 +1237,10 @@ export default function NativeApp() {
   const handleScanQrMock = (mockChannel?: Channel) => {
     Keyboard.dismiss();
     const target = mockChannel || channels[0];
+    if (!target) {
+      showTacticalToast('No hay canales disponibles para sintonizar.', 'warning');
+      return;
+    }
     handleChannelScanSuccess(target, 'qr');
   };
 
@@ -1258,7 +1268,7 @@ export default function NativeApp() {
     };
 
     setChannels((prev) => [newCh, ...prev]);
-    setSelectedChannel(newCh);
+    chooseAndRememberChannel(newCh);
     setIsCreateModalOpen(false);
     setCreateChannelName('');
     try {
@@ -1337,62 +1347,89 @@ export default function NativeApp() {
     setTimeout(() => setHasCopiedPin(false), 2500);
   };
 
-  const handlePttPressIn = () => {
-    soundEngine.playPttStart();
+  // PTT: se puede probar el botón sin grupo, pero solo se transmite metadata
+  // al canal que el usuario haya seleccionado manualmente antes de pulsarlo.
+  const handlePttPressIn = useCallback(() => {
+    if (!currentUser || pttPressedRef.current || currentTab !== 'PTT') return;
+    pttPressedRef.current = true;
+    pttStartedAtRef.current = Date.now();
+    pttChannelAtPressRef.current = selectedChannel;
+    pttUserAtPressRef.current = currentUser;
     setIsTransmitting(true);
     setTxDuration(0);
-    if (Platform.OS !== 'web') {
-      try {
-        Vibration.vibrate(60);
-      } catch {}
-    }
-    timerRef.current = setInterval(() => {
-      setTxDuration((prev) => prev + 1);
-    }, 1000);
-  };
 
-  const handlePttPressOut = async () => {
-    if (!isTransmitting) return;
-    setIsTransmitting(false);
+    try { soundEngine.playPttStart(); } catch (error) {
+      console.warn('No se pudo reproducir el aviso de PTT:', error);
+    }
+    if (Platform.OS !== 'web') {
+      try { Vibration.vibrate(60); } catch {}
+    }
     if (timerRef.current) clearInterval(timerRef.current);
-    
+    timerRef.current = setInterval(() => {
+      if (pttPressedRef.current) {
+        setTxDuration(Math.floor((Date.now() - pttStartedAtRef.current) / 1000));
+      }
+    }, 250);
+  }, [currentUser, currentTab, selectedChannel?.id]);
+
+  const handlePttPressOut = useCallback(() => {
+    // El evento onPressOut puede dispararse tras una liberación por teclado.
+    // La referencia evita procesarlo por segunda vez.
+    if (!pttPressedRef.current) return;
+    pttPressedRef.current = false;
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+    setIsTransmitting(false);
+    setTxDuration(0);
+
     if (Platform.OS !== 'web') {
-      try {
-        Vibration.vibrate([0, 30, 40, 30]);
-      } catch {}
+      try { Vibration.vibrate([0, 30, 40, 30]); } catch {}
     }
 
-    if (txDuration > 0 && currentUser) {
+    const channelAtRelease = pttChannelAtPressRef.current;
+    const userAtRelease = pttUserAtPressRef.current;
+    const elapsedMs = Math.max(0, Date.now() - pttStartedAtRef.current);
+    const durationSeconds = Math.max(1, Math.ceil(elapsedMs / 1000));
+    pttChannelAtPressRef.current = null;
+    pttUserAtPressRef.current = null;
+    pttStartedAtRef.current = 0;
+
+    // En modo prueba, no crear registros ni enviar datos al servidor.
+    // También se cancela el envío si el usuario abandonó/cambió el canal.
+    const channelStillSelected = !!channelAtRelease && selectedChannel?.id === channelAtRelease.id;
+    if (channelStillSelected && userAtRelease && elapsedMs >= 1000) {
+      const channel = channelAtRelease!;
+      const user = userAtRelease;
       const newTx: Transmission = {
         id: Date.now().toString(),
-        sender: currentUser.name,
-        badge: currentUser.badge,
-        channel: selectedChannel.name,
+        sender: user.name,
+        badge: user.badge,
+        channel: channel.name,
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        duration: txDuration,
+        duration: durationSeconds,
         type: 'voice',
       };
       setTransmissions((prev) => [newTx, ...prev]);
 
-      // Enviar burst al backend en background si existe URL
+      // Se conserva el envío de metadata del proyecto; no se captura audio real aquí.
       if (serverUrl) {
         (async () => {
           try {
             const cleanUrl = serverUrl.replace(/\/+$/, '');
             const payload = JSON.stringify({
-              sender_id: currentUser.id,
-              channel_id: selectedChannel.id,
+              sender_id: user.id,
+              channel_id: channel.id,
               audio_url: `burst-${Date.now()}`,
-              duration_seconds: txDuration,
-              text: `Ráfaga PTT de ${currentUser.badge} (${txDuration}s)`,
+              duration_seconds: durationSeconds,
+              text: `Ráfaga PTT de ${user.badge} (${durationSeconds}s)`,
             });
-
-            let res = await fetchWithTimeout(`${cleanUrl}/voice-messages.php`, {
+            const res = await fetchWithTimeout(`${cleanUrl}/voice-messages.php`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: payload,
             }, 3000).catch(() => null);
-
             if (!res || !res.ok) {
               await fetchWithTimeout(`${cleanUrl}/api/voice-messages`, {
                 method: 'POST',
@@ -1400,90 +1437,52 @@ export default function NativeApp() {
                 body: payload,
               }, 3000).catch(() => null);
             }
-          } catch {}
+          } catch (error) {
+            console.warn('No se pudo guardar el registro PTT:', error);
+          }
         })();
       }
     }
 
-    soundEngine.playRogerBeep();
-  };
-
-  // Looping expanding concentric circles soundwave animation while transmitting
-  useEffect(() => {
-    if (!isTransmitting) {
-      waveAnim1.setValue(0);
-      waveAnim2.setValue(0);
-      waveAnim3.setValue(0);
-      return;
+    try { soundEngine.playRogerBeep(); } catch (error) {
+      console.warn('No se pudo reproducir el fin de PTT:', error);
     }
+  }, [selectedChannel?.id, serverUrl]);
 
-    const createWaveLoop = (anim: Animated.Value) => {
-      anim.setValue(0);
-      return Animated.loop(
-        Animated.timing(anim, {
-          toValue: 1,
-          duration: 1800,
-          easing: Easing.bezier(0.2, 0.6, 0.35, 1),
-          useNativeDriver: Platform.OS !== 'web',
-        })
-      );
-    };
+  // Liberar recursos cuando la pantalla se desmonta.
+  useEffect(() => () => {
+    pttPressedRef.current = false;
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+  }, []);
 
-    const anim1 = createWaveLoop(waveAnim1);
-    const anim2 = createWaveLoop(waveAnim2);
-    const anim3 = createWaveLoop(waveAnim3);
-
-    anim1.start();
-    const t2 = setTimeout(() => anim2.start(), 600);
-    const t3 = setTimeout(() => anim3.start(), 1200);
-
-    return () => {
-      clearTimeout(t2);
-      clearTimeout(t3);
-      anim1.stop();
-      anim2.stop();
-      anim3.stop();
-      waveAnim1.setValue(0);
-      waveAnim2.setValue(0);
-      waveAnim3.setValue(0);
-    };
-  }, [isTransmitting]);
-
-  // Spacebar Push-To-Talk shortcut on web desktop
+  // Atajo de teclado en web: barra espaciadora para PTT solo en pestaña PTT.
   useEffect(() => {
-    if (Platform.OS !== 'web' || !currentUser) return;
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (
-        e.code === 'Space' &&
-        !e.repeat &&
-        !(e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement)
-      ) {
-        e.preventDefault();
-        if (!isTransmitting) {
-          handlePttPressIn();
-        }
-      }
+    if (Platform.OS !== 'web' || !currentUser || currentTab !== 'PTT') return;
+    const isTyping = (target: EventTarget | null) =>
+      target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement ||
+      (target instanceof HTMLElement && target.isContentEditable);
+    const onDown = (e: KeyboardEvent) => {
+      if (e.code !== 'Space' || isTyping(e.target)) return;
+      e.preventDefault();
+      if (!e.repeat) handlePttPressIn();
     };
-
-    const handleKeyUp = (e: KeyboardEvent) => {
-      if (
-        e.code === 'Space' &&
-        !(e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement)
-      ) {
-        e.preventDefault();
-        if (isTransmitting) {
-          handlePttPressOut();
-        }
-      }
+    const onUp = (e: KeyboardEvent) => {
+      if (e.code !== 'Space' || isTyping(e.target)) return;
+      e.preventDefault();
+      handlePttPressOut();
     };
-
-    window.addEventListener('keydown', handleKeyDown);
-    window.addEventListener('keyup', handleKeyUp);
+    window.addEventListener('keydown', onDown);
+    window.addEventListener('keyup', onUp);
     return () => {
-      window.removeEventListener('keydown', handleKeyDown);
-      window.removeEventListener('keyup', handleKeyUp);
+      window.removeEventListener('keydown', onDown);
+      window.removeEventListener('keyup', onUp);
+      // Al abandonar PTT o perder la sesión no debe quedar pulsado.
+      if (pttPressedRef.current) handlePttPressOut();
     };
-  }, [isTransmitting, currentUser]);
+  }, [currentUser, currentTab, handlePttPressIn, handlePttPressOut]);
 
   const handleLogin = async () => {
     setIdentifierError(null);
@@ -1564,13 +1563,15 @@ export default function NativeApp() {
 
           if (res && res.ok && data && data.success && data.user) {
             remoteUser = {
-              id: data.user.id,
+              id: String(data.user.id || data.user.phone_number || cleanIdentifier),
               name: data.user.name,
               badge: data.user.callsign || data.user.badge || 'OF-' + cleanIdentifier.slice(-3),
               role: data.user.role || 'Elemento Táctico',
               unit: data.user.unit || 'Sector Operativo Hidalgo',
               phone_number: data.user.phone_number || cleanIdentifier,
               callsign: data.user.callsign,
+              email: data.user.correo || (cleanIdentifier.includes('@') ? cleanIdentifier : undefined),
+              loginIdentifier: cleanIdentifier,
             };
           } else if (data && (data.message || data.code)) {
             const errorCode = data?.code || '';
@@ -1616,6 +1617,18 @@ export default function NativeApp() {
         return;
       }
 
+      // Recuperar el grupo DURANTE el login, antes de mostrar PTT.
+      // Antes dependía exclusivamente de un useEffect posterior y podía quedar
+      // sin selección al alternar de cuenta o actualizar los grupos por red.
+      const lastChannel = await readSavedChannelSelection(remoteUser);
+      channelChoiceRevisionRef.current += 1;
+      const loginRevision = channelChoiceRevisionRef.current;
+      setPendingSavedChannel(lastChannel ? {
+        userId: String(remoteUser.id), channel: lastChannel, revision: loginRevision,
+      } : null);
+      setSelectedChannel(lastChannel && channelsSyncedFromServer
+        ? findRestoredChannel(channels, lastChannel) : null);
+      setCurrentTab('PTT');
       setCurrentUser(remoteUser);
       try {
         await safeStorage.setItem('c5i_native_user', JSON.stringify(remoteUser));
@@ -2104,6 +2117,32 @@ export default function NativeApp() {
   };
 
   const handleLogout = async () => {
+    pttPressedRef.current = false;
+    pttChannelAtPressRef.current = null;
+    pttUserAtPressRef.current = null;
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+    setIsTransmitting(false);
+    setTxDuration(0);
+    // Refuerzo al cerrar sesión: persistir la selección actual ANTES de limpiar
+    // el estado del usuario. Si no había grupo, conservamos la preferencia previa.
+    if (currentUser && selectedChannel) {
+      try {
+        await writeSavedChannelSelection(currentUser, selectedChannel);
+      } catch (error) {
+        console.warn('[Walkiet] No fue posible guardar el grupo al cerrar sesión:', error);
+        setInlineWarning('No se pudo guardar el grupo en este dispositivo.');
+      }
+    }
+    // La selección se conserva en el almacenamiento para el próximo login;
+    // únicamente se quita de esta sesión para no compartirla con otra cuenta.
+    channelChoiceRevisionRef.current += 1;
+    setPendingSavedChannel(null);
+    setSelectedChannel(null);
+    setIsMembersModalOpen(false);
+    setCurrentTab('PTT');
     setCurrentUser(null);
     try {
       await safeStorage.removeItem('c5i_native_user');
@@ -2148,7 +2187,7 @@ export default function NativeApp() {
                     userId: currentUser?.id,
                     officer: currentUser?.name,
                     callsign: currentUser?.badge,
-                    channelId: selectedChannel.id,
+                    channelId: selectedChannel?.id || null,
                     locationName: 'Pachuca Centro (Dispositivo Móvil Expo)',
                     coords: { lat: 20.12, lng: -98.73 },
                   }),
@@ -2163,6 +2202,11 @@ export default function NativeApp() {
 
   const handleSendMessage = () => {
     if (!messageInput.trim()) return;
+    if (!selectedChannel) {
+      showTacticalToast('Selecciona un grupo antes de enviar mensajes.', 'warning');
+      setCurrentTab('Grupos');
+      return;
+    }
     const textToSend = messageInput.trim();
     const newMsg: Transmission = {
       id: Date.now().toString(),
@@ -2212,46 +2256,18 @@ export default function NativeApp() {
   }, [conversations, selectedChatFilter, chatSearchQuery]);
 
   const filteredOfficers = useMemo(() => {
-    if (!contactSearchQuery.trim()) return officersList;
-    const q = contactSearchQuery.toLowerCase();
+    if (!chatContactSearchQuery.trim()) return officersList;
+    const q = chatContactSearchQuery.toLowerCase();
     return officersList.filter((off) => {
       return (
         off.name.toLowerCase().includes(q) ||
         off.callsign.toLowerCase().includes(q) ||
         (off.phone_number && off.phone_number.includes(q)) ||
+        (off.email && off.email.toLowerCase().includes(q)) ||
         (off.unit && off.unit.toLowerCase().includes(q))
       );
     });
-  }, [officersList, contactSearchQuery]);
-
-  // Agrupación alfabética de contactos por letra (ej. A -> Alex, V -> Valeria)
-  const groupedOfficers = useMemo(() => {
-    const map = new Map<string, ContactOfficer[]>();
-    const sorted = [...filteredOfficers].sort((a, b) =>
-      a.name.localeCompare(b.name, 'es', { sensitivity: 'base' })
-    );
-
-    for (const officer of sorted) {
-      const trimmed = officer.name.trim();
-      const firstChar = trimmed ? trimmed[0].toUpperCase() : '#';
-      const letter = /^[A-ZÁÉÍÓÚÑ]$/.test(firstChar) ? firstChar : '#';
-      if (!map.has(letter)) {
-        map.set(letter, []);
-      }
-      map.get(letter)!.push(officer);
-    }
-
-    const sortedLetters = Array.from(map.keys()).sort((a, b) => {
-      if (a === '#') return 1;
-      if (b === '#') return -1;
-      return a.localeCompare(b, 'es');
-    });
-
-    return sortedLetters.map((letter) => ({
-      letter,
-      contacts: map.get(letter)!,
-    }));
-  }, [filteredOfficers]);
+  }, [officersList, chatContactSearchQuery]);
 
   const totalChatCount = conversations.length;
   const groupsChatCount = conversations.filter((c) => c.type === 'group').length;
@@ -2320,118 +2336,15 @@ export default function NativeApp() {
     } catch {}
   };
 
-  const handleSaveContactSubmit = async () => {
-    if (contactMutationRef.current) return;
-    contactMutationRef.current = true;
-    ++contactRevisionRef.current;
-    setIsSavingContact(true);
-    setAddContactError(null);
-    const base = serverUrl;
-    try {
-      const saved = await createContactsApi(base).create({
-        name: [newContactName.trim(), newContactLastName.trim()].filter(Boolean).join(' '),
-        phone_number: newContactPhone, email: newContactEmail,
-      });
-      if (base !== contactsServerRef.current) return;
-      setOfficersList(prev => [saved, ...prev.filter(c => c.id !== saved.id)]);
-      setIsAddContactModalOpen(false);
-      setNewContactName(''); setNewContactLastName(''); setNewContactPhone(''); setNewContactEmail('');
-      showTacticalToast(`Contacto "${saved.name}" guardado en la BD`, 'success');
-    } catch (error) {
-      if (base === contactsServerRef.current) setAddContactError(error instanceof Error ? error.message : 'No se pudo guardar el contacto.');
-    } finally {
-      contactMutationRef.current = false;
-      ++contactRevisionRef.current;
-      setIsSavingContact(false);
-      if (base === contactsServerRef.current) await refreshContacts(base);
-    }
+  const handleContactUpdated = (contact: ContactOfficer) => {
+    setConversations(prev => prev.map(c => c.type === 'direct' && c.targetUserId === contact.id
+      ? { ...c, name: contact.name, callsign: contact.callsign } : c));
+    setActiveConversation(prev => prev?.type === 'direct' && prev.targetUserId === contact.id
+      ? { ...prev, name: contact.name, callsign: contact.callsign } : prev);
   };
-
-  const handleOpenContactDetail = (contact: ContactOfficer) => {
-    setSelectedContactForDetail(contact);
-    setCopiedDetailField(null);
-    setIsContactDetailModalOpen(true);
-  };
-
-  const handleOpenEditContact = (contact: ContactOfficer) => {
-    const parts = contact.name.trim().split(' ');
-    const first = parts[0] || '';
-    const last = parts.slice(1).join(' ');
-    setEditContactName(first);
-    setEditContactLastName(last);
-    setEditContactPhone(contact.phone_number || '');
-    setEditContactEmail(contact.email || '');
-    setEditContactCallsign(contact.callsign || '');
-    setEditContactError(null);
-    setIsContactDetailModalOpen(false);
-    setIsEditContactModalOpen(true);
-  };
-
-  const handleSaveEditContactSubmit = async () => {
-    if (!selectedContactForDetail || contactMutationRef.current) return;
-    const contact = selectedContactForDetail;
-    const base = serverUrl;
-    contactMutationRef.current = true;
-    ++contactRevisionRef.current;
-    setIsSavingEditContact(true);
-    setEditContactError(null);
-    try {
-      const saved = await createContactsApi(base).update(contact.id, {
-        name: [editContactName.trim(), editContactLastName.trim()].filter(Boolean).join(' '),
-        phone_number: editContactPhone, email: editContactEmail,
-        callsign: editContactCallsign.trim().toUpperCase(), unit: contact.unit,
-      });
-      if (base !== contactsServerRef.current) return;
-      setOfficersList(prev => prev.map(c => c.id === saved.id ? saved : c));
-      setSelectedContactForDetail(saved);
-      setConversations(prev => prev.map(c => c.type === 'direct' && c.targetUserId === contact.id
-        ? { ...c, name: saved.name, callsign: saved.callsign } : c));
-      setActiveConversation(prev => prev?.type === 'direct' && prev.targetUserId === contact.id
-        ? { ...prev, name: saved.name, callsign: saved.callsign } : prev);
-      setIsEditContactModalOpen(false);
-      setIsContactDetailModalOpen(true);
-      showTacticalToast(`Contacto "${saved.name}" actualizado en la BD`, 'success');
-    } catch (error) {
-      if (base === contactsServerRef.current) setEditContactError(error instanceof Error ? error.message : 'No se pudo actualizar el contacto.');
-    } finally {
-      contactMutationRef.current = false;
-      ++contactRevisionRef.current;
-      setIsSavingEditContact(false);
-      if (base === contactsServerRef.current) await refreshContacts(base);
-    }
-  };
-
-  const handleDeleteContact = (contact: ContactOfficer) => {
-    if (!contact || contactMutationRef.current) return;
-    const base = serverUrl;
-    const executeDelete = async () => {
-      if (contactMutationRef.current || base !== contactsServerRef.current) return;
-      contactMutationRef.current = true;
-      ++contactRevisionRef.current;
-      setIsDeletingContact(true);
-      try {
-        await createContactsApi(base).remove(contact.id);
-        if (base !== contactsServerRef.current) return;
-        setOfficersList(prev => prev.filter(c => c.id !== contact.id));
-        setIsContactDetailModalOpen(false);
-        setIsEditContactModalOpen(false);
-        setSelectedContactForDetail(null);
-        setTacticalAlertModal(prev => ({ ...prev, isOpen: false }));
-        showTacticalToast(`Contacto "${contact.name}" eliminado de la BD`, 'success');
-      } catch (error) {
-        if (base === contactsServerRef.current) showTacticalAlert('No se pudo eliminar el contacto',
-          error instanceof Error ? error.message : 'Verifica la conexión e inténtalo de nuevo.', { type: 'warning' });
-      } finally {
-        contactMutationRef.current = false;
-        ++contactRevisionRef.current;
-        setIsDeletingContact(false);
-        if (base === contactsServerRef.current) await refreshContacts(base);
-      }
-    };
-    showTacticalAlert('¿Eliminar Contacto C5i?',
-      `Se eliminará a "${contact.name}" del directorio de contactos.`, {
-        type: 'confirm_delete', confirmText: 'Eliminar Contacto', cancelText: 'Cancelar', onConfirm: executeDelete,
-      });
+  const openContactRegistration = () => {
+    setIsNewChatModalOpen(false);
+    contactsScreenRef.current?.openCreate();
   };
 
   // Envío genérico de mensajes multimedia y tácticos
@@ -2731,7 +2644,8 @@ export default function NativeApp() {
             keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator={false}
           >
-           
+
+
             <View style={styles.loginCard}>
               {/* C5i Emblem Logo */}
               <Image
@@ -3671,8 +3585,10 @@ export default function NativeApp() {
     );
   }
 
-  const memberCount = channels.length === 0 ? 0 : 1;
-  const channelTitle = selectedChannel?.name || (channels.length === 0 ? 'Sin canales (Toca para crear)' : 'Selecciona un canal');
+  const memberCount = selectedChannel ? 1 : 0;
+  const channelTitle = selectedChannel?.name || (pendingSavedChannel && currentUser?.id === pendingSavedChannel.userId
+    ? `${pendingSavedChannel.channel.name} (verificando...)`
+    : (channels.length === 0 ? 'Sin canales disponibles' : 'Ningún grupo seleccionado'));
 
   return (
     <SafeAreaView style={styles.cleanContainer}>
@@ -3717,8 +3633,9 @@ export default function NativeApp() {
                 <TouchableOpacity
                   style={styles.cleanMembersPill}
                   onPress={() => setIsMembersModalOpen(true)}
+                  disabled={!selectedChannel}
                   activeOpacity={0.8}
-                  accessibilityLabel="Ver usuarios dentro del canal"
+                  accessibilityLabel={selectedChannel ? 'Ver usuarios dentro del canal' : 'No hay grupo seleccionado'}
                 >
                   <UsersIcon size={16} color="#64748b" strokeWidth={1.8} />
                   <Text style={styles.cleanMembersCount}>{memberCount}</Text>
@@ -3734,9 +3651,22 @@ export default function NativeApp() {
                   <View style={styles.cleanStatusRow}>
                     <View style={styles.cleanPulseRedDot} />
                     <Text style={styles.cleanStatusTextRed}>
-                      Transmitiendo ({txDuration.toString().padStart(2, '0')}s)...
+                      {pttChannelAtPressRef.current
+                        ? `Transmitiendo (${txDuration.toString().padStart(2, '0')}s)...`
+                        : `Prueba del botón PTT (${txDuration.toString().padStart(2, '0')}s) · Sin envío`}
                     </Text>
                   </View>
+                ) : !selectedChannel ? (
+                  <TouchableOpacity
+                    style={styles.cleanStatusRow}
+                    onPress={() => setCurrentTab('Grupos')}
+                    accessibilityLabel="Abrir Grupos para seleccionar un canal"
+                  >
+                    <RadioIcon size={15} color="#64748b" strokeWidth={2} />
+                    <Text style={styles.cleanStatusTextIdle}>
+                      {pendingSavedChannel ? 'Verificando el grupo guardado con el servidor...' : 'Puedes probar el botón; elige grupo para transmitir'}
+                    </Text>
+                  </TouchableOpacity>
                 ) : (
                   <View style={styles.cleanStatusRow}>
                     <View style={styles.cleanGreenDot} />
@@ -3750,66 +3680,19 @@ export default function NativeApp() {
               {/* PTT Concentric Circle Button with Soundwaves */}
               <View style={styles.pttCircleContainer}>
                 {isTransmitting && (
+                  // Aros sin Animated.loop: no se desmontan animaciones activas al soltar.
                   <>
-                    <Animated.View
+                    <View
                       pointerEvents="none"
-                      style={[
-                        styles.cleanPttExpandingWave,
-                        {
-                          transform: [
-                            {
-                              scale: waveAnim1.interpolate({
-                                inputRange: [0, 1],
-                                outputRange: [1, 1.55],
-                              }),
-                            },
-                          ],
-                          opacity: waveAnim1.interpolate({
-                            inputRange: [0, 0.25, 0.75, 1],
-                            outputRange: [0.65, 0.5, 0.2, 0],
-                          }),
-                        },
-                      ]}
+                      style={[styles.cleanPttExpandingWave, {
+                        width: 310, height: 310, borderRadius: 155, opacity: 0.38,
+                      }]}
                     />
-                    <Animated.View
+                    <View
                       pointerEvents="none"
-                      style={[
-                        styles.cleanPttExpandingWave,
-                        {
-                          transform: [
-                            {
-                              scale: waveAnim2.interpolate({
-                                inputRange: [0, 1],
-                                outputRange: [1, 1.55],
-                              }),
-                            },
-                          ],
-                          opacity: waveAnim2.interpolate({
-                            inputRange: [0, 0.25, 0.75, 1],
-                            outputRange: [0.65, 0.5, 0.2, 0],
-                          }),
-                        },
-                      ]}
-                    />
-                    <Animated.View
-                      pointerEvents="none"
-                      style={[
-                        styles.cleanPttExpandingWave,
-                        {
-                          transform: [
-                            {
-                              scale: waveAnim3.interpolate({
-                                inputRange: [0, 1],
-                                outputRange: [1, 1.55],
-                              }),
-                            },
-                          ],
-                          opacity: waveAnim3.interpolate({
-                            inputRange: [0, 0.25, 0.75, 1],
-                            outputRange: [0.65, 0.5, 0.2, 0],
-                          }),
-                        },
-                      ]}
+                      style={[styles.cleanPttExpandingWave, {
+                        width: 286, height: 286, borderRadius: 143, opacity: 0.60,
+                      }]}
                     />
                   </>
                 )}
@@ -3824,6 +3707,9 @@ export default function NativeApp() {
                     activeOpacity={0.9}
                     onPressIn={handlePttPressIn}
                     onPressOut={handlePttPressOut}
+                    accessibilityLabel={selectedChannel
+                      ? 'Mantén presionado para transmitir al grupo'
+                      : 'Mantén presionado para probar el botón, sin transmitir'}
                     style={[
                       styles.cleanPttCircleInner,
                       isTransmitting && styles.cleanPttCircleInnerActive,
@@ -4006,7 +3892,7 @@ export default function NativeApp() {
               ) : (
                 /* TARJETAS DE CANALES EXACTAS A LA IMAGEN 2 */
                 filteredChannels.map((ch: Channel) => {
-                  const isSelected = ch.id === selectedChannel.id;
+                  const isSelected = ch.id === selectedChannel?.id;
                   return (
                     <View
                       key={ch.id}
@@ -4654,242 +4540,9 @@ export default function NativeApp() {
           </View>
         )}
 
-        {currentTab === 'Contactos' && (
-          <View style={{ flex: 1, backgroundColor: '#f8fafc' }}>
-            {/* Header exacto a Imagen 1 */}
-            <View style={{
-              flexDirection: 'row',
-              alignItems: 'center',
-              paddingHorizontal: 16,
-              paddingVertical: 14,
-              backgroundColor: '#ffffff',
-              borderBottomWidth: 1,
-              borderBottomColor: '#f1f5f9',
-            }}>
-              <View style={{
-                width: 44,
-                height: 44,
-                borderRadius: 14,
-                backgroundColor: '#fdf2f4',
-                borderWidth: 1,
-                borderColor: '#fecdd3',
-                alignItems: 'center',
-                justifyContent: 'center',
-              }}>
-                <UsersIcon size={22} color="#8a1a36" strokeWidth={2.2} />
-              </View>
-
-              <Text style={{
-                fontSize: 20,
-                fontWeight: '700',
-                color: '#0f172a',
-                marginLeft: 14,
-                flex: 1,
-              }}>
-                Contactos
-              </Text>
-
-              {/* Botón SOS Rojo */}
-              <TouchableOpacity
-                style={{
-                  width: 42,
-                  height: 42,
-                  borderRadius: 12,
-                  backgroundColor: '#dc2626',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  marginRight: 10,
-                  shadowColor: '#dc2626',
-                  shadowOpacity: 0.25,
-                  shadowRadius: 4,
-                  elevation: 2,
-                }}
-                onPress={handleTriggerSos}
-                activeOpacity={0.8}
-              >
-                <AlertTriangleIcon size={20} color="#ffffff" strokeWidth={2.2} />
-              </TouchableOpacity>
-
-              {/* Botón Agregar Contacto Granate */}
-              <TouchableOpacity
-                style={{
-                  width: 42,
-                  height: 42,
-                  borderRadius: 12,
-                  backgroundColor: '#6b1d2f',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  shadowColor: '#6b1d2f',
-                  shadowOpacity: 0.25,
-                  shadowRadius: 4,
-                  elevation: 2,
-                }}
-                onPress={() => {
-                  setAddContactError(null);
-                  setIsAddContactModalOpen(true);
-                }}
-                activeOpacity={0.8}
-              >
-                <UserPlusIcon size={20} color="#ffffff" strokeWidth={2.2} />
-              </TouchableOpacity>
-            </View>
-
-            {/* Barra de Búsqueda de Contactos */}
-            <View style={{
-              paddingHorizontal: 16,
-              paddingVertical: 12,
-              backgroundColor: '#ffffff',
-              borderBottomWidth: 1,
-              borderBottomColor: '#f1f5f9',
-            }}>
-              <View style={{
-                flexDirection: 'row',
-                alignItems: 'center',
-                backgroundColor: '#ffffff',
-                borderWidth: 1,
-                borderColor: '#e2e8f0',
-                borderRadius: 12,
-                paddingHorizontal: 12,
-                height: 44,
-              }}>
-                <SearchIcon size={18} color="#94a3b8" strokeWidth={2} />
-                <TextInput
-                  style={{
-                    flex: 1,
-                    marginLeft: 10,
-                    fontSize: 14,
-                    color: '#0f172a',
-                    paddingVertical: 0,
-                  }}
-                  value={contactSearchQuery}
-                  onChangeText={setContactSearchQuery}
-                  placeholder="Buscar por nombre, indicativo, teléfono o correo..."
-                  placeholderTextColor="#94a3b8"
-                />
-                {contactSearchQuery.length > 0 && (
-                  <TouchableOpacity onPress={() => setContactSearchQuery('')}>
-                    <XIcon size={16} color="#94a3b8" />
-                  </TouchableOpacity>
-                )}
-              </View>
-            </View>
-
-            <View style={{ paddingHorizontal: 16, paddingVertical: 8, backgroundColor: contactsError ? '#fff1f2' : '#ffffff' }}>
-              <Text accessibilityLiveRegion="polite" style={{ color: contactsError ? '#be123c' : '#64748b', fontSize: 13 }}>
-                {contactsError || (isLoadingContacts ? 'Consultando contactos…' : `${officersList.length} contactos en la BD`)}
-              </Text>
-              <TouchableOpacity accessibilityLabel="Actualizar contactos" onPress={() => refreshContacts(serverUrl)}
-                disabled={isLoadingContacts || isSavingContact || isSavingEditContact || isDeletingContact}>
-                <Text style={{ color: '#6b1d2f', fontWeight: '700', paddingVertical: 8 }}>Actualizar contactos</Text>
-              </TouchableOpacity>
-            </View>
-
-            {/* Lista de Contactos Tácticos C5i: Dividido solo por una línea entre uno y otro, división por letra, solo nombre */}
-            <ScrollView
-              style={{ flex: 1, backgroundColor: '#ffffff' }}
-              contentContainerStyle={{ paddingBottom: 100 }}
-              keyboardShouldPersistTaps="handled"
-            >
-              {filteredOfficers.length === 0 ? (
-                <View style={{
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  paddingVertical: 60,
-                  paddingHorizontal: 20,
-                }}>
-                  <View style={{
-                    width: 72,
-                    height: 72,
-                    borderRadius: 36,
-                    backgroundColor: '#f1f5f9',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    marginBottom: 16,
-                  }}>
-                    <UserIcon size={36} color="#94a3b8" strokeWidth={1.8} />
-                  </View>
-                  <Text style={{ fontSize: 17, fontWeight: '700', color: '#1e293b', marginBottom: 6 }}>
-                    {isLoadingContacts ? 'Cargando contactos…' : contactsError ? 'No se pudo actualizar el directorio' : contactSearchQuery ? 'Sin coincidencias' : 'Sin contactos registrados'}
-                  </Text>
-                  <Text style={{ fontSize: 13, color: '#64748b', textAlign: 'center', marginBottom: 20, maxWidth: 280 }}>
-                    Agrega a tu primer oficial o contacto para iniciar una conversación encriptada.
-                  </Text>
-                  <TouchableOpacity
-                    style={{
-                      flexDirection: 'row',
-                      alignItems: 'center',
-                      backgroundColor: '#6b1d2f',
-                      paddingHorizontal: 20,
-                      paddingVertical: 12,
-                      borderRadius: 12,
-                      gap: 8,
-                    }}
-                    onPress={() => {
-                      setAddContactError(null);
-                      setIsAddContactModalOpen(true);
-                    }}
-                  >
-                    <UserPlusIcon size={18} color="#ffffff" strokeWidth={2.2} />
-                    <Text style={{ color: '#ffffff', fontWeight: '700', fontSize: 14 }}>
-                      + Agregar Contacto
-                    </Text>
-                  </TouchableOpacity>
-                </View>
-              ) : (
-                groupedOfficers.map((group) => (
-                  <View key={group.letter}>
-                    {/* División por letra (ej. A, V) */}
-                    <View style={{
-                      backgroundColor: '#f8fafc',
-                      paddingHorizontal: 20,
-                      paddingVertical: 8,
-                      borderTopWidth: 1,
-                      borderBottomWidth: 1,
-                      borderColor: '#f1f5f9',
-                    }}>
-                      <Text style={{
-                        fontSize: 15,
-                        fontWeight: '800',
-                        color: '#6b1d2f',
-                        letterSpacing: 0.5,
-                      }}>
-                        {group.letter}
-                      </Text>
-                    </View>
-
-                    {/* Contactos bajo esta letra: solo el nombre, divididos por una sola línea */}
-                    {group.contacts.map((cnt, idx) => (
-                      <React.Fragment key={cnt.id}>
-                        <TouchableOpacity
-                          style={{
-                            paddingHorizontal: 20,
-                            paddingVertical: 16,
-                            backgroundColor: '#ffffff',
-                          }}
-                          onPress={() => handleOpenContactDetail(cnt)}
-                          activeOpacity={0.6}
-                        >
-                          <Text style={{
-                            fontSize: 16,
-                            fontWeight: '600',
-                            color: '#0f172a',
-                          }}>
-                            {cnt.name}
-                          </Text>
-                        </TouchableOpacity>
-
-                        {/* Línea divisoria simple entre uno y otro */}
-                        {idx < group.contacts.length - 1 && (
-                          <View style={{ height: 1, backgroundColor: '#f1f5f9', marginHorizontal: 20 }} />
-                        )}
-                      </React.Fragment>
-                    ))}
-                  </View>
-                ))
-              )}
-            </ScrollView>
-          </View>
-        )}
+        <ContactsScreen ref={contactsScreenRef} visible={currentTab === 'Contactos'} serverUrl={serverUrl}
+          directory={contactsDirectory} onSos={handleTriggerSos} onStartChat={contact => { handleStartDirectChat(contact); setCurrentTab('Chat'); }}
+          onContactUpdated={handleContactUpdated} onOpenCamera={handleOpenCamera} />
 
         {currentTab === 'Perfil' && (
           <ScrollView style={styles.cleanScrollSection}>
@@ -5850,7 +5503,7 @@ export default function NativeApp() {
         transparent
         onRequestClose={() => {
           setIsNewChatModalOpen(false);
-          setContactSearchQuery('');
+          setChatContactSearchQuery('');
         }}
       >
         <View style={styles.chatModalBackdrop}>
@@ -5859,7 +5512,7 @@ export default function NativeApp() {
             activeOpacity={1}
             onPress={() => {
               setIsNewChatModalOpen(false);
-              setContactSearchQuery('');
+              setChatContactSearchQuery('');
             }}
           />
           <View style={styles.chatModalCard}>
@@ -5880,7 +5533,7 @@ export default function NativeApp() {
                   style={styles.chatModalCloseBtn}
                   onPress={() => {
                     setIsNewChatModalOpen(false);
-                    setContactSearchQuery('');
+                    setChatContactSearchQuery('');
                   }}
                   hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
                 >
@@ -5892,7 +5545,7 @@ export default function NativeApp() {
               <View style={styles.chatModalActionsRow}>
                 <TouchableOpacity
                   style={styles.chatModalRegisterBtn}
-                  onPress={() => setIsAddContactModalOpen(true)}
+                  onPress={openContactRegistration}
                   activeOpacity={0.85}
                 >
                   <UserPlusIcon size={18} color="#ffffff" strokeWidth={2.2} />
@@ -5914,13 +5567,13 @@ export default function NativeApp() {
                 <SearchIcon size={16} color="#94a3b8" strokeWidth={2} />
                 <TextInput
                   style={styles.chatModalSearchInput}
-                  value={contactSearchQuery}
-                  onChangeText={setContactSearchQuery}
+                  value={chatContactSearchQuery}
+                  onChangeText={setChatContactSearchQuery}
                   placeholder="Buscar por nombre, indicativo o teléfono..."
                   placeholderTextColor="#94a3b8"
                 />
-                {Boolean(contactSearchQuery) && (
-                  <TouchableOpacity onPress={() => setContactSearchQuery('')}>
+                {Boolean(chatContactSearchQuery) && (
+                  <TouchableOpacity onPress={() => setChatContactSearchQuery('')}>
                     <XIcon size={14} color="#94a3b8" />
                   </TouchableOpacity>
                 )}
@@ -5938,7 +5591,7 @@ export default function NativeApp() {
                   </Text>
                   <TouchableOpacity
                     style={styles.chatModalEmptyAddBtn}
-                    onPress={() => setIsAddContactModalOpen(true)}
+                    onPress={openContactRegistration}
                     activeOpacity={0.85}
                   >
                     <Text style={styles.chatModalEmptyAddBtnText}>+ Agregar Contacto</Text>
@@ -5991,1020 +5644,6 @@ export default function NativeApp() {
             </View>
           </View>
       </Modal>
-
-      {/* 7. MODAL: REGISTRAR NUEVO CONTACTO (Diseño exacto a Imagen 2) */}
-      <Modal
-        visible={isAddContactModalOpen}
-        animationType="fade"
-        transparent
-        onRequestClose={() => {
-          if (isSavingContact) return;
-          setIsAddContactModalOpen(false);
-          setAddContactError(null);
-        }}
-      >
-        <View style={{
-          flex: 1,
-          backgroundColor: 'rgba(15, 23, 42, 0.6)',
-          justifyContent: 'center',
-          alignItems: 'center',
-          padding: 16,
-        }}>
-          {/* Backdrop que cierra al tocar fuera sin interceptar clics dentro de la tarjeta */}
-          <TouchableOpacity
-            style={StyleSheet.absoluteFill}
-            activeOpacity={1}
-            onPress={() => {
-              if (isSavingContact) return;
-              setIsAddContactModalOpen(false);
-              setAddContactError(null);
-            }}
-          />
-
-          <View style={{
-            backgroundColor: '#ffffff',
-            borderRadius: 28,
-            width: '100%',
-            maxWidth: 420,
-            paddingHorizontal: 20,
-            paddingTop: 18,
-            paddingBottom: 24,
-            shadowColor: '#000000',
-            shadowOpacity: 0.15,
-            shadowRadius: 16,
-            shadowOffset: { width: 0, height: 8 },
-            elevation: 8,
-          }}>
-            {/* Header con dos circulitos para Cancelar y Guardar */}
-            <View style={{
-              flexDirection: 'row',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              paddingBottom: 12,
-              borderBottomWidth: 1,
-              borderBottomColor: '#f1f5f9',
-            }}>
-              {/* Botón Circular Izquierdo: Cancelar */}
-              <TouchableOpacity
-                style={{
-                  width: 38,
-                  height: 38,
-                  borderRadius: 19,
-                  backgroundColor: '#e2e8f0',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                }}
-                onPress={() => {
-                  if (isSavingContact) return;
-                  setIsAddContactModalOpen(false);
-                  setAddContactError(null);
-                }}
-                activeOpacity={0.8}
-              >
-                <XIcon size={18} color="#475569" strokeWidth={2.2} />
-              </TouchableOpacity>
-
-              {/* Título Central */}
-              <Text style={{
-                fontSize: 18,
-                fontWeight: '700',
-                color: '#0f172a',
-                textAlign: 'center',
-              }}>
-                Nuevo Contacto
-              </Text>
-
-              {/* Botón Circular Derecho: Guardar */}
-              <TouchableOpacity
-                style={{
-                  width: 38,
-                  height: 38,
-                  borderRadius: 19,
-                  backgroundColor: '#6b1d2f',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  shadowColor: '#6b1d2f',
-                  shadowOpacity: 0.3,
-                  shadowRadius: 4,
-                  elevation: 2,
-                }}
-                accessibilityLabel="Guardar contacto"
-                disabled={isSavingContact}
-                onPress={handleSaveContactSubmit}
-                activeOpacity={0.8}
-              >
-                {isSavingContact ? <ActivityIndicator color="#ffffff" size="small" /> : <CheckIcon size={18} color="#ffffff" strokeWidth={2.6} />}
-              </TouchableOpacity>
-            </View>
-
-            <ScrollView
-              style={{ maxHeight: 460 }}
-              contentContainerStyle={{ paddingTop: 16, paddingBottom: 6 }}
-              keyboardShouldPersistTaps="handled"
-            >
-              {/* Círculo con Icono de Persona (sin agregar foto, solo persona) */}
-              <View style={{
-                alignSelf: 'center',
-                width: 86,
-                height: 86,
-                borderRadius: 43,
-                backgroundColor: '#f8fafc',
-                borderWidth: 2,
-                borderColor: '#fbcfe8',
-                alignItems: 'center',
-                justifyContent: 'center',
-                marginBottom: 20,
-              }}>
-                <UserIcon size={42} color="#94a3b8" strokeWidth={1.8} />
-              </View>
-
-              {addContactError && (
-                <View style={{
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  backgroundColor: '#ffe4e6',
-                  paddingHorizontal: 12,
-                  paddingVertical: 8,
-                  borderRadius: 10,
-                  marginBottom: 14,
-                  gap: 8,
-                }}>
-                  <AlertTriangleIcon size={16} color="#be123c" strokeWidth={2} />
-                  <Text style={{ color: '#be123c', fontSize: 13, fontWeight: '600', flex: 1 }}>
-                    {addContactError}
-                  </Text>
-                </View>
-              )}
-
-              {/* Tarjeta 1: Nombre(s) y Apellidos (Opcional) */}
-              <View style={{
-                backgroundColor: '#ffffff',
-                borderRadius: 16,
-                borderWidth: 1,
-                borderColor: '#e2e8f0',
-                paddingHorizontal: 16,
-                paddingVertical: 10,
-                marginBottom: 14,
-              }}>
-                <Text style={{ fontSize: 12, fontWeight: '600', color: '#64748b', marginBottom: 2 }}>
-                  Nombre(s) *
-                </Text>
-                <TextInput
-                  editable={!isSavingContact}
-                  style={{
-                    fontSize: 15,
-                    color: '#0f172a',
-                    paddingVertical: 4,
-                  }}
-                  value={newContactName}
-                  onChangeText={setNewContactName}
-                  placeholder="Ej. Juan Carlos"
-                  placeholderTextColor="#94a3b8"
-                />
-
-                <View style={{ height: 1, backgroundColor: '#f1f5f9', marginVertical: 8 }} />
-
-                <Text style={{ fontSize: 12, fontWeight: '600', color: '#64748b', marginBottom: 2 }}>
-                  Apellidos (Opcional)
-                </Text>
-                <TextInput
-                  editable={!isSavingContact}
-                  style={{
-                    fontSize: 15,
-                    color: '#0f172a',
-                    paddingVertical: 4,
-                  }}
-                  value={newContactLastName}
-                  onChangeText={setNewContactLastName}
-                  placeholder="Ej. Perez Hernandez"
-                  placeholderTextColor="#94a3b8"
-                />
-              </View>
-
-              {/* Tarjeta 2: Número de Teléfono (directo sin selector de país) */}
-              <View style={{
-                backgroundColor: '#ffffff',
-                borderRadius: 16,
-                borderWidth: 1,
-                borderColor: '#e2e8f0',
-                paddingHorizontal: 16,
-                paddingVertical: 10,
-                marginBottom: 14,
-              }}>
-                <Text style={{ fontSize: 12, fontWeight: '600', color: '#64748b', marginBottom: 2 }}>
-                  Número de Teléfono
-                </Text>
-                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                  <TextInput
-                  editable={!isSavingContact}
-                    style={{
-                      flex: 1,
-                      fontSize: 15,
-                      color: '#0f172a',
-                      paddingVertical: 4,
-                    }}
-                    value={newContactPhone}
-                    onChangeText={setNewContactPhone}
-                    placeholder="771 123 4567"
-                    placeholderTextColor="#94a3b8"
-                    keyboardType="phone-pad"
-                  />
-                  <PhoneIcon size={18} color="#94a3b8" strokeWidth={1.8} />
-                </View>
-              </View>
-
-              {/* Tarjeta 3: Correo Electrónico (Opcional) */}
-              <View style={{
-                backgroundColor: '#ffffff',
-                borderRadius: 16,
-                borderWidth: 1,
-                borderColor: '#e2e8f0',
-                paddingHorizontal: 16,
-                paddingVertical: 10,
-                marginBottom: 8,
-              }}>
-                <Text style={{ fontSize: 12, fontWeight: '600', color: '#64748b', marginBottom: 2 }}>
-                  Correo Electrónico (Opcional)
-                </Text>
-                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                  <TextInput
-                  editable={!isSavingContact}
-                    style={{
-                      flex: 1,
-                      fontSize: 15,
-                      color: '#0f172a',
-                      paddingVertical: 4,
-                    }}
-                    value={newContactEmail}
-                    onChangeText={setNewContactEmail}
-                    placeholder="ejemplo@c5i.gob.mx"
-                    placeholderTextColor="#94a3b8"
-                    keyboardType="email-address"
-                    autoCapitalize="none"
-                  />
-                  <MailIcon size={18} color="#94a3b8" strokeWidth={1.8} />
-                </View>
-              </View>
-            </ScrollView>
-          </View>
-        </View>
-      </Modal>
-
-      {/* 7b. MODAL: DETALLE DE CONTACTO / PERFIL (Diseño exacto a Imagen Captura 11.27.13) */}
-      {isContactDetailModalOpen && !!selectedContactForDetail && (
-      <Modal
-        visible={isContactDetailModalOpen && !!selectedContactForDetail}
-        animationType="slide"
-        transparent={false}
-        onRequestClose={() => setIsContactDetailModalOpen(false)}
-      >
-        <SafeAreaView style={{ flex: 1, backgroundColor: '#ffffff' }}>
-          {/* Barra Superior con botón circular <, SOS y botón Editar */}
-          <View style={{
-            flexDirection: 'row',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            paddingHorizontal: 16,
-            paddingVertical: 12,
-            borderBottomWidth: 1,
-            borderBottomColor: '#f1f5f9',
-          }}>
-            {/* Botón Circular Izquierdo: Volver atrás */}
-            <TouchableOpacity
-              style={{
-                width: 40,
-                height: 40,
-                borderRadius: 20,
-                backgroundColor: '#f1f5f9',
-                alignItems: 'center',
-                justifyContent: 'center',
-              }}
-              onPress={() => setIsContactDetailModalOpen(false)}
-              activeOpacity={0.7}
-            >
-              <ArrowLeftIcon size={20} color="#334155" strokeWidth={2.2} />
-            </TouchableOpacity>
-
-            {/* Botones Derecha: SOS y Editar */}
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-              {/* Botón SOS Pill Rojo */}
-              <TouchableOpacity
-                style={{
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  backgroundColor: '#ef4444',
-                  paddingHorizontal: 12,
-                  paddingVertical: 7,
-                  borderRadius: 20,
-                  gap: 4,
-                  shadowColor: '#ef4444',
-                  shadowOpacity: 0.3,
-                  shadowRadius: 4,
-                  elevation: 2,
-                }}
-                onPress={handleTriggerSos}
-                activeOpacity={0.8}
-              >
-                <AlertTriangleIcon size={16} color="#ffffff" strokeWidth={2.4} />
-                <Text style={{ color: '#ffffff', fontWeight: '800', fontSize: 13, letterSpacing: 0.5 }}>
-                  SOS
-                </Text>
-              </TouchableOpacity>
-
-              {/* Botón Editar Pill Granate */}
-              <TouchableOpacity
-                style={{
-                  backgroundColor: '#6b1d2f',
-                  paddingHorizontal: 18,
-                  paddingVertical: 7,
-                  borderRadius: 20,
-                  shadowColor: '#6b1d2f',
-                  shadowOpacity: 0.3,
-                  shadowRadius: 4,
-                  elevation: 2,
-                }}
-                onPress={() => {
-                  if (selectedContactForDetail) {
-                    handleOpenEditContact(selectedContactForDetail);
-                  }
-                }}
-                activeOpacity={0.8}
-              >
-                <Text style={{ color: '#ffffff', fontWeight: '700', fontSize: 14 }}>
-                  Editar
-                </Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-
-          <ScrollView
-            style={{ flex: 1, backgroundColor: '#ffffff' }}
-            contentContainerStyle={{ paddingHorizontal: 20, paddingTop: 20, paddingBottom: 40 }}
-            showsVerticalScrollIndicator={false}
-          >
-            {/* Avatar Central Grande con Inicial */}
-            <View style={{ alignItems: 'center', marginBottom: 14 }}>
-              <View style={{
-                width: 110,
-                height: 110,
-                borderRadius: 55,
-                backgroundColor: '#e0f2fe',
-                borderWidth: 2.5,
-                borderColor: '#fbcfe8',
-                alignItems: 'center',
-                justifyContent: 'center',
-                shadowColor: '#000000',
-                shadowOpacity: 0.08,
-                shadowRadius: 8,
-                shadowOffset: { width: 0, height: 4 },
-                elevation: 3,
-              }}>
-                <Text style={{
-                  fontSize: 44,
-                  fontWeight: '800',
-                  color: '#6b1d2f',
-                }}>
-                  {(selectedContactForDetail?.name.trim()[0] || 'K').toUpperCase()}
-                </Text>
-              </View>
-
-              {/* Nombre del Contacto */}
-              <Text style={{
-                fontSize: 22,
-                fontWeight: '800',
-                color: '#0f172a',
-                marginTop: 12,
-                textAlign: 'center',
-              }}>
-                {selectedContactForDetail?.name}
-              </Text>
-
-              {/* Indicativo de Radio Pill */}
-              <View style={{
-                backgroundColor: '#f1f5f9',
-                paddingHorizontal: 12,
-                paddingVertical: 4,
-                borderRadius: 12,
-                marginTop: 6,
-              }}>
-                <Text style={{
-                  fontSize: 12,
-                  fontWeight: '700',
-                  color: '#7a1c30',
-                  letterSpacing: 0.5,
-                }}>
-                  {selectedContactForDetail?.callsign || 'RADIO-654'}
-                </Text>
-              </View>
-            </View>
-
-            {/* 4 Botones Circulares de Acción Rápida Granate */}
-            <View style={{
-              flexDirection: 'row',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: 16,
-              marginVertical: 18,
-            }}>
-              {/* 1. Chat */}
-              <TouchableOpacity
-                style={{
-                  width: 50,
-                  height: 50,
-                  borderRadius: 25,
-                  backgroundColor: '#6b1d2f',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  shadowColor: '#6b1d2f',
-                  shadowOpacity: 0.35,
-                  shadowRadius: 6,
-                  elevation: 3,
-                }}
-                onPress={() => {
-                  if (selectedContactForDetail) {
-                    setIsContactDetailModalOpen(false);
-                    handleStartDirectChat(selectedContactForDetail);
-                    setCurrentTab('Chat');
-                  }
-                }}
-                activeOpacity={0.8}
-              >
-                <MessageSquareIcon size={22} color="#ffffff" strokeWidth={2.2} />
-              </TouchableOpacity>
-
-              {/* 2. Llamada */}
-              <TouchableOpacity
-                style={{
-                  width: 50,
-                  height: 50,
-                  borderRadius: 25,
-                  backgroundColor: '#6b1d2f',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  shadowColor: '#6b1d2f',
-                  shadowOpacity: 0.35,
-                  shadowRadius: 6,
-                  elevation: 3,
-                }}
-                onPress={() => {
-                  if (selectedContactForDetail?.phone_number) {
-                    if (Platform.OS === 'web') {
-                      window.open(`tel:${selectedContactForDetail.phone_number}`);
-                    } else {
-                      Linking.openURL(`tel:${selectedContactForDetail.phone_number}`).catch(() => {});
-                    }
-                  } else {
-                    showTacticalAlert('Llamada Telefónica', 'Este oficial o contacto no tiene un número celular registrado en la red C5i.', { type: 'warning' });
-                  }
-                }}
-                activeOpacity={0.8}
-              >
-                <PhoneIcon size={22} color="#ffffff" strokeWidth={2.2} />
-              </TouchableOpacity>
-
-              {/* 3. Video */}
-              <TouchableOpacity
-                style={{
-                  width: 50,
-                  height: 50,
-                  borderRadius: 25,
-                  backgroundColor: '#6b1d2f',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  shadowColor: '#6b1d2f',
-                  shadowOpacity: 0.35,
-                  shadowRadius: 6,
-                  elevation: 3,
-                }}
-                onPress={() => {
-                  setIsContactDetailModalOpen(false);
-                  if (selectedContactForDetail) {
-                    handleStartDirectChat(selectedContactForDetail);
-                    setCurrentTab('Chat');
-                  }
-                  handleOpenCamera();
-                }}
-                activeOpacity={0.8}
-              >
-                <VideoIcon size={22} color="#ffffff" strokeWidth={2.2} />
-              </TouchableOpacity>
-
-              {/* 4. Correo */}
-              <TouchableOpacity
-                style={{
-                  width: 50,
-                  height: 50,
-                  borderRadius: 25,
-                  backgroundColor: '#6b1d2f',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  shadowColor: '#6b1d2f',
-                  shadowOpacity: 0.35,
-                  shadowRadius: 6,
-                  elevation: 3,
-                }}
-                onPress={() => {
-                  if (selectedContactForDetail?.email) {
-                    if (Platform.OS === 'web') {
-                      window.open(`mailto:${selectedContactForDetail.email}`);
-                    } else {
-                      Linking.openURL(`mailto:${selectedContactForDetail.email}`).catch(() => {});
-                    }
-                  } else {
-                    showTacticalAlert('Correo Institucional', 'Este oficial o contacto no tiene un correo institucional registrado.', { type: 'warning' });
-                  }
-                }}
-                activeOpacity={0.8}
-              >
-                <MailIcon size={22} color="#ffffff" strokeWidth={2.2} />
-              </TouchableOpacity>
-            </View>
-
-            {/* 4 Tarjetas de Información */}
-
-            {/* Tarjeta 1: móvil (red celular) */}
-            <View style={{
-              backgroundColor: '#ffffff',
-              borderRadius: 18,
-              borderWidth: 1,
-              borderColor: '#e2e8f0',
-              paddingHorizontal: 16,
-              paddingVertical: 12,
-              marginBottom: 12,
-              shadowColor: '#000000',
-              shadowOpacity: 0.03,
-              shadowRadius: 4,
-              elevation: 1,
-            }}>
-              <Text style={{
-                fontSize: 12,
-                fontWeight: '700',
-                color: '#8a1a36',
-                marginBottom: 4,
-                fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
-              }}>
-                móvil (red celular)
-              </Text>
-              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                <Text style={{ fontSize: 16, fontWeight: '700', color: '#0f172a' }}>
-                  {selectedContactForDetail?.phone_number || 'Sin número registrado'}
-                </Text>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                  {/* Copiar */}
-                  <TouchableOpacity
-                    style={{
-                      width: 36,
-                      height: 36,
-                      borderRadius: 18,
-                      backgroundColor: '#f8fafc',
-                      borderWidth: 1,
-                      borderColor: '#e2e8f0',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                    }}
-                    onPress={() => {
-                      if (selectedContactForDetail?.phone_number) {
-                        Clipboard.setString(selectedContactForDetail.phone_number);
-                        setCopiedDetailField('phone');
-                        setTimeout(() => setCopiedDetailField(null), 2000);
-                      }
-                    }}
-                    activeOpacity={0.7}
-                  >
-                    {copiedDetailField === 'phone' ? (
-                      <CheckIcon size={16} color="#16a34a" strokeWidth={2.4} />
-                    ) : (
-                      <CopyIcon size={16} color="#64748b" strokeWidth={2} />
-                    )}
-                  </TouchableOpacity>
-
-                  {/* Llamar */}
-                  <TouchableOpacity
-                    style={{
-                      width: 36,
-                      height: 36,
-                      borderRadius: 18,
-                      backgroundColor: '#fdf2f4',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                    }}
-                    onPress={() => {
-                      if (selectedContactForDetail?.phone_number) {
-                        if (Platform.OS === 'web') {
-                          window.open(`tel:${selectedContactForDetail.phone_number}`);
-                        } else {
-                          Linking.openURL(`tel:${selectedContactForDetail.phone_number}`).catch(() => {});
-                        }
-                      }
-                    }}
-                    activeOpacity={0.7}
-                  >
-                    <PhoneIcon size={16} color="#8a1a36" strokeWidth={2} />
-                  </TouchableOpacity>
-                </View>
-              </View>
-            </View>
-
-            {/* Tarjeta 2: correo institucional */}
-            <View style={{
-              backgroundColor: '#ffffff',
-              borderRadius: 18,
-              borderWidth: 1,
-              borderColor: '#e2e8f0',
-              paddingHorizontal: 16,
-              paddingVertical: 12,
-              marginBottom: 12,
-              shadowColor: '#000000',
-              shadowOpacity: 0.03,
-              shadowRadius: 4,
-              elevation: 1,
-            }}>
-              <Text style={{
-                fontSize: 12,
-                fontWeight: '700',
-                color: '#8a1a36',
-                marginBottom: 4,
-                fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
-              }}>
-                correo institucional
-              </Text>
-              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                <Text style={{
-                  fontSize: 15,
-                  fontWeight: '700',
-                  color: selectedContactForDetail?.email ? '#0f172a' : '#94a3b8',
-                  flex: 1,
-                  marginRight: 8,
-                }}>
-                  {selectedContactForDetail?.email || 'Sin correo registrado'}
-                </Text>
-                <View style={{
-                  width: 36,
-                  height: 36,
-                  borderRadius: 18,
-                  backgroundColor: '#fdf2f4',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                }}>
-                  <MailIcon size={16} color="#8a1a36" strokeWidth={2} />
-                </View>
-              </View>
-            </View>
-
-            {/* Tarjeta 3: indicativo de radio (callsign) */}
-            <View style={{
-              backgroundColor: '#ffffff',
-              borderRadius: 18,
-              borderWidth: 1,
-              borderColor: '#e2e8f0',
-              paddingHorizontal: 16,
-              paddingVertical: 12,
-              marginBottom: 12,
-              shadowColor: '#000000',
-              shadowOpacity: 0.03,
-              shadowRadius: 4,
-              elevation: 1,
-            }}>
-              <Text style={{
-                fontSize: 12,
-                fontWeight: '700',
-                color: '#8a1a36',
-                marginBottom: 4,
-                fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
-              }}>
-                indicativo de radio (callsign)
-              </Text>
-              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                <Text style={{ fontSize: 16, fontWeight: '700', color: '#0f172a' }}>
-                  {selectedContactForDetail?.callsign || 'RADIO-654'}
-                </Text>
-                <View style={{
-                  width: 36,
-                  height: 36,
-                  borderRadius: 18,
-                  backgroundColor: '#fdf2f4',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                }}>
-                  <ShieldIcon size={16} color="#8a1a36" strokeWidth={2} />
-                </View>
-              </View>
-            </View>
-
-            {/* Botón Eliminar Contacto con estilo C5i */}
-            {selectedContactForDetail && (
-              <TouchableOpacity
-                style={{
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  backgroundColor: '#fef2f2',
-                  borderWidth: 1,
-                  borderColor: '#fecdd3',
-                  paddingVertical: 13,
-                  borderRadius: 16,
-                  gap: 8,
-                  marginTop: 10,
-                }}
-                onPress={() => handleDeleteContact(selectedContactForDetail)}
-                activeOpacity={0.8}
-              >
-                <TrashIcon size={18} color="#dc2626" strokeWidth={2.2} />
-                <Text style={{ color: '#dc2626', fontWeight: '700', fontSize: 14 }}>
-                  Eliminar Contacto
-                </Text>
-              </TouchableOpacity>
-            )}
-          </ScrollView>
-        </SafeAreaView>
-      </Modal>
-      )}
-
-      {/* 7c. MODAL: EDITAR CONTACTO (CRUD CON BASE DE DATOS C5i) */}
-      {isEditContactModalOpen && (
-      <Modal
-        visible={isEditContactModalOpen}
-        animationType="fade"
-        transparent
-        onRequestClose={() => {
-          if (isSavingEditContact) return;
-          setIsEditContactModalOpen(false);
-          setIsContactDetailModalOpen(true);
-          setEditContactError(null);
-        }}
-      >
-        <View style={{
-          flex: 1,
-          backgroundColor: 'rgba(15, 23, 42, 0.6)',
-          justifyContent: 'center',
-          alignItems: 'center',
-          padding: 16,
-        }}>
-          {/* Backdrop que cierra al tocar fuera */}
-          <TouchableOpacity
-            style={StyleSheet.absoluteFill}
-            activeOpacity={1}
-            onPress={() => {
-              if (isSavingEditContact) return;
-              setIsEditContactModalOpen(false);
-              setIsContactDetailModalOpen(true);
-              setEditContactError(null);
-            }}
-          />
-
-          <View style={{
-            backgroundColor: '#ffffff',
-            borderRadius: 28,
-            width: '100%',
-            maxWidth: 420,
-            paddingHorizontal: 20,
-            paddingTop: 18,
-            paddingBottom: 24,
-            shadowColor: '#000000',
-            shadowOpacity: 0.15,
-            shadowRadius: 16,
-            shadowOffset: { width: 0, height: 8 },
-            elevation: 8,
-          }}>
-            {/* Header con botón Cancelar y Guardar */}
-            <View style={{
-              flexDirection: 'row',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              paddingBottom: 12,
-              borderBottomWidth: 1,
-              borderBottomColor: '#f1f5f9',
-            }}>
-              <TouchableOpacity
-                style={{
-                  width: 38,
-                  height: 38,
-                  borderRadius: 19,
-                  backgroundColor: '#e2e8f0',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                }}
-                onPress={() => {
-                  if (isSavingEditContact) return;
-                  setIsEditContactModalOpen(false);
-                  setIsContactDetailModalOpen(true);
-                  setEditContactError(null);
-                }}
-                activeOpacity={0.8}
-              >
-                <XIcon size={18} color="#475569" strokeWidth={2.2} />
-              </TouchableOpacity>
-
-              <Text style={{
-                fontSize: 18,
-                fontWeight: '700',
-                color: '#0f172a',
-                textAlign: 'center',
-              }}>
-                Editar Contacto
-              </Text>
-
-              <TouchableOpacity
-                style={{
-                  width: 38,
-                  height: 38,
-                  borderRadius: 19,
-                  backgroundColor: '#6b1d2f',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  shadowColor: '#6b1d2f',
-                  shadowOpacity: 0.3,
-                  shadowRadius: 4,
-                  elevation: 2,
-                }}
-                accessibilityLabel="Guardar contacto"
-                disabled={isSavingEditContact}
-                onPress={handleSaveEditContactSubmit}
-                activeOpacity={0.8}
-              >
-                {isSavingEditContact ? <ActivityIndicator color="#ffffff" size="small" /> : <CheckIcon size={18} color="#ffffff" strokeWidth={2.6} />}
-              </TouchableOpacity>
-            </View>
-
-            <ScrollView
-              style={{ maxHeight: 460 }}
-              contentContainerStyle={{ paddingTop: 16, paddingBottom: 6 }}
-              keyboardShouldPersistTaps="handled"
-            >
-              {editContactError && (
-                <View style={{
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  backgroundColor: '#ffe4e6',
-                  paddingHorizontal: 12,
-                  paddingVertical: 8,
-                  borderRadius: 10,
-                  marginBottom: 14,
-                  gap: 8,
-                }}>
-                  <AlertTriangleIcon size={16} color="#be123c" strokeWidth={2} />
-                  <Text style={{ color: '#be123c', fontSize: 13, fontWeight: '600', flex: 1 }}>
-                    {editContactError}
-                  </Text>
-                </View>
-              )}
-
-              {/* Nombre y Apellidos */}
-              <View style={{
-                backgroundColor: '#ffffff',
-                borderRadius: 16,
-                borderWidth: 1,
-                borderColor: '#e2e8f0',
-                paddingHorizontal: 16,
-                paddingVertical: 10,
-                marginBottom: 14,
-              }}>
-                <Text style={{ fontSize: 12, fontWeight: '600', color: '#64748b', marginBottom: 2 }}>
-                  Nombre(s) *
-                </Text>
-                <TextInput
-                  editable={!isSavingEditContact}
-                  style={{ fontSize: 15, color: '#0f172a', paddingVertical: 4 }}
-                  value={editContactName}
-                  onChangeText={setEditContactName}
-                  placeholder="Ej. Juan Carlos"
-                  placeholderTextColor="#94a3b8"
-                />
-
-                <View style={{ height: 1, backgroundColor: '#f1f5f9', marginVertical: 8 }} />
-
-                <Text style={{ fontSize: 12, fontWeight: '600', color: '#64748b', marginBottom: 2 }}>
-                  Apellidos (Opcional)
-                </Text>
-                <TextInput
-                  editable={!isSavingEditContact}
-                  style={{ fontSize: 15, color: '#0f172a', paddingVertical: 4 }}
-                  value={editContactLastName}
-                  onChangeText={setEditContactLastName}
-                  placeholder="Ej. Perez Hernandez"
-                  placeholderTextColor="#94a3b8"
-                />
-              </View>
-
-              {/* Teléfono */}
-              <View style={{
-                backgroundColor: '#ffffff',
-                borderRadius: 16,
-                borderWidth: 1,
-                borderColor: '#e2e8f0',
-                paddingHorizontal: 16,
-                paddingVertical: 10,
-                marginBottom: 14,
-              }}>
-                <Text style={{ fontSize: 12, fontWeight: '600', color: '#64748b', marginBottom: 2 }}>
-                  Número de Teléfono
-                </Text>
-                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                  <TextInput
-                  editable={!isSavingEditContact}
-                    style={{ flex: 1, fontSize: 15, color: '#0f172a', paddingVertical: 4 }}
-                    value={editContactPhone}
-                    onChangeText={(text) => {
-                      setEditContactPhone(text);
-                      const digits = text.replace(/\D/g, '');
-                      if (digits.length >= 4) {
-                        setEditContactCallsign(`RADIO-${digits.slice(-4)}`);
-                      } else if (digits.length > 0) {
-                        setEditContactCallsign(`RADIO-${digits.padStart(4, '0')}`);
-                      }
-                    }}
-                    placeholder="771 123 4567"
-                    placeholderTextColor="#94a3b8"
-                    keyboardType="phone-pad"
-                  />
-                  <PhoneIcon size={18} color="#94a3b8" strokeWidth={1.8} />
-                </View>
-              </View>
-
-              {/* Correo */}
-              <View style={{
-                backgroundColor: '#ffffff',
-                borderRadius: 16,
-                borderWidth: 1,
-                borderColor: '#e2e8f0',
-                paddingHorizontal: 16,
-                paddingVertical: 10,
-                marginBottom: 14,
-              }}>
-                <Text style={{ fontSize: 12, fontWeight: '600', color: '#64748b', marginBottom: 2 }}>
-                  Correo Electrónico (Opcional)
-                </Text>
-                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                  <TextInput
-                  editable={!isSavingEditContact}
-                    style={{ flex: 1, fontSize: 15, color: '#0f172a', paddingVertical: 4 }}
-                    value={editContactEmail}
-                    onChangeText={setEditContactEmail}
-                    placeholder="ejemplo@c5i.gob.mx"
-                    placeholderTextColor="#94a3b8"
-                    keyboardType="email-address"
-                    autoCapitalize="none"
-                  />
-                  <MailIcon size={18} color="#94a3b8" strokeWidth={1.8} />
-                </View>
-              </View>
-
-              {/* Indicativo de Radio */}
-              <View style={{
-                backgroundColor: '#ffffff',
-                borderRadius: 16,
-                borderWidth: 1,
-                borderColor: '#e2e8f0',
-                paddingHorizontal: 16,
-                paddingVertical: 10,
-                marginBottom: 18,
-              }}>
-                <Text style={{ fontSize: 12, fontWeight: '600', color: '#64748b', marginBottom: 2 }}>
-                  Indicativo de Radio (Callsign)
-                </Text>
-                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                  <TextInput
-                  editable={!isSavingEditContact}
-                    style={{ flex: 1, fontSize: 15, color: '#0f172a', paddingVertical: 4 }}
-                    value={editContactCallsign}
-                    onChangeText={setEditContactCallsign}
-                    placeholder="RADIO-654"
-                    placeholderTextColor="#94a3b8"
-                    autoCapitalize="characters"
-                  />
-                  <ShieldIcon size={18} color="#94a3b8" strokeWidth={1.8} />
-                </View>
-              </View>
-
-              {/* Botón Eliminar Contacto (CRUD Delete) */}
-              {selectedContactForDetail && (
-                <TouchableOpacity
-                  style={{
-                    flexDirection: 'row',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    backgroundColor: '#fef2f2',
-                    borderWidth: 1,
-                    borderColor: '#fecdd3',
-                    paddingVertical: 12,
-                    borderRadius: 14,
-                    gap: 8,
-                    marginTop: 6,
-                  }}
-                  onPress={() => handleDeleteContact(selectedContactForDetail)}
-                  activeOpacity={0.8}
-                >
-                  <TrashIcon size={18} color="#dc2626" strokeWidth={2} />
-                  <Text style={{ color: '#dc2626', fontWeight: '700', fontSize: 14 }}>
-                    Eliminar Contacto
-                  </Text>
-                </TouchableOpacity>
-              )}
-            </ScrollView>
-          </View>
-        </View>
-      </Modal>
-      )}
 
       {/* 8. MODAL: CREAR GRUPO DE CONVERSACIÓN */}
       <Modal
@@ -7140,201 +5779,7 @@ export default function NativeApp() {
           </View>
       </Modal>
 
-      {/* 8b. MODAL DE ALERTA Y CONFIRMACIÓN TÁCTICA C5I (REEMPLAZA ALERT.ALERT Y WINDOW.CONFIRM) */}
-      {tacticalAlertModal.isOpen && (
-      <Modal
-        visible={tacticalAlertModal.isOpen}
-        animationType="fade"
-        transparent
-        onRequestClose={() => {
-          tacticalAlertModal.onCancel?.();
-          setTacticalAlertModal((prev) => ({ ...prev, isOpen: false }));
-        }}
-      >
-        <View style={{
-          flex: 1,
-          backgroundColor: 'rgba(15, 23, 42, 0.75)',
-          alignItems: 'center',
-          justifyContent: 'center',
-          padding: 24,
-        }}>
-          <View style={{
-            width: '100%',
-            maxWidth: 380,
-            backgroundColor: '#ffffff',
-            borderRadius: 24,
-            padding: 24,
-            alignItems: 'center',
-            shadowColor: '#000000',
-            shadowOffset: { width: 0, height: 10 },
-            shadowOpacity: 0.25,
-            shadowRadius: 20,
-            elevation: 10,
-            borderWidth: 1,
-            borderColor: tacticalAlertModal.type === 'confirm_delete' ? '#fecdd3' : '#e2e8f0',
-          }}>
-            {/* Tactical Badge Icon */}
-            <View style={{
-              width: 64,
-              height: 64,
-              borderRadius: 32,
-              backgroundColor: tacticalAlertModal.type === 'confirm_delete' ? '#fee2e2' : '#fdf2f4',
-              borderWidth: 2,
-              borderColor: tacticalAlertModal.type === 'confirm_delete' ? '#fca5a5' : '#fbcfe8',
-              alignItems: 'center',
-              justifyContent: 'center',
-              marginBottom: 16,
-            }}>
-              {tacticalAlertModal.type === 'confirm_delete' ? (
-                <TrashIcon size={30} color="#dc2626" strokeWidth={2.2} />
-              ) : tacticalAlertModal.type === 'warning' ? (
-                <AlertTriangleIcon size={30} color="#d97706" strokeWidth={2.2} />
-              ) : tacticalAlertModal.type === 'success' ? (
-                <CheckCircleIcon size={30} color="#059669" strokeWidth={2.2} />
-              ) : (
-                <ShieldIcon size={30} color="#6b1d2f" strokeWidth={2.2} />
-              )}
-            </View>
-
-            {/* Title */}
-            <Text style={{
-              fontSize: 18,
-              fontWeight: '800',
-              color: '#0f172a',
-              textAlign: 'center',
-              marginBottom: 8,
-              letterSpacing: -0.3,
-            }}>
-              {tacticalAlertModal.title}
-            </Text>
-
-            {/* Message */}
-            <Text style={{
-              fontSize: 14,
-              lineHeight: 20,
-              color: '#475569',
-              textAlign: 'center',
-              marginBottom: 22,
-            }}>
-              {tacticalAlertModal.message}
-            </Text>
-
-            {/* Buttons */}
-            <View style={{ width: '100%', gap: 10 }}>
-              {tacticalAlertModal.onConfirm ? (
-                <>
-                  <TouchableOpacity
-                    style={{
-                      width: '100%',
-                      backgroundColor: tacticalAlertModal.type === 'confirm_delete' ? '#dc2626' : '#6b1d2f',
-                      paddingVertical: 13,
-                      borderRadius: 14,
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      shadowColor: tacticalAlertModal.type === 'confirm_delete' ? '#dc2626' : '#6b1d2f',
-                      shadowOpacity: 0.3,
-                      shadowRadius: 6,
-                      elevation: 3,
-                    }}
-                    accessibilityLabel="Confirmar acción"
-                    disabled={isDeletingContact}
-                    onPress={() => {
-                      if (!isDeletingContact) tacticalAlertModal.onConfirm?.();
-                    }}
-                    activeOpacity={0.85}
-                  >
-                    <Text style={{ color: '#ffffff', fontWeight: '800', fontSize: 14 }}>
-                      {isDeletingContact ? 'Eliminando…' : tacticalAlertModal.confirmText || 'Confirmar'}
-                    </Text>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    style={{
-                      width: '100%',
-                      backgroundColor: '#f8fafc',
-                      borderWidth: 1,
-                      borderColor: '#e2e8f0',
-                      paddingVertical: 12,
-                      borderRadius: 14,
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                    }}
-                    disabled={isDeletingContact}
-                    onPress={() => {
-                      tacticalAlertModal.onCancel?.();
-                      setTacticalAlertModal((prev) => ({ ...prev, isOpen: false }));
-                    }}
-                    activeOpacity={0.7}
-                  >
-                    <Text style={{ color: '#64748b', fontWeight: '700', fontSize: 14 }}>
-                      {tacticalAlertModal.cancelText || 'Cancelar'}
-                    </Text>
-                  </TouchableOpacity>
-                </>
-              ) : (
-                <TouchableOpacity
-                  style={{
-                    width: '100%',
-                    backgroundColor: '#6b1d2f',
-                    paddingVertical: 13,
-                    borderRadius: 14,
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                  }}
-                  onPress={() => {
-                    setTacticalAlertModal((prev) => ({ ...prev, isOpen: false }));
-                  }}
-                  activeOpacity={0.85}
-                >
-                  <Text style={{ color: '#ffffff', fontWeight: '800', fontSize: 14 }}>
-                    {tacticalAlertModal.confirmText || 'Entendido'}
-                  </Text>
-                </TouchableOpacity>
-              )}
-            </View>
-          </View>
-        </View>
-      </Modal>
-      )}
-
-      {/* 8c. TOAST TÁCTICO FLOTANTE C5I */}
-      {tacticalToast.visible && (
-        <View style={{
-          position: 'absolute',
-          top: Platform.OS === 'web' ? 24 : 50,
-          left: 20,
-          right: 20,
-          zIndex: 999999,
-          alignItems: 'center',
-          pointerEvents: 'none',
-        }}>
-          <View style={{
-            flexDirection: 'row',
-            alignItems: 'center',
-            backgroundColor: tacticalToast.type === 'warning' ? '#991b1b' : '#0f172a',
-            paddingHorizontal: 18,
-            paddingVertical: 11,
-            borderRadius: 30,
-            gap: 10,
-            shadowColor: '#000000',
-            shadowOffset: { width: 0, height: 4 },
-            shadowOpacity: 0.35,
-            shadowRadius: 10,
-            elevation: 8,
-            borderWidth: 1,
-            borderColor: tacticalToast.type === 'warning' ? '#f87171' : '#334155',
-          }}>
-            {tacticalToast.type === 'warning' ? (
-              <TrashIcon size={16} color="#fca5a5" strokeWidth={2.4} />
-            ) : (
-              <CheckCircleIcon size={16} color="#34d399" strokeWidth={2.4} />
-            )}
-            <Text style={{ color: '#ffffff', fontSize: 13, fontWeight: '700' }}>
-              {tacticalToast.message}
-            </Text>
-          </View>
-        </View>
-      )}
+      {feedback}
 
       {/* 9. MODAL: CÁMARA TÁCTICA EN VIVO C5I (CAPTURA REAL SIN SIMULACIÓN) */}
       <Modal
@@ -8427,6 +6872,7 @@ const styles = StyleSheet.create({
     paddingVertical: 24,
     paddingHorizontal: 16,
   },
+
   loginCard: {
     backgroundColor: '#ffffff',
     borderRadius: 28,

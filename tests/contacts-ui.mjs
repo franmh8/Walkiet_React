@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 const browser=await chromium.launch({executablePath:process.env.CHROMIUM_PATH,headless:true,args:['--no-sandbox']});
 try {
 const page=await browser.newPage({viewport:{width:430,height:900}});
-let contacts=[], failCreate=true, failDelete=true, writes=0;
+let contacts=[], failCreate=true, failDelete=true, failList=true, writes=0, reads=0;
 await page.addInitScript(()=>{
  localStorage.setItem('c5i_native_user',JSON.stringify({id:'test-user',name:'Usuario Prueba',badge:'TEST',role:'Operador',unit:'Pruebas'}));
  localStorage.setItem('c5i_officers_cache_v2',JSON.stringify([{id:'off-ghost',name:'Fantasma local'}]));
@@ -13,7 +13,11 @@ await page.addInitScript(()=>{
 await page.route('https://walkiet.alwaysdata.net/**',async route=>{
  const request=route.request();
  if(!request.url().endsWith('/contacts.php')) return route.fulfill({json:{success:true,channels:[]}});
- if(request.method()==='GET') return route.fulfill({json:{success:true,contacts}});
+ if(request.method()==='GET') {
+  reads++;
+  return failList ? route.fulfill({status:503,json:{success:false,code:'CONTACTS_TABLE_MISSING',message:'Falta la tabla contactos. Ejecuta la migración en la BD configurada.'}})
+    : route.fulfill({json:{success:true,contacts}});
+ }
  writes++;
  const data=JSON.parse(request.postData());
  if(data.action==='create' && failCreate) return route.fulfill({body:'<b>Parse error</b>: unexpected end of file',contentType:'text/html'});
@@ -27,6 +31,13 @@ await page.route('https://walkiet.alwaysdata.net/**',async route=>{
 const errors=[];page.on('pageerror',e=>errors.push(e.message));
 await page.goto(process.env.CONTACTS_UI_URL || 'http://localhost:3000');
 await page.getByText('Contactos',{exact:true}).click();
+await page.getByText('Falta la tabla contactos. Ejecuta la migración en la BD configurada.',{exact:true}).waitFor();
+const initialReads=reads;
+await new Promise(resolve=>setTimeout(resolve,4500));
+assert.equal(reads,initialReads);
+failList=false;
+await page.getByLabel('Actualizar contactos',{exact:true}).click();
+console.log('OK: error de consulta visible, sin sondeo fallido continuo y con reintento manual');
 await page.getByText('0 contactos en la BD',{exact:true}).waitFor();
 assert.equal(await page.getByText('Fantasma local',{exact:true}).count(),0);
 await page.getByText('+ Agregar Contacto',{exact:true}).click();
@@ -72,6 +83,21 @@ await page.reload();
 await page.getByText('Contactos',{exact:true}).click();
 await page.getByText('0 contactos en la BD',{exact:true}).waitFor();
 assert.equal(contacts.length,0);assert.equal(writes,5);
+await page.getByText('Chat',{exact:true}).click();
+await page.getByLabel('Nueva conversación',{exact:true}).click();
+await page.getByText('+ Registrar Nuevo Contacto',{exact:true}).click();
+await page.getByPlaceholder('Ej. Juan Carlos',{exact:true}).fill('Desde');
+await page.getByPlaceholder('Ej. Perez Hernandez',{exact:true}).fill('Chat');
+await page.getByPlaceholder('771 123 4567',{exact:true}).fill('7715557777');
+await page.getByPlaceholder('ejemplo@c5i.gob.mx',{exact:true}).fill('compartido@example.com');
+await page.getByLabel('Guardar contacto',{exact:true}).click();
+await page.getByText('Contacto "Desde Chat" guardado en la BD',{exact:true}).waitFor();
+await page.getByText('Contactos',{exact:true}).click();
+await page.getByText('Desde Chat',{exact:true}).waitFor();
+await page.getByPlaceholder('Buscar por nombre, indicativo, teléfono o correo...').fill('compartido@example.com');
+await page.getByText('Desde Chat',{exact:true}).waitFor();
+assert.equal(writes,6);
+console.log('OK: registro desde chat comparte el directorio y permite buscar por correo');
 assert.deepEqual(errors,[]);
 console.log('OK: baja confirmada no reaparece al recargar; una petición por operación');
 } finally { await browser.close(); }

@@ -1,4 +1,33 @@
 <?php
+// Diagnóstico público acotado: los detalles SQL y credenciales solo van al log.
+function contactsErrorResponse(Throwable $error) {
+    $code = 'CONTACTS_SERVER_ERROR';
+    $message = 'No se pudo acceder al directorio de contactos. Revisa el registro PHP de Alwaysdata.';
+    $status = 500;
+    if ($error instanceof PDOException) {
+        $sqlState = $error->errorInfo[0] ?? (string)$error->getCode();
+        $driverCode = (int)($error->errorInfo[1] ?? 0);
+        if ($sqlState === '42S02') {
+            $code = 'CONTACTS_TABLE_MISSING';
+            $message = 'Falta la tabla contactos en la BD configurada en conexion.php. Ejecuta migrations/001_contacts.sql en esa misma BD.';
+            $status = 503;
+        } elseif ($sqlState === '42S22') {
+            $code = 'CONTACTS_SCHEMA_MISMATCH';
+            $message = 'La tabla contactos tiene columnas diferentes a las requeridas. Revisa migrations/001_contacts.sql y el registro PHP.';
+            $status = 503;
+        } elseif (in_array($driverCode, [1044, 1045, 1142, 1143], true)) {
+            $code = 'CONTACTS_DATABASE_PERMISSIONS';
+            $message = 'La cuenta de conexion.php no tiene acceso suficiente a la BD de contactos. Revisa sus permisos en Alwaysdata.';
+            $status = 503;
+        } elseif (in_array($driverCode, [2002, 2003, 2006, 2013], true)) {
+            $code = 'CONTACTS_DATABASE_UNAVAILABLE';
+            $message = 'No se pudo conectar con MySQL. Revisa el servidor configurado en conexion.php.';
+            $status = 503;
+        }
+    }
+    return [$status, ['success' => false, 'code' => $code, 'message' => $message]];
+}
+
 function contactsRespond($status, $data) {
     http_response_code($status);
     header('Cache-Control: no-store');

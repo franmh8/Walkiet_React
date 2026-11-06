@@ -40,3 +40,16 @@ check((int)$db->query('SELECT COUNT(*) FROM users')->fetchColumn() === 1, 'CRUD 
 $db->exec('DROP TABLE contactos');
 try { handleContacts($db, 'GET', []); throw new RuntimeException('SQL error hidden'); }
 catch (PDOException $e) { echo "OK: errores SQL se propagan, no simulan lista vacía\n"; }
+
+foreach ([
+    ['42S02', 1146, 'CONTACTS_TABLE_MISSING'],
+    ['42S22', 1054, 'CONTACTS_SCHEMA_MISMATCH'],
+    ['42000', 1142, 'CONTACTS_DATABASE_PERMISSIONS'],
+    ['HY000', 2002, 'CONTACTS_DATABASE_UNAVAILABLE']
+] as [$state, $driver, $expected]) {
+    $error = new PDOException('Detalles privados de prueba');
+    $error->errorInfo = [$state, $driver, 'Detalles privados de prueba'];
+    [$status, $result] = contactsErrorResponse($error);
+    check($status === 503 && $result['code'] === $expected, 'diagnóstico ' . $expected);
+    check(strpos(json_encode($result), 'Detalles privados') === false, 'diagnóstico no expone detalles SQL');
+}
