@@ -12,8 +12,6 @@ import {
   Platform,
   ActivityIndicator,
   Image,
-  SafeAreaView,
-  LogBox,
   Modal,
   KeyboardAvoidingView,
   Animated,
@@ -23,6 +21,7 @@ import {
   TouchableWithoutFeedback,
   Linking,
 } from 'react-native';
+import { SafeAreaView, SafeAreaProvider } from 'react-native-safe-area-context';
 import { safeStorage } from './storage';
 import c5iLogoImg from '../../assets/c5i-logo.png';
 import {
@@ -79,9 +78,6 @@ function ensureWebQrScannerLoaded() {
     document.head.appendChild(s);
   } catch {}
 }
-
-// Silenciar advertencia informativa de SafeAreaView en React Native
-LogBox.ignoreLogs(['SafeAreaView has been deprecated']);
 
 // Componente de cámara nativa con resolución protegida contra fallos nativos
 let NativeCameraView: any = null;
@@ -378,7 +374,7 @@ async function fetchWithTimeout(url: string, options: any = {}, timeoutMs = 3500
   }
 }
 
-export default function NativeApp() {
+function NativeAppScreen() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
@@ -4178,7 +4174,10 @@ export default function NativeApp() {
                 activeOpacity={0.7}
               >
                 <Text style={styles.cleanChannelLabel}>CANAL ACTUAL</Text>
-                <Text style={styles.cleanChannelTitle} numberOfLines={1}>
+                <Text
+                  style={[styles.cleanChannelTitle, Platform.OS === 'android' && styles.cleanChannelTitleAndroid]}
+                  numberOfLines={Platform.OS === 'android' ? 3 : 1}
+                >
                   {channelTitle}
                 </Text>
               </TouchableOpacity>
@@ -7832,6 +7831,15 @@ export default function NativeApp() {
   );
 }
 
+// El proveedor permite que Android/iOS respeten la barra de estado y la navegación inferior.
+export default function NativeApp() {
+  return (
+    <SafeAreaProvider style={{ flex: 1, backgroundColor: '#f8fafc' }}>
+      <NativeAppScreen />
+    </SafeAreaProvider>
+  );
+}
+
 const styles = StyleSheet.create({
   cleanContainer: {
     flex: 1,
@@ -7846,7 +7854,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingHorizontal: 20,
     paddingTop: 16,
-    paddingBottom: 24,
+    paddingBottom: Platform.OS === 'android' ? 16 : 24,
   },
   cleanTopBar: {
     flexDirection: 'row',
@@ -7871,6 +7879,11 @@ const styles = StyleSheet.create({
     color: '#0f172a',
     letterSpacing: -0.5,
     marginTop: 2,
+  },
+  // Solo Android: los nombres largos de canales no se cortan tan pronto.
+  cleanChannelTitleAndroid: {
+    fontSize: 18,
+    lineHeight: 22,
   },
   cleanHeaderActions: {
     flexDirection: 'row',
