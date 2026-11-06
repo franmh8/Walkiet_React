@@ -24,6 +24,7 @@ import {
   Linking,
 } from 'react-native';
 import { safeStorage } from './storage';
+import { createContactsApi } from '../services/contactsApi';
 import c5iLogoImg from '../../assets/c5i-logo.png';
 import {
   UserIcon,
@@ -472,7 +473,7 @@ export default function NativeApp() {
   // Modals for Chat & Contacts
   const [isNewChatModalOpen, setIsNewChatModalOpen] = useState(false);
   const [contactSearchQuery, setContactSearchQuery] = useState('');
-  const [officersList, setOfficersList] = useState<ContactOfficer[]>(INITIAL_OFFICERS);
+  const [officersList, setOfficersList] = useState<ContactOfficer[]>([]);
 
   // Modal: Registrar Nuevo Contacto
   const [isAddContactModalOpen, setIsAddContactModalOpen] = useState(false);
@@ -564,15 +565,19 @@ export default function NativeApp() {
     }, 2800);
   }, []);
 
-  // Lista negra de contactos eliminados para evitar resurrección durante sondeos en segundo plano
-  const deletedContactIdsRef = useRef<Set<string>>(new Set());
+  const [contactsError, setContactsError] = useState<string | null>(null);
+  const [isLoadingContacts, setIsLoadingContacts] = useState(false);
+  const [isDeletingContact, setIsDeletingContact] = useState(false);
+  const contactMutationRef = useRef(false);
+  const contactRevisionRef = useRef(0);
+  const contactReadRef = useRef(0);
+  const contactsServerRef = useRef(serverUrl);
+  contactsServerRef.current = serverUrl;
 
   const timerRef = useRef<any>(null);
 
   // Circuit breaker para endpoints PHP en Alwaysdata (evita spam de 404 en consola si aún no se han subido los archivos)
-  const isContactsPhpAvailableRef = useRef<boolean | null>(null);
   const isChatPhpAvailableRef = useRef<boolean | null>(null);
-  const lastContactsProbeTimeRef = useRef<number>(0);
   const lastChatProbeTimeRef = useRef<number>(0);
 
   // Concentric animated soundwave rings for PTT (expanding circles)
@@ -598,44 +603,11 @@ export default function NativeApp() {
           }
         }
 
-        // Cargar lista negra de contactos eliminados para evitar resurrección
-        const savedDeleted = await safeStorage.getItem('c5i_deleted_contacts_v2');
-        if (savedDeleted) {
-          try {
-            const parsed = JSON.parse(savedDeleted);
-            if (Array.isArray(parsed)) {
-              parsed.forEach((id: string) => {
-                if (id) deletedContactIdsRef.current.add(id);
-              });
-            }
-          } catch {}
-        }
-
-        // Cargar contactos cacheados para que nunca se borren al recargar la página
-        const cachedContacts = await safeStorage.getItem('c5i_officers_cache_v2');
-        if (cachedContacts) {
-          try {
-            const parsed = JSON.parse(cachedContacts);
-            if (Array.isArray(parsed) && parsed.length > 0) {
-              setOfficersList((prev) => {
-                const combined = [...parsed];
-                return combined;
-              });
-            }
-          } catch {}
-        }
       } catch (e) {
         console.log('Error reading storage', e);
       }
     })();
   }, []);
-
-  // Guardar contactos en safeStorage cada vez que cambien para que persistan entre recargas
-  useEffect(() => {
-    if (officersList && officersList.length > 0) {
-      safeStorage.setItem('c5i_officers_cache_v2', JSON.stringify(officersList)).catch(() => {});
-    }
-  }, [officersList]);
 
   // En navegador web, enviar text/plain evita preflights OPTIONS innecesarios
   const getSafePostHeaders = () => ({
@@ -678,66 +650,35 @@ export default function NativeApp() {
     }
   }, []);
 
-  // Sincronizar directorio de contactos y oficiales desde la base de datos (con Circuit Breaker inteligente)
+  // La BD es la fuente del directorio. Nunca fusionar registros locales no confirmados.
   const refreshContacts = useCallback(async (baseUrl: string) => {
-    if (!baseUrl) return;
-
-    // Si ya detectamos que contacts.php no está disponible en este servidor, evitar saturar con 404s
-    if (isContactsPhpAvailableRef.current === false) {
-      if (Date.now() - lastContactsProbeTimeRef.current < 120000) {
-        return;
-      }
-    }
-    lastContactsProbeTimeRef.current = Date.now();
-
+    if (contactMutationRef.current) return;
+    const revision = contactRevisionRef.current;
+    const read = ++contactReadRef.current;
+    setIsLoadingContacts(true);
     try {
-      const cleanUrl = baseUrl.replace(/\/+$/, '');
-      const isAlwaysdata = cleanUrl.includes('alwaysdata.net') || cleanUrl.includes('.php');
-
-      let res: any = null;
-      if (isAlwaysdata) {
-        res = await fetchWithTimeout(`${cleanUrl}/contacts.php`, {}, 3000).catch(() => null);
-        if (res && res.status === 404) {
-          // Desactivar sondeos automáticos a contacts.php hasta que se suba el archivo
-          isContactsPhpAvailableRef.current = false;
-          return;
-        }
-      } else {
-        res = await fetchWithTimeout(`${cleanUrl}/api/contacts`, {}, 3000).catch(() => null);
+      const contacts = await createContactsApi(baseUrl).list();
+      if (baseUrl !== contactsServerRef.current || revision !== contactRevisionRef.current || read !== contactReadRef.current) return;
+      setOfficersList(contacts);
+      setContactsError(null);
+    } catch (error) {
+      if (baseUrl === contactsServerRef.current && revision === contactRevisionRef.current && read === contactReadRef.current) {
+        setContactsError(error instanceof Error ? error.message : 'No se pudieron consultar los contactos.');
       }
-
-      if (res && res.ok) {
-        isContactsPhpAvailableRef.current = true;
-        const data = await res.json().catch(() => null);
-        if (data && Array.isArray(data.contacts)) {
-          const mapped: ContactOfficer[] = data.contacts
-            .filter((c: any) => {
-              if (!c) return false;
-              if (c.id && deletedContactIdsRef.current.has(c.id)) return false;
-              if (c.phone_number && deletedContactIdsRef.current.has(c.phone_number)) return false;
-              return true;
-            })
-            .map((c: any) => ({
-              id: c.id,
-              name: c.name,
-              callsign: c.callsign || 'OFICIAL',
-              unit: c.unit || 'Sector Operativo Hidalgo',
-              phone_number: c.phone_number || '',
-              email: c.email || c.correo || '',
-              status: c.status || 'online',
-              role: c.role || 'Oficial Operativo',
-              avatar_url: c.avatar_url || null,
-            }));
-
-          setOfficersList((prev) => {
-            // Preservar contactos locales con ID 'off-' que aún no hayan sido devueltos por el backend
-            const pendingLocal = prev.filter((p) => p.id.startsWith('off-') && !mapped.some((m) => m.phone_number === p.phone_number));
-            return [...pendingLocal, ...mapped];
-          });
-        }
-      }
-    } catch {}
+    } finally {
+      if (read === contactReadRef.current) setIsLoadingContacts(false);
+    }
   }, []);
+
+  useEffect(() => {
+    ++contactRevisionRef.current;
+    setOfficersList([]);
+    setSelectedContactForDetail(null);
+    setIsContactDetailModalOpen(false);
+    setIsEditContactModalOpen(false);
+    setIsAddContactModalOpen(false);
+    setContactsError(null);
+  }, [serverUrl]);
 
   // Sincronizar mensajes del chat activo desde el backend (con Circuit Breaker inteligente)
   const syncConversationMessages = useCallback(async (conv: Conversation) => {
@@ -2379,103 +2320,30 @@ export default function NativeApp() {
     } catch {}
   };
 
-  const handleSaveContactSubmit = () => {
-    const cleanFirstName = newContactName.trim();
-    const cleanLastName = newContactLastName.trim();
-    const cleanPhone = newContactPhone.trim();
-    const cleanEmail = newContactEmail.trim();
-
-    if (!cleanFirstName) {
-      setAddContactError('Ingresa el nombre del oficial o contacto.');
-      return;
-    }
-
-    const fullName = cleanLastName ? `${cleanFirstName} ${cleanLastName}` : cleanFirstName;
-    // Generar indicativo táctico con los últimos 4 dígitos del número celular registrado (ej. termina en 8448 -> RADIO-8448)
-    const phoneDigits = cleanPhone.replace(/\D/g, '');
-    const last4 = phoneDigits.length >= 4
-      ? phoneDigits.slice(-4)
-      : (phoneDigits ? phoneDigits.padStart(4, '0') : `${Math.floor(1000 + Math.random() * 9000)}`);
-    const autoCallsign = `RADIO-${last4}`;
-
-    const tempId = `off-${Date.now()}`;
-    const newOfficer: ContactOfficer = {
-      id: tempId,
-      name: fullName,
-      callsign: autoCallsign,
-      unit: 'Sector Operativo Hidalgo C5i',
-      phone_number: cleanPhone,
-      email: cleanEmail,
-      status: 'online',
-      role: 'Oficial Operativo',
-    };
-
-    setOfficersList((prev) => [newOfficer, ...prev]);
-    setIsAddContactModalOpen(false);
-    setNewContactName('');
-    setNewContactLastName('');
-    setNewContactPhone('');
-    setNewContactEmail('');
+  const handleSaveContactSubmit = async () => {
+    if (contactMutationRef.current) return;
+    contactMutationRef.current = true;
+    ++contactRevisionRef.current;
+    setIsSavingContact(true);
     setAddContactError(null);
-    showTacticalToast(`Contacto "${fullName}" guardado y sincronizado`, 'success');
-
+    const base = serverUrl;
     try {
-      soundEngine.playIncomingChirp();
-    } catch {}
-
-    if (serverUrl) {
-      (async () => {
-        try {
-          const cleanUrl = serverUrl.replace(/\/+$/, '');
-          const isAlwaysdata = cleanUrl.includes('alwaysdata.net') || cleanUrl.includes('.php');
-          const headers = getSafePostHeaders();
-          const payload = JSON.stringify({
-            action: 'create',
-            name: fullName,
-            first_name: cleanFirstName,
-            last_name: cleanLastName,
-            callsign: newOfficer.callsign,
-            unit: newOfficer.unit,
-            phone_number: cleanPhone,
-            email: cleanEmail,
-            correo: cleanEmail,
-            user_id: currentUser?.id || 'usr-c5i-01',
-            role: newOfficer.role,
-          });
-
-          let res: any = null;
-          if (isAlwaysdata) {
-            res = await fetchWithTimeout(`${cleanUrl}/contacts.php`, {
-              method: 'POST',
-              headers,
-              body: payload,
-            }, 5000).catch(() => null);
-            if (res && res.status >= 400) {
-              isContactsPhpAvailableRef.current = false;
-            } else if (res && res.ok) {
-              isContactsPhpAvailableRef.current = true;
-            }
-          } else {
-            res = await fetchWithTimeout(`${cleanUrl}/api/contacts`, {
-              method: 'POST',
-              headers,
-              body: payload,
-            }, 5000).catch(() => null);
-          }
-
-          if (res && res.ok) {
-            const data = await res.json().catch(() => null);
-            if (data?.contact?.id) {
-              const realId = data.contact.id;
-              setOfficersList((prev) =>
-                prev.map((off) => (off.id === tempId ? { ...off, id: realId, callsign: data.contact.callsign || off.callsign } : off))
-              );
-            }
-          }
-        } catch (e) {
-          console.warn('Error syncing contact to backend:', e);
-        }
-      })();
+      const saved = await createContactsApi(base).create({
+        name: [newContactName.trim(), newContactLastName.trim()].filter(Boolean).join(' '),
+        phone_number: newContactPhone, email: newContactEmail,
+      });
+      if (base !== contactsServerRef.current) return;
+      setOfficersList(prev => [saved, ...prev.filter(c => c.id !== saved.id)]);
+      setIsAddContactModalOpen(false);
+      setNewContactName(''); setNewContactLastName(''); setNewContactPhone(''); setNewContactEmail('');
+      showTacticalToast(`Contacto "${saved.name}" guardado en la BD`, 'success');
+    } catch (error) {
+      if (base === contactsServerRef.current) setAddContactError(error instanceof Error ? error.message : 'No se pudo guardar el contacto.');
+    } finally {
+      contactMutationRef.current = false;
+      ++contactRevisionRef.current;
+      setIsSavingContact(false);
+      if (base === contactsServerRef.current) await refreshContacts(base);
     }
   };
 
@@ -2495,209 +2363,75 @@ export default function NativeApp() {
     setEditContactEmail(contact.email || '');
     setEditContactCallsign(contact.callsign || '');
     setEditContactError(null);
+    setIsContactDetailModalOpen(false);
     setIsEditContactModalOpen(true);
   };
 
-  const handleSaveEditContactSubmit = () => {
-    if (!selectedContactForDetail) return;
-    const cleanFirstName = editContactName.trim();
-    const cleanLastName = editContactLastName.trim();
-    const cleanPhone = editContactPhone.trim();
-    const cleanEmail = editContactEmail.trim();
-
-    // Si cambió el número de teléfono o la terminación, actualizar automáticamente el indicativo de radio
-    const editPhoneDigits = cleanPhone.replace(/\D/g, '');
-    const editLast4 = editPhoneDigits.length >= 4
-      ? editPhoneDigits.slice(-4)
-      : (editPhoneDigits ? editPhoneDigits.padStart(4, '0') : '0000');
-    const autoPhoneCallsign = `RADIO-${editLast4}`;
-
-    const oldDigits = (selectedContactForDetail.phone_number || '').replace(/\D/g, '');
-    const oldLast4 = oldDigits.slice(-4);
-    const phoneEndingChanged = Boolean(oldDigits && editPhoneDigits && editLast4 !== oldLast4);
-    const cleanCallsign = (phoneEndingChanged || !editContactCallsign.trim())
-      ? autoPhoneCallsign
-      : editContactCallsign.trim().toUpperCase();
-
-    if (!cleanFirstName) {
-      setEditContactError('Ingresa el nombre del oficial o contacto.');
-      return;
-    }
-
-    const fullName = cleanLastName ? `${cleanFirstName} ${cleanLastName}` : cleanFirstName;
-
-    const updatedOfficer: ContactOfficer = {
-      ...selectedContactForDetail,
-      name: fullName,
-      callsign: cleanCallsign,
-      phone_number: cleanPhone,
-      email: cleanEmail,
-    };
-
-    // Actualizar en lista local sin duplicar
-    setOfficersList((prev) =>
-      prev.map((off) => (off.id === updatedOfficer.id || (selectedContactForDetail.phone_number && off.phone_number === selectedContactForDetail.phone_number) ? updatedOfficer : off))
-    );
-    setSelectedContactForDetail(updatedOfficer);
-
-    // Actualizar conversación si está abierta
-    setConversations((prev) =>
-      prev.map((c) =>
-        c.type === 'direct' && (c.targetUserId === updatedOfficer.id || c.name === selectedContactForDetail.name)
-          ? { ...c, name: fullName, callsign: cleanCallsign }
-          : c
-      )
-    );
-
-    setIsEditContactModalOpen(false);
+  const handleSaveEditContactSubmit = async () => {
+    if (!selectedContactForDetail || contactMutationRef.current) return;
+    const contact = selectedContactForDetail;
+    const base = serverUrl;
+    contactMutationRef.current = true;
+    ++contactRevisionRef.current;
+    setIsSavingEditContact(true);
     setEditContactError(null);
-    showTacticalToast(`Contacto "${fullName}" actualizado`, 'success');
-
     try {
-      soundEngine.playIncomingChirp();
-    } catch {}
-
-    // Sincronizar en base de datos Alwaysdata y backend
-    if (serverUrl) {
-      (async () => {
-        try {
-          const cleanUrl = serverUrl.replace(/\/+$/, '');
-          const isAlwaysdata = cleanUrl.includes('alwaysdata.net') || cleanUrl.includes('.php');
-          const headers = getSafePostHeaders();
-          const payload = JSON.stringify({
-            action: 'update',
-            is_edit: true,
-            id: updatedOfficer.id,
-            old_id: selectedContactForDetail.id,
-            old_phone: selectedContactForDetail.phone_number,
-            name: fullName,
-            first_name: cleanFirstName,
-            last_name: cleanLastName,
-            callsign: cleanCallsign,
-            unit: updatedOfficer.unit,
-            phone_number: cleanPhone,
-            email: cleanEmail,
-            correo: cleanEmail,
-          });
-
-          if (isAlwaysdata) {
-            const res = await fetchWithTimeout(`${cleanUrl}/contacts.php`, {
-              method: 'POST',
-              headers,
-              body: payload,
-            }, 5000).catch(() => null);
-            if (res && res.ok) {
-              const data = await res.json().catch(() => null);
-              if (data?.contact?.id) {
-                const realId = data.contact.id;
-                setOfficersList((prev) =>
-                  prev.map((off) => (off.id === updatedOfficer.id ? { ...off, id: realId, callsign: data.contact.callsign || off.callsign } : off))
-                );
-                setSelectedContactForDetail((prev) => prev ? { ...prev, id: realId } : null);
-              }
-            }
-          } else {
-            await fetchWithTimeout(`${cleanUrl}/api/contacts/${encodeURIComponent(updatedOfficer.id)}`, {
-              method: 'PUT',
-              headers,
-              body: payload,
-            }, 5000).catch(() => null);
-          }
-        } catch (e) {
-          console.warn('Error syncing contact update:', e);
-        }
-      })();
+      const saved = await createContactsApi(base).update(contact.id, {
+        name: [editContactName.trim(), editContactLastName.trim()].filter(Boolean).join(' '),
+        phone_number: editContactPhone, email: editContactEmail,
+        callsign: editContactCallsign.trim().toUpperCase(), unit: contact.unit,
+      });
+      if (base !== contactsServerRef.current) return;
+      setOfficersList(prev => prev.map(c => c.id === saved.id ? saved : c));
+      setSelectedContactForDetail(saved);
+      setConversations(prev => prev.map(c => c.type === 'direct' && c.targetUserId === contact.id
+        ? { ...c, name: saved.name, callsign: saved.callsign } : c));
+      setActiveConversation(prev => prev?.type === 'direct' && prev.targetUserId === contact.id
+        ? { ...prev, name: saved.name, callsign: saved.callsign } : prev);
+      setIsEditContactModalOpen(false);
+      setIsContactDetailModalOpen(true);
+      showTacticalToast(`Contacto "${saved.name}" actualizado en la BD`, 'success');
+    } catch (error) {
+      if (base === contactsServerRef.current) setEditContactError(error instanceof Error ? error.message : 'No se pudo actualizar el contacto.');
+    } finally {
+      contactMutationRef.current = false;
+      ++contactRevisionRef.current;
+      setIsSavingEditContact(false);
+      if (base === contactsServerRef.current) await refreshContacts(base);
     }
   };
 
   const handleDeleteContact = (contact: ContactOfficer) => {
-    if (!contact) return;
-
-    const executeDelete = () => {
-      // 1. Agregar a lista negra en memoria y almacenamiento local
-      if (contact.id) deletedContactIdsRef.current.add(contact.id);
-      if (contact.phone_number) deletedContactIdsRef.current.add(contact.phone_number);
-
+    if (!contact || contactMutationRef.current) return;
+    const base = serverUrl;
+    const executeDelete = async () => {
+      if (contactMutationRef.current || base !== contactsServerRef.current) return;
+      contactMutationRef.current = true;
+      ++contactRevisionRef.current;
+      setIsDeletingContact(true);
       try {
-        const deletedArr = Array.from(deletedContactIdsRef.current);
-        safeStorage.setItem('c5i_deleted_contacts_v2', JSON.stringify(deletedArr));
-      } catch {}
-
-      // 2. Remover de lista local inmediatamente
-      setOfficersList((prev) =>
-        prev.filter((o) => o.id !== contact.id && (!contact.phone_number || o.phone_number !== contact.phone_number))
-      );
-      setIsContactDetailModalOpen(false);
-      setIsEditContactModalOpen(false);
-      setSelectedContactForDetail(null);
-      setTacticalAlertModal((prev) => ({ ...prev, isOpen: false }));
-
-      showTacticalToast(`Contacto "${contact.name}" eliminado de la BD`, 'warning');
-
-      try {
-        soundEngine.playIncomingChirp();
-      } catch {}
-
-      // 3. Sincronizar eliminación en servidor Alwaysdata y API local
-      if (serverUrl) {
-        (async () => {
-          try {
-            const cleanUrl = serverUrl.replace(/\/+$/, '');
-            const isAlwaysdata = cleanUrl.includes('alwaysdata.net') || cleanUrl.includes('.php');
-            const headers = getSafePostHeaders();
-            const deleteBody = JSON.stringify({
-              action: 'delete',
-              id: contact.id,
-              phone_number: contact.phone_number,
-              phone: contact.phone_number,
-            });
-
-            if (isAlwaysdata) {
-              // Enviar DELETE y también POST con action: 'delete' para garantizar compatibilidad con Apache Alwaysdata
-              await Promise.allSettled([
-                fetchWithTimeout(`${cleanUrl}/contacts.php?id=${encodeURIComponent(contact.id)}&phone=${encodeURIComponent(contact.phone_number || '')}&action=delete`, {
-                  method: 'DELETE',
-                  headers,
-                  body: deleteBody,
-                }, 4000),
-                fetchWithTimeout(`${cleanUrl}/contacts.php`, {
-                  method: 'POST',
-                  headers,
-                  body: deleteBody,
-                }, 4000),
-              ]);
-            } else {
-              await Promise.allSettled([
-                fetchWithTimeout(`${cleanUrl}/api/contacts/${encodeURIComponent(contact.id)}`, {
-                  method: 'DELETE',
-                  headers,
-                  body: deleteBody,
-                }, 4000),
-                fetchWithTimeout(`${cleanUrl}/api/contacts`, {
-                  method: 'POST',
-                  headers,
-                  body: deleteBody,
-                }, 4000),
-              ]);
-            }
-          } catch (e) {
-            console.warn('Error deleting contact on backend:', e);
-          }
-        })();
+        await createContactsApi(base).remove(contact.id);
+        if (base !== contactsServerRef.current) return;
+        setOfficersList(prev => prev.filter(c => c.id !== contact.id));
+        setIsContactDetailModalOpen(false);
+        setIsEditContactModalOpen(false);
+        setSelectedContactForDetail(null);
+        setTacticalAlertModal(prev => ({ ...prev, isOpen: false }));
+        showTacticalToast(`Contacto "${contact.name}" eliminado de la BD`, 'success');
+      } catch (error) {
+        if (base === contactsServerRef.current) showTacticalAlert('No se pudo eliminar el contacto',
+          error instanceof Error ? error.message : 'Verifica la conexión e inténtalo de nuevo.', { type: 'warning' });
+      } finally {
+        contactMutationRef.current = false;
+        ++contactRevisionRef.current;
+        setIsDeletingContact(false);
+        if (base === contactsServerRef.current) await refreshContacts(base);
       }
     };
-
-    // Modal de Confirmación Táctico C5i (reemplaza window.confirm y Alert.alert del sistema)
-    showTacticalAlert(
-      '¿Eliminar Contacto C5i?',
-      `Estás a punto de dar de baja a "${contact.name}" (${contact.callsign || contact.phone_number || 'Oficial'}). Esta acción se sincronizará permanentemente con la base de datos C5i.`,
-      {
-        type: 'confirm_delete',
-        confirmText: 'Eliminar Contacto',
-        cancelText: 'Cancelar',
-        onConfirm: executeDelete,
-      }
-    );
+    showTacticalAlert('¿Eliminar Contacto C5i?',
+      `Se eliminará a "${contact.name}" del directorio de contactos.`, {
+        type: 'confirm_delete', confirmText: 'Eliminar Contacto', cancelText: 'Cancelar', onConfirm: executeDelete,
+      });
   };
 
   // Envío genérico de mensajes multimedia y tácticos
@@ -5040,6 +4774,16 @@ export default function NativeApp() {
               </View>
             </View>
 
+            <View style={{ paddingHorizontal: 16, paddingVertical: 8, backgroundColor: contactsError ? '#fff1f2' : '#ffffff' }}>
+              <Text accessibilityLiveRegion="polite" style={{ color: contactsError ? '#be123c' : '#64748b', fontSize: 13 }}>
+                {contactsError || (isLoadingContacts ? 'Consultando contactos…' : `${officersList.length} contactos en la BD`)}
+              </Text>
+              <TouchableOpacity accessibilityLabel="Actualizar contactos" onPress={() => refreshContacts(serverUrl)}
+                disabled={isLoadingContacts || isSavingContact || isSavingEditContact || isDeletingContact}>
+                <Text style={{ color: '#6b1d2f', fontWeight: '700', paddingVertical: 8 }}>Actualizar contactos</Text>
+              </TouchableOpacity>
+            </View>
+
             {/* Lista de Contactos Tácticos C5i: Dividido solo por una línea entre uno y otro, división por letra, solo nombre */}
             <ScrollView
               style={{ flex: 1, backgroundColor: '#ffffff' }}
@@ -5065,7 +4809,7 @@ export default function NativeApp() {
                     <UserIcon size={36} color="#94a3b8" strokeWidth={1.8} />
                   </View>
                   <Text style={{ fontSize: 17, fontWeight: '700', color: '#1e293b', marginBottom: 6 }}>
-                    Sin contactos registrados
+                    {isLoadingContacts ? 'Cargando contactos…' : contactsError ? 'No se pudo actualizar el directorio' : contactSearchQuery ? 'Sin coincidencias' : 'Sin contactos registrados'}
                   </Text>
                   <Text style={{ fontSize: 13, color: '#64748b', textAlign: 'center', marginBottom: 20, maxWidth: 280 }}>
                     Agrega a tu primer oficial o contacto para iniciar una conversación encriptada.
@@ -6254,6 +5998,7 @@ export default function NativeApp() {
         animationType="fade"
         transparent
         onRequestClose={() => {
+          if (isSavingContact) return;
           setIsAddContactModalOpen(false);
           setAddContactError(null);
         }}
@@ -6270,6 +6015,7 @@ export default function NativeApp() {
             style={StyleSheet.absoluteFill}
             activeOpacity={1}
             onPress={() => {
+              if (isSavingContact) return;
               setIsAddContactModalOpen(false);
               setAddContactError(null);
             }}
@@ -6309,6 +6055,7 @@ export default function NativeApp() {
                   justifyContent: 'center',
                 }}
                 onPress={() => {
+                  if (isSavingContact) return;
                   setIsAddContactModalOpen(false);
                   setAddContactError(null);
                 }}
@@ -6341,10 +6088,12 @@ export default function NativeApp() {
                   shadowRadius: 4,
                   elevation: 2,
                 }}
+                accessibilityLabel="Guardar contacto"
+                disabled={isSavingContact}
                 onPress={handleSaveContactSubmit}
                 activeOpacity={0.8}
               >
-                <CheckIcon size={18} color="#ffffff" strokeWidth={2.6} />
+                {isSavingContact ? <ActivityIndicator color="#ffffff" size="small" /> : <CheckIcon size={18} color="#ffffff" strokeWidth={2.6} />}
               </TouchableOpacity>
             </View>
 
@@ -6401,6 +6150,7 @@ export default function NativeApp() {
                   Nombre(s) *
                 </Text>
                 <TextInput
+                  editable={!isSavingContact}
                   style={{
                     fontSize: 15,
                     color: '#0f172a',
@@ -6418,6 +6168,7 @@ export default function NativeApp() {
                   Apellidos (Opcional)
                 </Text>
                 <TextInput
+                  editable={!isSavingContact}
                   style={{
                     fontSize: 15,
                     color: '#0f172a',
@@ -6445,6 +6196,7 @@ export default function NativeApp() {
                 </Text>
                 <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                   <TextInput
+                  editable={!isSavingContact}
                     style={{
                       flex: 1,
                       fontSize: 15,
@@ -6476,6 +6228,7 @@ export default function NativeApp() {
                 </Text>
                 <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                   <TextInput
+                  editable={!isSavingContact}
                     style={{
                       flex: 1,
                       fontSize: 15,
@@ -6498,6 +6251,7 @@ export default function NativeApp() {
       </Modal>
 
       {/* 7b. MODAL: DETALLE DE CONTACTO / PERFIL (Diseño exacto a Imagen Captura 11.27.13) */}
+      {isContactDetailModalOpen && !!selectedContactForDetail && (
       <Modal
         visible={isContactDetailModalOpen && !!selectedContactForDetail}
         animationType="slide"
@@ -6964,14 +6718,18 @@ export default function NativeApp() {
           </ScrollView>
         </SafeAreaView>
       </Modal>
+      )}
 
       {/* 7c. MODAL: EDITAR CONTACTO (CRUD CON BASE DE DATOS C5i) */}
+      {isEditContactModalOpen && (
       <Modal
         visible={isEditContactModalOpen}
         animationType="fade"
         transparent
         onRequestClose={() => {
+          if (isSavingEditContact) return;
           setIsEditContactModalOpen(false);
+          setIsContactDetailModalOpen(true);
           setEditContactError(null);
         }}
       >
@@ -6987,7 +6745,9 @@ export default function NativeApp() {
             style={StyleSheet.absoluteFill}
             activeOpacity={1}
             onPress={() => {
+              if (isSavingEditContact) return;
               setIsEditContactModalOpen(false);
+              setIsContactDetailModalOpen(true);
               setEditContactError(null);
             }}
           />
@@ -7025,7 +6785,9 @@ export default function NativeApp() {
                   justifyContent: 'center',
                 }}
                 onPress={() => {
+                  if (isSavingEditContact) return;
                   setIsEditContactModalOpen(false);
+                  setIsContactDetailModalOpen(true);
                   setEditContactError(null);
                 }}
                 activeOpacity={0.8}
@@ -7055,10 +6817,12 @@ export default function NativeApp() {
                   shadowRadius: 4,
                   elevation: 2,
                 }}
+                accessibilityLabel="Guardar contacto"
+                disabled={isSavingEditContact}
                 onPress={handleSaveEditContactSubmit}
                 activeOpacity={0.8}
               >
-                <CheckIcon size={18} color="#ffffff" strokeWidth={2.6} />
+                {isSavingEditContact ? <ActivityIndicator color="#ffffff" size="small" /> : <CheckIcon size={18} color="#ffffff" strokeWidth={2.6} />}
               </TouchableOpacity>
             </View>
 
@@ -7099,6 +6863,7 @@ export default function NativeApp() {
                   Nombre(s) *
                 </Text>
                 <TextInput
+                  editable={!isSavingEditContact}
                   style={{ fontSize: 15, color: '#0f172a', paddingVertical: 4 }}
                   value={editContactName}
                   onChangeText={setEditContactName}
@@ -7112,6 +6877,7 @@ export default function NativeApp() {
                   Apellidos (Opcional)
                 </Text>
                 <TextInput
+                  editable={!isSavingEditContact}
                   style={{ fontSize: 15, color: '#0f172a', paddingVertical: 4 }}
                   value={editContactLastName}
                   onChangeText={setEditContactLastName}
@@ -7135,6 +6901,7 @@ export default function NativeApp() {
                 </Text>
                 <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                   <TextInput
+                  editable={!isSavingEditContact}
                     style={{ flex: 1, fontSize: 15, color: '#0f172a', paddingVertical: 4 }}
                     value={editContactPhone}
                     onChangeText={(text) => {
@@ -7169,6 +6936,7 @@ export default function NativeApp() {
                 </Text>
                 <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                   <TextInput
+                  editable={!isSavingEditContact}
                     style={{ flex: 1, fontSize: 15, color: '#0f172a', paddingVertical: 4 }}
                     value={editContactEmail}
                     onChangeText={setEditContactEmail}
@@ -7196,6 +6964,7 @@ export default function NativeApp() {
                 </Text>
                 <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                   <TextInput
+                  editable={!isSavingEditContact}
                     style={{ flex: 1, fontSize: 15, color: '#0f172a', paddingVertical: 4 }}
                     value={editContactCallsign}
                     onChangeText={setEditContactCallsign}
@@ -7235,6 +7004,7 @@ export default function NativeApp() {
           </View>
         </View>
       </Modal>
+      )}
 
       {/* 8. MODAL: CREAR GRUPO DE CONVERSACIÓN */}
       <Modal
@@ -7371,6 +7141,7 @@ export default function NativeApp() {
       </Modal>
 
       {/* 8b. MODAL DE ALERTA Y CONFIRMACIÓN TÁCTICA C5I (REEMPLAZA ALERT.ALERT Y WINDOW.CONFIRM) */}
+      {tacticalAlertModal.isOpen && (
       <Modal
         visible={tacticalAlertModal.isOpen}
         animationType="fade"
@@ -7465,13 +7236,15 @@ export default function NativeApp() {
                       shadowRadius: 6,
                       elevation: 3,
                     }}
+                    accessibilityLabel="Confirmar acción"
+                    disabled={isDeletingContact}
                     onPress={() => {
-                      tacticalAlertModal.onConfirm?.();
+                      if (!isDeletingContact) tacticalAlertModal.onConfirm?.();
                     }}
                     activeOpacity={0.85}
                   >
                     <Text style={{ color: '#ffffff', fontWeight: '800', fontSize: 14 }}>
-                      {tacticalAlertModal.confirmText || 'Confirmar'}
+                      {isDeletingContact ? 'Eliminando…' : tacticalAlertModal.confirmText || 'Confirmar'}
                     </Text>
                   </TouchableOpacity>
 
@@ -7486,6 +7259,7 @@ export default function NativeApp() {
                       alignItems: 'center',
                       justifyContent: 'center',
                     }}
+                    disabled={isDeletingContact}
                     onPress={() => {
                       tacticalAlertModal.onCancel?.();
                       setTacticalAlertModal((prev) => ({ ...prev, isOpen: false }));
@@ -7521,6 +7295,7 @@ export default function NativeApp() {
           </View>
         </View>
       </Modal>
+      )}
 
       {/* 8c. TOAST TÁCTICO FLOTANTE C5I */}
       {tacticalToast.visible && (

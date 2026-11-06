@@ -4,6 +4,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import mysql from 'mysql2/promise';
+import { contactsDirectory } from './src/services/contactsDirectory';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -13,7 +14,7 @@ const PORT = 3000;
 const HOST = '0.0.0.0';
 
 app.use(cors());
-app.use(express.json({ limit: '25mb' }));
+app.use(express.json({ limit: '25mb', type: ['application/json', 'text/plain'] }));
 
 // Database configuration
 const DB_NAME = process.env.DB_NAME || 'if0_42687378_walkt';
@@ -815,224 +816,24 @@ app.delete(['/api/channels/:id', '/api/channels', '/channels.php'], (req: Reques
   res.json({ success: true, message: 'Canal eliminado' });
 });
 
-// 10. Contacts: List Contacts for User
-app.get(['/api/contacts', '/contacts.php'], (req: Request, res: Response) => {
-  const userId = (req.query.user_id as string) || 'usr-c5i-01';
-  const db = loadDatabase();
-
-  const userContacts = db.contacts
-    .filter((c) => c.user_id === userId)
-    .map((c) => {
-      const contactUser = db.users.find((u) => u.id === c.contact_user_id);
-      return {
-        id: c.id,
-        user_id: c.user_id,
-        contact_user_id: c.contact_user_id,
-        alias: c.alias,
-        name: contactUser ? contactUser.name : c.alias,
-        phone_number: contactUser ? contactUser.phone_number : '',
-        callsign: contactUser?.callsign || c.alias,
-        unit: contactUser?.unit || 'Sector Operativo Hidalgo',
-        status: contactUser ? contactUser.status : 'offline',
-        created_at: c.created_at,
-      };
-    });
-
-  // If user has no contacts yet, return all other users as searchable directory
-  if (userContacts.length === 0) {
-    const defaultContacts = db.users
-      .filter((u) => u.id !== userId)
-      .map((u) => ({
-        id: `cnt-${u.id}`,
-        user_id: userId,
-        contact_user_id: u.id,
-        alias: u.callsign || u.name,
-        name: u.name,
-        phone_number: u.phone_number,
-        callsign: u.callsign || 'OPERATIVO',
-        unit: u.unit || 'Sector Operativo Hidalgo',
-        status: u.status,
-        created_at: u.created_at,
-      }));
-    return res.json({ success: true, contacts: defaultContacts });
+// Contacts: misma tabla MySQL y contrato que contacts.php. No hay éxito local simulado.
+const handleContactRequest = async (req: Request, res: Response) => {
+  res.set('Cache-Control', 'no-store');
+  if (!isMysqlConnected || !mysqlPool) {
+    return res.status(503).json({ success: false, message: 'La base de datos MySQL no está disponible para contactos.' });
   }
-
-  res.json({ success: true, contacts: userContacts });
-});
-
-// 11. Contacts: Add, Update, or Delete Contact (POST)
-app.post(['/api/contacts', '/contacts.php'], (req: Request, res: Response) => {
-  const { action, id, old_id, old_phone, user_id, contact_user_id, name, first_name, last_name, phone_number, email, correo, alias, callsign, unit } = req.body;
-  const db = loadDatabase();
-
-  // If action is delete
-  if (action === 'delete') {
-    const targetId = id || req.query.id as string;
-    const cleanP = (phone_number || req.query.phone as string || '').replace(/\D/g, '');
-    if (targetId) {
-      db.contacts = db.contacts.filter((c) => c.id !== targetId && c.contact_user_id !== targetId);
-      db.users = db.users.filter((u) => u.id !== targetId);
-    }
-    if (cleanP) {
-      db.users = db.users.filter((u) => u.phone_number !== cleanP);
-      db.contacts = db.contacts.filter((c) => {
-        const u = db.users.find((user) => user.id === c.contact_user_id);
-        return u ? u.phone_number !== cleanP : true;
-      });
-    }
-    saveDatabase(db);
-    return res.json({ success: true, message: 'Contacto eliminado de la base de datos' });
+  try {
+    const result = await contactsDirectory(mysqlPool, req.method, req.body || {}, (req.params.id || req.query.id) as string | undefined);
+    return res.status(result.status).json(result.body);
+  } catch (error: any) {
+    console.error('[Contacts]', error.code || error.message);
+    return res.status(500).json({ success: false, message: 'No se pudo acceder al directorio de contactos. Verifica la conexión y la migración de la BD.' });
   }
-
-  const userId = user_id || 'usr-c5i-01';
-  const fullName = name || [first_name, last_name].filter(Boolean).join(' ') || 'Oficial';
-  const cleanPhone = phone_number ? phone_number.replace(/\D/g, '') : '';
-  const cleanOldPhone = old_phone ? old_phone.replace(/\D/g, '') : '';
-  const last4 = cleanPhone.length >= 4 ? cleanPhone.slice(-4) : (cleanPhone ? cleanPhone.padStart(4, '0') : `${Math.floor(1000 + Math.random() * 9000)}`);
-  const autoPhoneCallsign = `RADIO-${last4}`;
-  const phoneChanged = Boolean(cleanOldPhone && cleanPhone && cleanOldPhone !== cleanPhone);
-  const resolvedCallsign = (phoneChanged || !callsign ? autoPhoneCallsign : (callsign || alias || autoPhoneCallsign)).toUpperCase();
-  const mail = email || correo || null;
-
-  // Check if updating existing user (by id, old_id, old_phone, or phone_number)
-  let foundUser = db.users.find((u) => 
-    (id && !id.startsWith('off-') && u.id === id) ||
-    (old_id && !old_id.startsWith('off-') && u.id === old_id) ||
-    (cleanOldPhone && u.phone_number === cleanOldPhone) ||
-    (cleanPhone && u.phone_number === cleanPhone)
-  );
-
-  let targetUserId: string;
-
-  if (foundUser) {
-    foundUser.name = fullName;
-    if (cleanPhone) foundUser.phone_number = cleanPhone;
-    if (mail !== undefined) foundUser.correo = mail;
-    foundUser.callsign = resolvedCallsign;
-    if (unit) foundUser.unit = unit;
-    foundUser.updated_at = new Date().toISOString();
-    targetUserId = foundUser.id;
-  } else {
-    const newUser = {
-      id: (id && !id.startsWith('off-')) ? id : `usr-${Date.now()}`,
-      phone_number: cleanPhone || `771${Math.floor(1000000 + Math.random() * 9000000)}`,
-      name: fullName,
-      correo: mail,
-      callsign: resolvedCallsign,
-      unit: unit || 'Sector Operativo Hidalgo',
-      password_hash: '123',
-      avatar_url: null,
-      status: 'online' as const,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    };
-    db.users.push(newUser);
-    targetUserId = newUser.id;
-    foundUser = newUser;
-  }
-
-  // Ensure contact link in db.contacts
-  let existingContact = db.contacts.find((c) => c.contact_user_id === targetUserId);
-  if (!existingContact) {
-    existingContact = {
-      id: `cnt-${Date.now()}`,
-      user_id: userId,
-      contact_user_id: targetUserId,
-      alias: fullName,
-      created_at: new Date().toISOString(),
-    };
-    db.contacts.push(existingContact);
-  } else {
-    existingContact.alias = fullName;
-  }
-
-  saveDatabase(db);
-
-  res.json({
-    success: true,
-    message: 'Contacto guardado y sincronizado con la base de datos C5i',
-    contact: {
-      id: targetUserId,
-      name: foundUser.name,
-      phone_number: foundUser.phone_number,
-      callsign: foundUser.callsign,
-      unit: foundUser.unit,
-      email: foundUser.correo || '',
-      status: foundUser.status,
-    },
-  });
-});
-
-// 11b. Contacts: Update Contact (PUT)
-app.put(['/api/contacts/:id', '/api/contacts', '/contacts.php'], (req: Request, res: Response) => {
-  const contactId = req.params.id || req.body.id || (req.query.id as string);
-  const { name, first_name, last_name, phone_number, old_phone, email, correo, callsign, unit } = req.body;
-  const db = loadDatabase();
-
-  const fullName = name || [first_name, last_name].filter(Boolean).join(' ');
-  const cleanPhone = phone_number ? phone_number.replace(/\D/g, '') : undefined;
-  const cleanOldPhone = old_phone ? old_phone.replace(/\D/g, '') : undefined;
-  const mail = email || correo;
-
-  // Search user by contactId, old_phone, or cleanPhone
-  const user = db.users.find((u) => 
-    u.id === contactId || 
-    (cleanOldPhone && u.phone_number === cleanOldPhone) ||
-    (cleanPhone && u.phone_number === cleanPhone)
-  );
-
-  const phoneChanged = Boolean(cleanOldPhone && cleanPhone && cleanOldPhone !== cleanPhone);
-  const last4 = cleanPhone && cleanPhone.length >= 4 ? cleanPhone.slice(-4) : (cleanPhone ? cleanPhone.padStart(4, '0') : '');
-  const resolvedCallsign = (phoneChanged && last4) ? `RADIO-${last4}` : (callsign ? callsign.toUpperCase() : (last4 ? `RADIO-${last4}` : undefined));
-
-  if (user) {
-    if (fullName) user.name = fullName;
-    if (cleanPhone) user.phone_number = cleanPhone;
-    if (mail !== undefined) user.correo = mail;
-    if (resolvedCallsign) user.callsign = resolvedCallsign;
-    if (unit) user.unit = unit;
-    user.updated_at = new Date().toISOString();
-  }
-
-  const contact = db.contacts.find((c) => c.id === contactId || (user && c.contact_user_id === user.id));
-  if (contact && fullName) {
-    contact.alias = fullName;
-  }
-
-  saveDatabase(db);
-
-  res.json({
-    success: true,
-    message: 'Contacto actualizado correctamente',
-    contact: {
-      id: user?.id || contactId,
-      name: user?.name || fullName || 'Oficial',
-      phone_number: user?.phone_number || cleanPhone || '',
-      email: user?.correo || mail || '',
-      callsign: user?.callsign || resolvedCallsign || 'RADIO-654',
-      unit: user?.unit || unit || 'Sector Operativo Hidalgo',
-      status: user?.status || 'online',
-    },
-  });
-});
-
-// 11c. Contacts: Delete Contact (DELETE)
-app.delete(['/api/contacts/:id', '/api/contacts', '/contacts.php'], (req: Request, res: Response) => {
-  const contactId = req.params.id || req.body?.id || (req.query.id as string);
-  const cleanP = (req.body?.phone_number || req.query.phone as string || '').replace(/\D/g, '');
-  const db = loadDatabase();
-
-  if (contactId) {
-    db.contacts = db.contacts.filter((c) => c.id !== contactId && c.contact_user_id !== contactId);
-    db.users = db.users.filter((u) => u.id !== contactId);
-  }
-  if (cleanP) {
-    db.users = db.users.filter((u) => u.phone_number !== cleanP);
-  }
-  saveDatabase(db);
-
-  res.json({ success: true, message: 'Contacto eliminado de la base de datos' });
-});
+};
+app.get(['/api/contacts', '/contacts.php'], handleContactRequest);
+app.post(['/api/contacts', '/contacts.php'], handleContactRequest);
+app.put(['/api/contacts/:id', '/api/contacts', '/contacts.php'], handleContactRequest);
+app.delete(['/api/contacts/:id', '/api/contacts', '/contacts.php'], handleContactRequest);
 
 // 12. Voice Messages: List for Channel
 app.get(['/api/voice-messages', '/voice-messages.php', '/api/voice-messages.php'], (req: Request, res: Response) => {
