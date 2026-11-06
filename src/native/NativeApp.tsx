@@ -154,6 +154,8 @@ interface User {
   unit: string;
   phone_number?: string;
   callsign?: string;
+  email?: string;
+  loginIdentifier?: string;
 }
 
 interface Channel {
@@ -267,6 +269,101 @@ const DEFAULT_CHANNELS: Channel[] = [
   { id: 'chan-04', name: 'VIALIDAD Y TRÁNSITO PACHUCA', code: 'CH-44', frequency: '153.950 MHz', category: 'Vialidad', isEncrypted: true, activeUsers: 12, pin: '4410', accessCode: 'C5I-VI-44' },
 ];
 
+// Preferencia de grupo por cuenta. No guardar un canal en una clave global:
+// una cuenta diferente no debe heredar el grupo de otro usuario.
+interface SavedChannelSelection {
+  id: string;
+  name: string;
+  code?: string;
+}
+
+const lastChannelStorageKey = (userId: string) =>
+  `c5i_last_selected_channel_${encodeURIComponent(String(userId))}`;
+
+const normalizeChannelName = (value: string) =>
+  String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().replace(/\s+/g, ' ').toUpperCase();
+
+function getChannelPreferenceKeys(user: User): string[] {
+  // El ID del backend tiene prioridad. Correo/teléfono/identificador de acceso
+  // permiten recuperar la preferencia aun si cambió el ID entregado por la API.
+  const identifiers: string[] = [];
+  const id = String(user.id || '').trim();
+  if (id) identifiers.push(lastChannelStorageKey(id)); // Compatibilidad con versiones anteriores.
+  const phone = String(user.phone_number || '').replace(/\D/g, '');
+  if (phone.length >= 10) identifiers.push(`c5i_last_channel_phone_${phone}`);
+  const email = String(user.email || '').trim().toLowerCase();
+  if (email.includes('@')) identifiers.push(`c5i_last_channel_email_${encodeURIComponent(email)}`);
+  const login = String(user.loginIdentifier || '').trim().toLowerCase();
+  if (login.includes('@')) identifiers.push(`c5i_last_channel_email_${encodeURIComponent(login)}`);
+  else if (/^\d{10,}$/.test(login.replace(/\D/g, ''))) {
+    identifiers.push(`c5i_last_channel_phone_${login.replace(/\D/g, '')}`);
+  }
+  return [...new Set(identifiers)];
+}
+
+function parseSavedChannel(value: string | null): SavedChannelSelection | null {
+  if (!value) return null;
+  try {
+    const item = JSON.parse(value);
+    if (item && String(item.id || '').trim() && String(item.name || '').trim()) {
+      return {
+        id: String(item.id).trim(),
+        name: String(item.name).trim(),
+        code: item.code ? String(item.code) : undefined,
+      };
+    }
+  } catch (error) {
+    console.warn('[Walkiet] Datos antiguos del grupo guardado no válidos:', error);
+  }
+  return null;
+}
+
+async function readSavedChannelSelection(user: User): Promise<SavedChannelSelection | null> {
+  for (const key of getChannelPreferenceKeys(user)) {
+    let raw: string | null = null;
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      // Esta lectura es persistente, no depende del fallback temporal en memoria.
+      try { raw = window.localStorage.getItem(key); }
+      catch (error) { console.warn('[Walkiet] No se pudo leer localStorage:', error); }
+    }
+    if (raw === null) raw = await safeStorage.getItem(key);
+    const parsed = parseSavedChannel(raw);
+    if (parsed) return parsed;
+  }
+  return null;
+}
+
+async function writeSavedChannelSelection(user: User, channel: Channel | null): Promise<void> {
+  const keys = getChannelPreferenceKeys(user);
+  if (!keys.length) throw new Error('La cuenta no tiene identificador estable para guardar el grupo.');
+  const value = channel ? JSON.stringify({ id: String(channel.id), name: channel.name, code: channel.code }) : null;
+  for (const key of keys) {
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      // Guardado síncrono: el usuario puede cerrar sesión inmediatamente
+      // después de tocar SINTONIZAR sin perder la preferencia.
+      if (value === null) window.localStorage.removeItem(key);
+      else window.localStorage.setItem(key, value);
+      if (window.localStorage.getItem(key) !== value) {
+        throw new Error('El navegador no confirmó el almacenamiento del grupo.');
+      }
+    } else if (value === null) {
+      await safeStorage.removeItem(key);
+    } else {
+      await safeStorage.setItem(key, value);
+    }
+  }
+}
+
+function findRestoredChannel(channels: Channel[], saved: SavedChannelSelection): Channel | null {
+  // No sintonizar un grupo solo porque reutiliza un ID. Se exige también el nombre.
+  const name = normalizeChannelName(saved.name);
+  const exact = channels.find(ch => String(ch.id) === saved.id && normalizeChannelName(ch.name) === name);
+  if (exact) return exact;
+  // El backend puede reasignar IDs; admitir solo una coincidencia inequívoca.
+  const sameName = channels.filter(ch => normalizeChannelName(ch.name) === name);
+  return sameName.length === 1 ? sameName[0] : null;
+}
+
 // Helper con timeout para peticiones en red móvil/wifi
 async function fetchWithTimeout(url: string, options: any = {}, timeoutMs = 3500) {
   const controller = new AbortController();
@@ -347,7 +444,17 @@ export default function NativeApp() {
   
   // Radio & PTT State
   const [channels, setChannels] = useState<Channel[]>(DEFAULT_CHANNELS);
-  const [selectedChannel, setSelectedChannel] = useState<Channel>(DEFAULT_CHANNELS[0]);
+  // Evita restaurar una coincidencia engañosa de los canales de ejemplo:
+  // sus IDs no necesariamente coinciden con los que devuelve la API.
+  const [channelsSyncedFromServer, setChannelsSyncedFromServer] = useState(false);
+  // Se recupera el canal elegido por este usuario, si sigue disponible.
+  const [selectedChannel, setSelectedChannel] = useState<Channel | null>(null);
+  const [pendingSavedChannel, setPendingSavedChannel] = useState<{
+    userId: string;
+    channel: SavedChannelSelection;
+    revision: number;
+  } | null>(null);
+  const channelChoiceRevisionRef = useRef(0);
   const [isTransmitting, setIsTransmitting] = useState(false);
   const [txDuration, setTxDuration] = useState(0);
   const [signalStrength] = useState(98);
@@ -567,7 +674,12 @@ export default function NativeApp() {
   // Lista negra de contactos eliminados para evitar resurrección durante sondeos en segundo plano
   const deletedContactIdsRef = useRef<Set<string>>(new Set());
 
-  const timerRef = useRef<any>(null);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Referencias de PTT: impiden liberaciones duplicadas y cierres con estado antiguo.
+  const pttPressedRef = useRef(false);
+  const pttStartedAtRef = useRef(0);
+  const pttChannelAtPressRef = useRef<Channel | null>(null);
+  const pttUserAtPressRef = useRef<User | null>(null);
 
   // Circuit breaker para endpoints PHP en Alwaysdata (evita spam de 404 en consola si aún no se han subido los archivos)
   const isContactsPhpAvailableRef = useRef<boolean | null>(null);
@@ -575,10 +687,8 @@ export default function NativeApp() {
   const lastContactsProbeTimeRef = useRef<number>(0);
   const lastChatProbeTimeRef = useRef<number>(0);
 
-  // Concentric animated soundwave rings for PTT (expanding circles)
-  const waveAnim1 = useRef(new Animated.Value(0)).current;
-  const waveAnim2 = useRef(new Animated.Value(0)).current;
-  const waveAnim3 = useRef(new Animated.Value(0)).current;
+  // Las ondas del PTT se muestran como aros estáticos para evitar fallos
+  // al detener Animated.loop en la versión web de React Native.
 
   // Carga inicial de preferencias guardadas en dispositivo
   useEffect(() => {
@@ -630,6 +740,63 @@ export default function NativeApp() {
     })();
   }, []);
 
+  // Restaurar la selección solo del usuario autenticado. Una elección manual más
+  // reciente tiene prioridad sobre cualquier lectura asíncrona de la memoria.
+  useEffect(() => {
+    if (!currentUser?.id) {
+      setPendingSavedChannel(null);
+      return;
+    }
+    let active = true;
+    const userId = String(currentUser.id);
+    const revision = channelChoiceRevisionRef.current;
+
+    readSavedChannelSelection(currentUser)
+      .then((saved) => {
+        if (!active || revision !== channelChoiceRevisionRef.current || !saved) return;
+        setPendingSavedChannel({ userId, channel: saved, revision });
+      })
+      .catch((error) => console.warn('No se pudo recuperar el último canal:', error));
+
+    return () => { active = false; };
+  }, [currentUser?.id]);
+
+  // Esperar a que el canal exista en la lista (local o sincronizada).
+  // Comprobamos también el nombre para no sintonizar otro grupo si el servidor
+  // reutiliza un identificador.
+  useEffect(() => {
+    if (!currentUser?.id || !pendingSavedChannel) return;
+    if (String(currentUser.id) !== pendingSavedChannel.userId ||
+        channelChoiceRevisionRef.current !== pendingSavedChannel.revision) return;
+    // Si todavía no sincroniza el servidor, permitir una restauración
+    // provisional por nombre/ID, pero conservar la preferencia pendiente para
+    // volver a validar la selección cuando llegue la lista real de canales.
+    const restored = findRestoredChannel(channels, pendingSavedChannel.channel);
+    if (restored && channelsSyncedFromServer) {
+      setSelectedChannel(restored);
+      setPendingSavedChannel(null);
+    } else if (channelsSyncedFromServer) {
+      // El canal guardado ya no figura entre los canales del servidor.
+      // No sintonizar automáticamente un canal distinto o solo de ejemplo.
+      setSelectedChannel(null);
+      setPendingSavedChannel(null);
+    }
+  }, [currentUser?.id, pendingSavedChannel, channels, channelsSyncedFromServer]);
+
+  // Sintonizar / abandonar un grupo y recordar esa elección por usuario.
+  const chooseAndRememberChannel = useCallback((channel: Channel | null) => {
+    channelChoiceRevisionRef.current += 1;
+    setPendingSavedChannel(null);
+    setSelectedChannel(channel);
+    if (!currentUser?.id) return;
+
+    writeSavedChannelSelection(currentUser, channel)
+      .catch((error) => {
+        console.warn('No se pudo guardar la selección del canal:', error);
+        setInlineWarning('El grupo se seleccionó, pero tu navegador no permitió guardarlo. Revisa los permisos de almacenamiento del sitio.');
+      });
+  }, [currentUser?.id]);
+
   // Guardar contactos en safeStorage cada vez que cambien para que persistan entre recargas
   useEffect(() => {
     if (officersList && officersList.length > 0) {
@@ -669,6 +836,14 @@ export default function NativeApp() {
             isPrivate: Boolean(ch.is_private),
           }));
           setChannels(mapped);
+          setChannelsSyncedFromServer(true);
+          // Mantener la selección manual si el canal sigue disponible;
+          // nunca sintonizar el primer canal automáticamente al sincronizar.
+          setSelectedChannel((prev) =>
+            prev ? findRestoredChannel(mapped, {
+              id: String(prev.id), name: prev.name, code: prev.code,
+            }) : null
+          );
           setDbStatus('ONLINE');
         }
       }
@@ -819,7 +994,7 @@ export default function NativeApp() {
 
   // Confirmación exitosa con diseño y colorimetría C5i (reemplaza alert gris del sistema)
   const handleChannelScanSuccess = useCallback((channel: Channel, source: 'qr' | 'pin' = 'qr') => {
-    setSelectedChannel(channel);
+    chooseAndRememberChannel(channel);
     setIsJoinScanning(false);
     setIsJoinModalOpen(false);
     setJoinPinDigits('');
@@ -829,11 +1004,11 @@ export default function NativeApp() {
       pin: channel.pin || '1090',
       source,
     });
-  }, []);
+  }, [chooseAndRememberChannel]);
 
   // Sintonizar canal con modal táctico C5i (reemplaza alert gris del sistema)
   const handleTuneChannel = useCallback((channel: Channel) => {
-    setSelectedChannel(channel);
+    chooseAndRememberChannel(channel);
     try {
       soundEngine.playIncomingChirp();
     } catch {}
@@ -845,16 +1020,14 @@ export default function NativeApp() {
       customTitle: 'Canal Sintonizado',
       customSubtitle: `Radio enlazado a ${channel.name} (${channel.frequency || '154.800 MHz'}).`,
     });
-  }, []);
+  }, [chooseAndRememberChannel]);
 
   // Salir del canal / grupo
   const handleLeaveChannel = useCallback((channel: Channel) => {
     setIsConfigModalOpen(false);
-    const remaining = channels.filter((c) => c.id !== channel.id);
-    const nextChannel = remaining.length > 0 ? remaining[0] : DEFAULT_CHANNELS[0];
-
-    if (selectedChannel.id === channel.id) {
-      setSelectedChannel(nextChannel);
+    if (selectedChannel?.id === channel.id) {
+      chooseAndRememberChannel(null);
+      setIsMembersModalOpen(false);
     }
 
     try {
@@ -863,23 +1036,23 @@ export default function NativeApp() {
 
     setScanSuccessModal({
       isOpen: true,
-      channel: nextChannel,
-      pin: nextChannel.pin || '1090',
+      channel,
+      pin: channel.pin || '1090',
       source: 'leave',
       customTitle: 'Has Salido del Grupo',
-      customSubtitle: `Te has desconectado de ${channel.name}. Tu radio se ha reubicado en ${nextChannel.name}.`,
+      customSubtitle: `Te has desconectado de ${channel.name}. Selecciona otro grupo manualmente para comunicarte.`,
     });
-  }, [channels, selectedChannel]);
+  }, [selectedChannel, chooseAndRememberChannel]);
 
   // Eliminar el canal / grupo
   const handleDeleteChannel = useCallback((channel: Channel) => {
     setIsConfigModalOpen(false);
     const remaining = channels.filter((c) => c.id !== channel.id);
-    const nextChannel = remaining.length > 0 ? remaining[0] : DEFAULT_CHANNELS[0];
 
     setChannels(remaining);
-    if (selectedChannel.id === channel.id) {
-      setSelectedChannel(nextChannel);
+    if (selectedChannel?.id === channel.id) {
+      chooseAndRememberChannel(null);
+      setIsMembersModalOpen(false);
     }
 
     if (serverUrl && channel.id) {
@@ -911,13 +1084,13 @@ export default function NativeApp() {
 
     setScanSuccessModal({
       isOpen: true,
-      channel: nextChannel,
-      pin: nextChannel.pin || '1090',
+      channel,
+      pin: channel.pin || '1090',
       source: 'delete',
       customTitle: 'Canal Táctico Eliminado',
       customSubtitle: `El canal ${channel.name} ha sido eliminado de la red táctica C5i.`,
     });
-  }, [channels, selectedChannel, serverUrl]);
+  }, [channels, selectedChannel, serverUrl, chooseAndRememberChannel]);
 
   // Referencia para evitar múltiples lecturas seguidas del mismo QR
   const isHandlingScanRef = useRef(false);
@@ -963,7 +1136,8 @@ export default function NativeApp() {
         }
 
         if (!found) {
-          found = channels[0];
+          showTacticalToast('El código QR no corresponde a ningún canal disponible.', 'warning');
+          return;
         }
 
         try {
@@ -976,7 +1150,7 @@ export default function NativeApp() {
         }, 2200);
       }
     },
-    [channels, handleChannelScanSuccess]
+    [channels, handleChannelScanSuccess, showTacticalToast]
   );
 
   // Manejador robusto de permisos de cámara utilizando Expo's Permission API
@@ -1206,11 +1380,11 @@ export default function NativeApp() {
 
     // Posicionar el canal actualmente sintonizado/activo en la parte superior de la lista
     return list.slice().sort((a, b) => {
-      const aIsActive = a.id === selectedChannel.id ? 1 : 0;
-      const bIsActive = b.id === selectedChannel.id ? 1 : 0;
+      const aIsActive = a.id === selectedChannel?.id ? 1 : 0;
+      const bIsActive = b.id === selectedChannel?.id ? 1 : 0;
       return bIsActive - aIsActive;
     });
-  }, [channels, selectedCategory, channelSearchText, selectedChannel.id]);
+  }, [channels, selectedCategory, channelSearchText, selectedChannel?.id]);
 
   // Abrir modal de configuración y QR de un canal (Seguro para iPhone y Web sin error de canvas)
   const openChannelConfig = (ch: Channel) => {
@@ -1290,6 +1464,10 @@ export default function NativeApp() {
   const handleScanQrMock = (mockChannel?: Channel) => {
     Keyboard.dismiss();
     const target = mockChannel || channels[0];
+    if (!target) {
+      showTacticalToast('No hay canales disponibles para sintonizar.', 'warning');
+      return;
+    }
     handleChannelScanSuccess(target, 'qr');
   };
 
@@ -1317,7 +1495,7 @@ export default function NativeApp() {
     };
 
     setChannels((prev) => [newCh, ...prev]);
-    setSelectedChannel(newCh);
+    chooseAndRememberChannel(newCh);
     setIsCreateModalOpen(false);
     setCreateChannelName('');
     try {
@@ -1396,62 +1574,89 @@ export default function NativeApp() {
     setTimeout(() => setHasCopiedPin(false), 2500);
   };
 
-  const handlePttPressIn = () => {
-    soundEngine.playPttStart();
+  // PTT: se puede probar el botón sin grupo, pero solo se transmite metadata
+  // al canal que el usuario haya seleccionado manualmente antes de pulsarlo.
+  const handlePttPressIn = useCallback(() => {
+    if (!currentUser || pttPressedRef.current || currentTab !== 'PTT') return;
+    pttPressedRef.current = true;
+    pttStartedAtRef.current = Date.now();
+    pttChannelAtPressRef.current = selectedChannel;
+    pttUserAtPressRef.current = currentUser;
     setIsTransmitting(true);
     setTxDuration(0);
-    if (Platform.OS !== 'web') {
-      try {
-        Vibration.vibrate(60);
-      } catch {}
-    }
-    timerRef.current = setInterval(() => {
-      setTxDuration((prev) => prev + 1);
-    }, 1000);
-  };
 
-  const handlePttPressOut = async () => {
-    if (!isTransmitting) return;
-    setIsTransmitting(false);
+    try { soundEngine.playPttStart(); } catch (error) {
+      console.warn('No se pudo reproducir el aviso de PTT:', error);
+    }
+    if (Platform.OS !== 'web') {
+      try { Vibration.vibrate(60); } catch {}
+    }
     if (timerRef.current) clearInterval(timerRef.current);
-    
+    timerRef.current = setInterval(() => {
+      if (pttPressedRef.current) {
+        setTxDuration(Math.floor((Date.now() - pttStartedAtRef.current) / 1000));
+      }
+    }, 250);
+  }, [currentUser, currentTab, selectedChannel?.id]);
+
+  const handlePttPressOut = useCallback(() => {
+    // El evento onPressOut puede dispararse tras una liberación por teclado.
+    // La referencia evita procesarlo por segunda vez.
+    if (!pttPressedRef.current) return;
+    pttPressedRef.current = false;
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+    setIsTransmitting(false);
+    setTxDuration(0);
+
     if (Platform.OS !== 'web') {
-      try {
-        Vibration.vibrate([0, 30, 40, 30]);
-      } catch {}
+      try { Vibration.vibrate([0, 30, 40, 30]); } catch {}
     }
 
-    if (txDuration > 0 && currentUser) {
+    const channelAtRelease = pttChannelAtPressRef.current;
+    const userAtRelease = pttUserAtPressRef.current;
+    const elapsedMs = Math.max(0, Date.now() - pttStartedAtRef.current);
+    const durationSeconds = Math.max(1, Math.ceil(elapsedMs / 1000));
+    pttChannelAtPressRef.current = null;
+    pttUserAtPressRef.current = null;
+    pttStartedAtRef.current = 0;
+
+    // En modo prueba, no crear registros ni enviar datos al servidor.
+    // También se cancela el envío si el usuario abandonó/cambió el canal.
+    const channelStillSelected = !!channelAtRelease && selectedChannel?.id === channelAtRelease.id;
+    if (channelStillSelected && userAtRelease && elapsedMs >= 1000) {
+      const channel = channelAtRelease!;
+      const user = userAtRelease;
       const newTx: Transmission = {
         id: Date.now().toString(),
-        sender: currentUser.name,
-        badge: currentUser.badge,
-        channel: selectedChannel.name,
+        sender: user.name,
+        badge: user.badge,
+        channel: channel.name,
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        duration: txDuration,
+        duration: durationSeconds,
         type: 'voice',
       };
       setTransmissions((prev) => [newTx, ...prev]);
 
-      // Enviar burst al backend en background si existe URL
+      // Se conserva el envío de metadata del proyecto; no se captura audio real aquí.
       if (serverUrl) {
         (async () => {
           try {
             const cleanUrl = serverUrl.replace(/\/+$/, '');
             const payload = JSON.stringify({
-              sender_id: currentUser.id,
-              channel_id: selectedChannel.id,
+              sender_id: user.id,
+              channel_id: channel.id,
               audio_url: `burst-${Date.now()}`,
-              duration_seconds: txDuration,
-              text: `Ráfaga PTT de ${currentUser.badge} (${txDuration}s)`,
+              duration_seconds: durationSeconds,
+              text: `Ráfaga PTT de ${user.badge} (${durationSeconds}s)`,
             });
-
-            let res = await fetchWithTimeout(`${cleanUrl}/voice-messages.php`, {
+            const res = await fetchWithTimeout(`${cleanUrl}/voice-messages.php`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: payload,
             }, 3000).catch(() => null);
-
             if (!res || !res.ok) {
               await fetchWithTimeout(`${cleanUrl}/api/voice-messages`, {
                 method: 'POST',
@@ -1459,90 +1664,52 @@ export default function NativeApp() {
                 body: payload,
               }, 3000).catch(() => null);
             }
-          } catch {}
+          } catch (error) {
+            console.warn('No se pudo guardar el registro PTT:', error);
+          }
         })();
       }
     }
 
-    soundEngine.playRogerBeep();
-  };
-
-  // Looping expanding concentric circles soundwave animation while transmitting
-  useEffect(() => {
-    if (!isTransmitting) {
-      waveAnim1.setValue(0);
-      waveAnim2.setValue(0);
-      waveAnim3.setValue(0);
-      return;
+    try { soundEngine.playRogerBeep(); } catch (error) {
+      console.warn('No se pudo reproducir el fin de PTT:', error);
     }
+  }, [selectedChannel?.id, serverUrl]);
 
-    const createWaveLoop = (anim: Animated.Value) => {
-      anim.setValue(0);
-      return Animated.loop(
-        Animated.timing(anim, {
-          toValue: 1,
-          duration: 1800,
-          easing: Easing.bezier(0.2, 0.6, 0.35, 1),
-          useNativeDriver: Platform.OS !== 'web',
-        })
-      );
-    };
+  // Liberar recursos cuando la pantalla se desmonta.
+  useEffect(() => () => {
+    pttPressedRef.current = false;
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+  }, []);
 
-    const anim1 = createWaveLoop(waveAnim1);
-    const anim2 = createWaveLoop(waveAnim2);
-    const anim3 = createWaveLoop(waveAnim3);
-
-    anim1.start();
-    const t2 = setTimeout(() => anim2.start(), 600);
-    const t3 = setTimeout(() => anim3.start(), 1200);
-
-    return () => {
-      clearTimeout(t2);
-      clearTimeout(t3);
-      anim1.stop();
-      anim2.stop();
-      anim3.stop();
-      waveAnim1.setValue(0);
-      waveAnim2.setValue(0);
-      waveAnim3.setValue(0);
-    };
-  }, [isTransmitting]);
-
-  // Spacebar Push-To-Talk shortcut on web desktop
+  // Atajo de teclado en web: barra espaciadora para PTT solo en pestaña PTT.
   useEffect(() => {
-    if (Platform.OS !== 'web' || !currentUser) return;
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (
-        e.code === 'Space' &&
-        !e.repeat &&
-        !(e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement)
-      ) {
-        e.preventDefault();
-        if (!isTransmitting) {
-          handlePttPressIn();
-        }
-      }
+    if (Platform.OS !== 'web' || !currentUser || currentTab !== 'PTT') return;
+    const isTyping = (target: EventTarget | null) =>
+      target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement ||
+      (target instanceof HTMLElement && target.isContentEditable);
+    const onDown = (e: KeyboardEvent) => {
+      if (e.code !== 'Space' || isTyping(e.target)) return;
+      e.preventDefault();
+      if (!e.repeat) handlePttPressIn();
     };
-
-    const handleKeyUp = (e: KeyboardEvent) => {
-      if (
-        e.code === 'Space' &&
-        !(e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement)
-      ) {
-        e.preventDefault();
-        if (isTransmitting) {
-          handlePttPressOut();
-        }
-      }
+    const onUp = (e: KeyboardEvent) => {
+      if (e.code !== 'Space' || isTyping(e.target)) return;
+      e.preventDefault();
+      handlePttPressOut();
     };
-
-    window.addEventListener('keydown', handleKeyDown);
-    window.addEventListener('keyup', handleKeyUp);
+    window.addEventListener('keydown', onDown);
+    window.addEventListener('keyup', onUp);
     return () => {
-      window.removeEventListener('keydown', handleKeyDown);
-      window.removeEventListener('keyup', handleKeyUp);
+      window.removeEventListener('keydown', onDown);
+      window.removeEventListener('keyup', onUp);
+      // Al abandonar PTT o perder la sesión no debe quedar pulsado.
+      if (pttPressedRef.current) handlePttPressOut();
     };
-  }, [isTransmitting, currentUser]);
+  }, [currentUser, currentTab, handlePttPressIn, handlePttPressOut]);
 
   const handleLogin = async () => {
     setIdentifierError(null);
@@ -1623,13 +1790,15 @@ export default function NativeApp() {
 
           if (res && res.ok && data && data.success && data.user) {
             remoteUser = {
-              id: data.user.id,
+              id: String(data.user.id || data.user.phone_number || cleanIdentifier),
               name: data.user.name,
               badge: data.user.callsign || data.user.badge || 'OF-' + cleanIdentifier.slice(-3),
               role: data.user.role || 'Elemento Táctico',
               unit: data.user.unit || 'Sector Operativo Hidalgo',
               phone_number: data.user.phone_number || cleanIdentifier,
               callsign: data.user.callsign,
+              email: data.user.correo || (cleanIdentifier.includes('@') ? cleanIdentifier : undefined),
+              loginIdentifier: cleanIdentifier,
             };
           } else if (data && (data.message || data.code)) {
             const errorCode = data?.code || '';
@@ -1675,6 +1844,18 @@ export default function NativeApp() {
         return;
       }
 
+      // Recuperar el grupo DURANTE el login, antes de mostrar PTT.
+      // Antes dependía exclusivamente de un useEffect posterior y podía quedar
+      // sin selección al alternar de cuenta o actualizar los grupos por red.
+      const lastChannel = await readSavedChannelSelection(remoteUser);
+      channelChoiceRevisionRef.current += 1;
+      const loginRevision = channelChoiceRevisionRef.current;
+      setPendingSavedChannel(lastChannel ? {
+        userId: String(remoteUser.id), channel: lastChannel, revision: loginRevision,
+      } : null);
+      setSelectedChannel(lastChannel && channelsSyncedFromServer
+        ? findRestoredChannel(channels, lastChannel) : null);
+      setCurrentTab('PTT');
       setCurrentUser(remoteUser);
       try {
         await safeStorage.setItem('c5i_native_user', JSON.stringify(remoteUser));
@@ -2163,6 +2344,32 @@ export default function NativeApp() {
   };
 
   const handleLogout = async () => {
+    pttPressedRef.current = false;
+    pttChannelAtPressRef.current = null;
+    pttUserAtPressRef.current = null;
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+    setIsTransmitting(false);
+    setTxDuration(0);
+    // Refuerzo al cerrar sesión: persistir la selección actual ANTES de limpiar
+    // el estado del usuario. Si no había grupo, conservamos la preferencia previa.
+    if (currentUser && selectedChannel) {
+      try {
+        await writeSavedChannelSelection(currentUser, selectedChannel);
+      } catch (error) {
+        console.warn('[Walkiet] No fue posible guardar el grupo al cerrar sesión:', error);
+        setInlineWarning('No se pudo guardar el grupo en este dispositivo.');
+      }
+    }
+    // La selección se conserva en el almacenamiento para el próximo login;
+    // únicamente se quita de esta sesión para no compartirla con otra cuenta.
+    channelChoiceRevisionRef.current += 1;
+    setPendingSavedChannel(null);
+    setSelectedChannel(null);
+    setIsMembersModalOpen(false);
+    setCurrentTab('PTT');
     setCurrentUser(null);
     try {
       await safeStorage.removeItem('c5i_native_user');
@@ -2207,7 +2414,7 @@ export default function NativeApp() {
                     userId: currentUser?.id,
                     officer: currentUser?.name,
                     callsign: currentUser?.badge,
-                    channelId: selectedChannel.id,
+                    channelId: selectedChannel?.id || null,
                     locationName: 'Pachuca Centro (Dispositivo Móvil Expo)',
                     coords: { lat: 20.12, lng: -98.73 },
                   }),
@@ -2222,6 +2429,11 @@ export default function NativeApp() {
 
   const handleSendMessage = () => {
     if (!messageInput.trim()) return;
+    if (!selectedChannel) {
+      showTacticalToast('Selecciona un grupo antes de enviar mensajes.', 'warning');
+      setCurrentTab('Grupos');
+      return;
+    }
     const textToSend = messageInput.trim();
     const newMsg: Transmission = {
       id: Date.now().toString(),
@@ -2997,7 +3209,8 @@ export default function NativeApp() {
             keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator={false}
           >
-           
+
+
             <View style={styles.loginCard}>
               {/* C5i Emblem Logo */}
               <Image
@@ -3937,8 +4150,10 @@ export default function NativeApp() {
     );
   }
 
-  const memberCount = channels.length === 0 ? 0 : 1;
-  const channelTitle = selectedChannel?.name || (channels.length === 0 ? 'Sin canales (Toca para crear)' : 'Selecciona un canal');
+  const memberCount = selectedChannel ? 1 : 0;
+  const channelTitle = selectedChannel?.name || (pendingSavedChannel && currentUser?.id === pendingSavedChannel.userId
+    ? `${pendingSavedChannel.channel.name} (verificando...)`
+    : (channels.length === 0 ? 'Sin canales disponibles' : 'Ningún grupo seleccionado'));
 
   return (
     <SafeAreaView style={styles.cleanContainer}>
@@ -3983,8 +4198,9 @@ export default function NativeApp() {
                 <TouchableOpacity
                   style={styles.cleanMembersPill}
                   onPress={() => setIsMembersModalOpen(true)}
+                  disabled={!selectedChannel}
                   activeOpacity={0.8}
-                  accessibilityLabel="Ver usuarios dentro del canal"
+                  accessibilityLabel={selectedChannel ? 'Ver usuarios dentro del canal' : 'No hay grupo seleccionado'}
                 >
                   <UsersIcon size={16} color="#64748b" strokeWidth={1.8} />
                   <Text style={styles.cleanMembersCount}>{memberCount}</Text>
@@ -4000,9 +4216,22 @@ export default function NativeApp() {
                   <View style={styles.cleanStatusRow}>
                     <View style={styles.cleanPulseRedDot} />
                     <Text style={styles.cleanStatusTextRed}>
-                      Transmitiendo ({txDuration.toString().padStart(2, '0')}s)...
+                      {pttChannelAtPressRef.current
+                        ? `Transmitiendo (${txDuration.toString().padStart(2, '0')}s)...`
+                        : `Prueba del botón PTT (${txDuration.toString().padStart(2, '0')}s) · Sin envío`}
                     </Text>
                   </View>
+                ) : !selectedChannel ? (
+                  <TouchableOpacity
+                    style={styles.cleanStatusRow}
+                    onPress={() => setCurrentTab('Grupos')}
+                    accessibilityLabel="Abrir Grupos para seleccionar un canal"
+                  >
+                    <RadioIcon size={15} color="#64748b" strokeWidth={2} />
+                    <Text style={styles.cleanStatusTextIdle}>
+                      {pendingSavedChannel ? 'Verificando el grupo guardado con el servidor...' : 'Puedes probar el botón; elige grupo para transmitir'}
+                    </Text>
+                  </TouchableOpacity>
                 ) : (
                   <View style={styles.cleanStatusRow}>
                     <View style={styles.cleanGreenDot} />
@@ -4016,66 +4245,19 @@ export default function NativeApp() {
               {/* PTT Concentric Circle Button with Soundwaves */}
               <View style={styles.pttCircleContainer}>
                 {isTransmitting && (
+                  // Aros sin Animated.loop: no se desmontan animaciones activas al soltar.
                   <>
-                    <Animated.View
+                    <View
                       pointerEvents="none"
-                      style={[
-                        styles.cleanPttExpandingWave,
-                        {
-                          transform: [
-                            {
-                              scale: waveAnim1.interpolate({
-                                inputRange: [0, 1],
-                                outputRange: [1, 1.55],
-                              }),
-                            },
-                          ],
-                          opacity: waveAnim1.interpolate({
-                            inputRange: [0, 0.25, 0.75, 1],
-                            outputRange: [0.65, 0.5, 0.2, 0],
-                          }),
-                        },
-                      ]}
+                      style={[styles.cleanPttExpandingWave, {
+                        width: 310, height: 310, borderRadius: 155, opacity: 0.38,
+                      }]}
                     />
-                    <Animated.View
+                    <View
                       pointerEvents="none"
-                      style={[
-                        styles.cleanPttExpandingWave,
-                        {
-                          transform: [
-                            {
-                              scale: waveAnim2.interpolate({
-                                inputRange: [0, 1],
-                                outputRange: [1, 1.55],
-                              }),
-                            },
-                          ],
-                          opacity: waveAnim2.interpolate({
-                            inputRange: [0, 0.25, 0.75, 1],
-                            outputRange: [0.65, 0.5, 0.2, 0],
-                          }),
-                        },
-                      ]}
-                    />
-                    <Animated.View
-                      pointerEvents="none"
-                      style={[
-                        styles.cleanPttExpandingWave,
-                        {
-                          transform: [
-                            {
-                              scale: waveAnim3.interpolate({
-                                inputRange: [0, 1],
-                                outputRange: [1, 1.55],
-                              }),
-                            },
-                          ],
-                          opacity: waveAnim3.interpolate({
-                            inputRange: [0, 0.25, 0.75, 1],
-                            outputRange: [0.65, 0.5, 0.2, 0],
-                          }),
-                        },
-                      ]}
+                      style={[styles.cleanPttExpandingWave, {
+                        width: 286, height: 286, borderRadius: 143, opacity: 0.60,
+                      }]}
                     />
                   </>
                 )}
@@ -4090,6 +4272,9 @@ export default function NativeApp() {
                     activeOpacity={0.9}
                     onPressIn={handlePttPressIn}
                     onPressOut={handlePttPressOut}
+                    accessibilityLabel={selectedChannel
+                      ? 'Mantén presionado para transmitir al grupo'
+                      : 'Mantén presionado para probar el botón, sin transmitir'}
                     style={[
                       styles.cleanPttCircleInner,
                       isTransmitting && styles.cleanPttCircleInnerActive,
@@ -4272,7 +4457,7 @@ export default function NativeApp() {
               ) : (
                 /* TARJETAS DE CANALES EXACTAS A LA IMAGEN 2 */
                 filteredChannels.map((ch: Channel) => {
-                  const isSelected = ch.id === selectedChannel.id;
+                  const isSelected = ch.id === selectedChannel?.id;
                   return (
                     <View
                       key={ch.id}
@@ -8652,6 +8837,7 @@ const styles = StyleSheet.create({
     paddingVertical: 24,
     paddingHorizontal: 16,
   },
+
   loginCard: {
     backgroundColor: '#ffffff',
     borderRadius: 28,
