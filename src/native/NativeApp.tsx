@@ -23,6 +23,10 @@ import {
 } from 'react-native';
 import { SafeAreaView, SafeAreaProvider } from 'react-native-safe-area-context';
 import { safeStorage } from './storage';
+import { logoutContactSession, type DirectoryContact as ContactOfficer } from '../services/contactsApi';
+import { ContactsScreen, type ContactsScreenHandle } from './contacts/ContactsScreen';
+import { useContactsDirectory } from './contacts/useContactsDirectory';
+import { useNativeFeedback } from './components/NativeFeedback';
 import c5iLogoImg from '../../assets/c5i-logo.png';
 import {
   UserIcon,
@@ -152,6 +156,7 @@ interface User {
   callsign?: string;
   email?: string;
   loginIdentifier?: string;
+  authToken?: string;
 }
 
 interface Channel {
@@ -207,56 +212,6 @@ export interface Conversation {
   isOnline: boolean;
   messages: ChatMessage[];
 }
-
-export interface ContactOfficer {
-  id: string;
-  name: string;
-  callsign: string;
-  unit: string;
-  phone_number?: string;
-  email?: string;
-  status: 'online' | 'offline';
-  role?: string;
-}
-
-const INITIAL_OFFICERS: ContactOfficer[] = [
-  {
-    id: 'usr-c5i-01',
-    name: 'Comandante Roberto Morales',
-    callsign: 'HALCÓN-01',
-    unit: 'Fuerza Especial de Reacción C5i',
-    phone_number: '7711234567',
-    status: 'online',
-    role: 'Mando Operativo',
-  },
-  {
-    id: 'usr-c5i-02',
-    name: 'Oficial Karla Mendoza',
-    callsign: 'PATRULLA-04',
-    unit: 'Sector Operativo Pachuca Sur',
-    phone_number: '7719876543',
-    status: 'online',
-    role: 'Elemento Táctico',
-  },
-  {
-    id: 'usr-c5i-03',
-    name: 'Oficial Diego Navarrete',
-    callsign: 'COBRA-09',
-    unit: 'Vialidad y Tránsito Estatal',
-    phone_number: '7714567890',
-    status: 'online',
-    role: 'Vialidad',
-  },
-  {
-    id: 'usr-c5i-04',
-    name: 'Despacho Central 911',
-    callsign: 'CENTRAL-C5I',
-    unit: 'Centro de Comando C5i Hidalgo',
-    phone_number: '7710009911',
-    status: 'online',
-    role: 'Despachador 911',
-  },
-];
 
 const DEFAULT_CHANNELS: Channel[] = [
   { id: 'chan-01', name: 'LOLO', code: 'CH-10', frequency: '154.800 MHz', category: 'Táctico', isEncrypted: true, activeUsers: 1, pin: '1090', accessCode: 'C5I-TAC-10' },
@@ -574,32 +529,6 @@ function NativeAppScreen() {
 
   // Modals for Chat & Contacts
   const [isNewChatModalOpen, setIsNewChatModalOpen] = useState(false);
-  const [contactSearchQuery, setContactSearchQuery] = useState('');
-  const [officersList, setOfficersList] = useState<ContactOfficer[]>(INITIAL_OFFICERS);
-
-  // Modal: Registrar Nuevo Contacto
-  const [isAddContactModalOpen, setIsAddContactModalOpen] = useState(false);
-  const [newContactName, setNewContactName] = useState('');
-  const [newContactLastName, setNewContactLastName] = useState('');
-  const [newContactPhone, setNewContactPhone] = useState('');
-  const [newContactEmail, setNewContactEmail] = useState('');
-  const [addContactError, setAddContactError] = useState<string | null>(null);
-  const [isSavingContact, setIsSavingContact] = useState(false);
-
-  // Modal: Detalle de Contacto / Perfil (Diseño exacto Imagen Captura 11.27.13)
-  const [selectedContactForDetail, setSelectedContactForDetail] = useState<ContactOfficer | null>(null);
-  const [isContactDetailModalOpen, setIsContactDetailModalOpen] = useState(false);
-  const [copiedDetailField, setCopiedDetailField] = useState<string | null>(null);
-
-  // Modal: Editar Contacto (CRUD)
-  const [isEditContactModalOpen, setIsEditContactModalOpen] = useState(false);
-  const [editContactName, setEditContactName] = useState('');
-  const [editContactLastName, setEditContactLastName] = useState('');
-  const [editContactPhone, setEditContactPhone] = useState('');
-  const [editContactEmail, setEditContactEmail] = useState('');
-  const [editContactCallsign, setEditContactCallsign] = useState('');
-  const [editContactError, setEditContactError] = useState<string | null>(null);
-  const [isSavingEditContact, setIsSavingEditContact] = useState(false);
 
   // Modal: Crear Grupo de Conversación
   const [isCreateGroupChatModalOpen, setIsCreateGroupChatModalOpen] = useState(false);
@@ -607,68 +536,10 @@ function NativeAppScreen() {
   const [selectedGroupMembers, setSelectedGroupMembers] = useState<string[]>([]);
   const [createGroupError, setCreateGroupError] = useState<string | null>(null);
 
-  // Modal de Alerta y Confirmación Táctica C5i (reemplaza window.confirm y Alert.alert)
-  const [tacticalAlertModal, setTacticalAlertModal] = useState<{
-    isOpen: boolean;
-    title: string;
-    message: string;
-    type: 'confirm_delete' | 'warning' | 'info' | 'success';
-    confirmText?: string;
-    cancelText?: string;
-    onConfirm?: () => void;
-    onCancel?: () => void;
-  }>({
-    isOpen: false,
-    title: '',
-    message: '',
-    type: 'info',
-  });
-
-  const showTacticalAlert = useCallback((
-    title: string,
-    message: string,
-    options?: {
-      type?: 'confirm_delete' | 'warning' | 'info' | 'success';
-      confirmText?: string;
-      cancelText?: string;
-      onConfirm?: () => void;
-      onCancel?: () => void;
-    }
-  ) => {
-    setTacticalAlertModal({
-      isOpen: true,
-      title,
-      message,
-      type: options?.type || 'info',
-      confirmText: options?.confirmText || (options?.onConfirm ? 'Confirmar' : 'Entendido'),
-      cancelText: options?.cancelText || (options?.onConfirm ? 'Cancelar' : undefined),
-      onConfirm: options?.onConfirm,
-      onCancel: options?.onCancel,
-    });
-  }, []);
-
-  // Notificación Toast flotante táctica C5i
-  const [tacticalToast, setTacticalToast] = useState<{
-    visible: boolean;
-    message: string;
-    type: 'success' | 'info' | 'warning';
-  }>({
-    visible: false,
-    message: '',
-    type: 'info',
-  });
-  const toastTimerRef = useRef<any>(null);
-
-  const showTacticalToast = useCallback((message: string, type: 'success' | 'info' | 'warning' = 'success') => {
-    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
-    setTacticalToast({ visible: true, message, type });
-    toastTimerRef.current = setTimeout(() => {
-      setTacticalToast((prev) => ({ ...prev, visible: false }));
-    }, 2800);
-  }, []);
-
-  // Lista negra de contactos eliminados para evitar resurrección durante sondeos en segundo plano
-  const deletedContactIdsRef = useRef<Set<string>>(new Set());
+  const { showTacticalToast, feedback } = useNativeFeedback();
+  const contactsDirectory = useContactsDirectory(serverUrl, currentUser ? { userId: currentUser.id, token: currentUser.authToken || '' } : null);
+  const officersList = contactsDirectory.contacts;
+  const contactsScreenRef = useRef<ContactsScreenHandle>(null);
 
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   // Referencias de PTT: impiden liberaciones duplicadas y cierres con estado antiguo.
@@ -678,9 +549,7 @@ function NativeAppScreen() {
   const pttUserAtPressRef = useRef<User | null>(null);
 
   // Circuit breaker para endpoints PHP en Alwaysdata (evita spam de 404 en consola si aún no se han subido los archivos)
-  const isContactsPhpAvailableRef = useRef<boolean | null>(null);
   const isChatPhpAvailableRef = useRef<boolean | null>(null);
-  const lastContactsProbeTimeRef = useRef<number>(0);
   const lastChatProbeTimeRef = useRef<number>(0);
 
   // Las ondas del PTT se muestran como aros estáticos para evitar fallos
@@ -704,32 +573,6 @@ function NativeAppScreen() {
           }
         }
 
-        // Cargar lista negra de contactos eliminados para evitar resurrección
-        const savedDeleted = await safeStorage.getItem('c5i_deleted_contacts_v2');
-        if (savedDeleted) {
-          try {
-            const parsed = JSON.parse(savedDeleted);
-            if (Array.isArray(parsed)) {
-              parsed.forEach((id: string) => {
-                if (id) deletedContactIdsRef.current.add(id);
-              });
-            }
-          } catch {}
-        }
-
-        // Cargar contactos cacheados para que nunca se borren al recargar la página
-        const cachedContacts = await safeStorage.getItem('c5i_officers_cache_v2');
-        if (cachedContacts) {
-          try {
-            const parsed = JSON.parse(cachedContacts);
-            if (Array.isArray(parsed) && parsed.length > 0) {
-              setOfficersList((prev) => {
-                const combined = [...parsed];
-                return combined;
-              });
-            }
-          } catch {}
-        }
       } catch (e) {
         console.log('Error reading storage', e);
       }
@@ -793,13 +636,6 @@ function NativeAppScreen() {
       });
   }, [currentUser?.id]);
 
-  // Guardar contactos en safeStorage cada vez que cambien para que persistan entre recargas
-  useEffect(() => {
-    if (officersList && officersList.length > 0) {
-      safeStorage.setItem('c5i_officers_cache_v2', JSON.stringify(officersList)).catch(() => {});
-    }
-  }, [officersList]);
-
   // En navegador web, enviar text/plain evita preflights OPTIONS innecesarios
   const getSafePostHeaders = () => ({
     'Content-Type': Platform.OS === 'web' ? 'text/plain;charset=UTF-8' : 'application/json',
@@ -847,67 +683,6 @@ function NativeAppScreen() {
       // Si el servidor no responde, se mantienen los canales tácticos por defecto
       setDbStatus('STANDBY');
     }
-  }, []);
-
-  // Sincronizar directorio de contactos y oficiales desde la base de datos (con Circuit Breaker inteligente)
-  const refreshContacts = useCallback(async (baseUrl: string) => {
-    if (!baseUrl) return;
-
-    // Si ya detectamos que contacts.php no está disponible en este servidor, evitar saturar con 404s
-    if (isContactsPhpAvailableRef.current === false) {
-      if (Date.now() - lastContactsProbeTimeRef.current < 120000) {
-        return;
-      }
-    }
-    lastContactsProbeTimeRef.current = Date.now();
-
-    try {
-      const cleanUrl = baseUrl.replace(/\/+$/, '');
-      const isAlwaysdata = cleanUrl.includes('alwaysdata.net') || cleanUrl.includes('.php');
-
-      let res: any = null;
-      if (isAlwaysdata) {
-        res = await fetchWithTimeout(`${cleanUrl}/contacts.php`, {}, 3000).catch(() => null);
-        if (res && res.status === 404) {
-          // Desactivar sondeos automáticos a contacts.php hasta que se suba el archivo
-          isContactsPhpAvailableRef.current = false;
-          return;
-        }
-      } else {
-        res = await fetchWithTimeout(`${cleanUrl}/api/contacts`, {}, 3000).catch(() => null);
-      }
-
-      if (res && res.ok) {
-        isContactsPhpAvailableRef.current = true;
-        const data = await res.json().catch(() => null);
-        if (data && Array.isArray(data.contacts)) {
-          const mapped: ContactOfficer[] = data.contacts
-            .filter((c: any) => {
-              if (!c) return false;
-              if (c.id && deletedContactIdsRef.current.has(c.id)) return false;
-              if (c.phone_number && deletedContactIdsRef.current.has(c.phone_number)) return false;
-              return true;
-            })
-            .map((c: any) => ({
-              id: c.id,
-              name: c.name,
-              callsign: c.callsign || 'OFICIAL',
-              unit: c.unit || 'Sector Operativo Hidalgo',
-              phone_number: c.phone_number || '',
-              email: c.email || c.correo || '',
-              status: c.status || 'online',
-              role: c.role || 'Oficial Operativo',
-              avatar_url: c.avatar_url || null,
-            }));
-
-          setOfficersList((prev) => {
-            // Preservar contactos locales con ID 'off-' que aún no hayan sido devueltos por el backend
-            const pendingLocal = prev.filter((p) => p.id.startsWith('off-') && !mapped.some((m) => m.phone_number === p.phone_number));
-            return [...pendingLocal, ...mapped];
-          });
-        }
-      }
-    } catch {}
   }, []);
 
   // Sincronizar mensajes del chat activo desde el backend (con Circuit Breaker inteligente)
@@ -971,22 +746,20 @@ function NativeAppScreen() {
     } catch {}
   }, [serverUrl, currentUser]);
 
-  // Sincronización continua de canales, contactos y chat activo para paridad Web / Físico
+  // Sincronización de canales y chat; contactos administra su propio sondeo.
   useEffect(() => {
     if (serverUrl) {
       refreshChannels(serverUrl);
-      refreshContacts(serverUrl);
       const timer = setInterval(() => {
         refreshChannels(serverUrl);
-        // refreshContacts y syncConversationMessages respetan el circuit breaker y no spamean 404s
-        refreshContacts(serverUrl);
+        // El chat respeta el circuit breaker de sus endpoints.
         if (activeConversation) {
           syncConversationMessages(activeConversation);
         }
       }, 4000);
       return () => clearInterval(timer);
     }
-  }, [serverUrl, refreshChannels, refreshContacts, syncConversationMessages, activeConversation]);
+  }, [serverUrl, refreshChannels, syncConversationMessages, activeConversation]);
 
   // Confirmación exitosa con diseño y colorimetría C5i (reemplaza alert gris del sistema)
   const handleChannelScanSuccess = useCallback((channel: Channel, source: 'qr' | 'pin' = 'qr') => {
@@ -1784,7 +1557,7 @@ function NativeAppScreen() {
             data = JSON.parse(rawText);
           } catch {}
 
-          if (res && res.ok && data && data.success && data.user) {
+          if (res && res.ok && data && data.success && data.user && typeof data.token === 'string') {
             remoteUser = {
               id: String(data.user.id || data.user.phone_number || cleanIdentifier),
               name: data.user.name,
@@ -1795,7 +1568,10 @@ function NativeAppScreen() {
               callsign: data.user.callsign,
               email: data.user.correo || (cleanIdentifier.includes('@') ? cleanIdentifier : undefined),
               loginIdentifier: cleanIdentifier,
+              authToken: data.token,
             };
+          } else if (res?.ok && data?.success && data?.user && !data?.token) {
+            loginErrorMsg = 'El servidor necesita actualizarse para iniciar una sesión privada. Contacta al administrador.';
           } else if (data && (data.message || data.code)) {
             const errorCode = data?.code || '';
             const msg = data?.message || '';
@@ -2125,18 +1901,7 @@ function NativeAppScreen() {
 
   // Métodos del flujo de Recuperar Contraseña (Image 1 / ForgotPasswordModal)
   const openRecoveryModal = () => {
-    setRecoverVisible(true);
-    setRecoverStep('identify');
-    setRecoverIdentifier(identifier || '');
-    setRecoverMatchedUser(null);
-    setRecoverGeneratedCode(null);
-    setRecoverTokenString('');
-    setRecoverNewPassword('');
-    setRecoverConfirmPassword('');
-    setRecoverShowNewPass(false);
-    setRecoverShowConfirmPass(false);
-    setRecoverErrorMessage(null);
-    setRecoverLoading(false);
+    setInlineWarning('Para recuperar acceso, solicita al administrador la recuperación de tu cuenta.');
   };
 
   const handleIdentifySubmit = async () => {
@@ -2340,6 +2105,12 @@ function NativeAppScreen() {
   };
 
   const handleLogout = async () => {
+    void logoutContactSession(serverUrl, currentUser?.authToken).catch(() => {});
+    setConversations([]);
+    setActiveConversation(null);
+    setSelectedGroupMembers([]);
+    setIsNewChatModalOpen(false);
+    setIsCreateGroupChatModalOpen(false);
     pttPressedRef.current = false;
     pttChannelAtPressRef.current = null;
     pttUserAtPressRef.current = null;
@@ -2478,60 +2249,25 @@ function NativeAppScreen() {
     });
   }, [conversations, selectedChatFilter, chatSearchQuery]);
 
-  const filteredOfficers = useMemo(() => {
-    if (!contactSearchQuery.trim()) return officersList;
-    const q = contactSearchQuery.toLowerCase();
-    return officersList.filter((off) => {
-      return (
-        off.name.toLowerCase().includes(q) ||
-        off.callsign.toLowerCase().includes(q) ||
-        (off.phone_number && off.phone_number.includes(q)) ||
-        (off.unit && off.unit.toLowerCase().includes(q))
-      );
-    });
-  }, [officersList, contactSearchQuery]);
-
-  // Agrupación alfabética de contactos por letra (ej. A -> Alex, V -> Valeria)
-  const groupedOfficers = useMemo(() => {
-    const map = new Map<string, ContactOfficer[]>();
-    const sorted = [...filteredOfficers].sort((a, b) =>
-      a.name.localeCompare(b.name, 'es', { sensitivity: 'base' })
-    );
-
-    for (const officer of sorted) {
-      const trimmed = officer.name.trim();
-      const firstChar = trimmed ? trimmed[0].toUpperCase() : '#';
-      const letter = /^[A-ZÁÉÍÓÚÑ]$/.test(firstChar) ? firstChar : '#';
-      if (!map.has(letter)) {
-        map.set(letter, []);
-      }
-      map.get(letter)!.push(officer);
-    }
-
-    const sortedLetters = Array.from(map.keys()).sort((a, b) => {
-      if (a === '#') return 1;
-      if (b === '#') return -1;
-      return a.localeCompare(b, 'es');
-    });
-
-    return sortedLetters.map((letter) => ({
-      letter,
-      contacts: map.get(letter)!,
-    }));
-  }, [filteredOfficers]);
+  const filteredOfficers = officersList;
 
   const totalChatCount = conversations.length;
   const groupsChatCount = conversations.filter((c) => c.type === 'group').length;
   const directChatCount = conversations.filter((c) => c.type === 'direct').length;
 
   const handleStartDirectChat = (officer: ContactOfficer) => {
+    if (!officer.registered_user_id) {
+      showTacticalToast('Este contacto aún no tiene cuenta en la app. Puedes llamarle por teléfono.', 'info');
+      return false;
+    }
+    const recipient = officer.registered_user_id;
     const existing = conversations.find(
-      (c) => c.type === 'direct' && (c.targetUserId === officer.id || c.name === officer.name)
+      (c) => c.type === 'direct' && (c.targetUserId === recipient || c.name === officer.name)
     );
     if (existing) {
       setActiveConversation(existing);
       setIsNewChatModalOpen(false);
-      return;
+      return true;
     }
 
     const newConv: Conversation = {
@@ -2540,7 +2276,7 @@ function NativeAppScreen() {
       name: officer.name,
       callsign: officer.callsign,
       unit: officer.unit,
-      targetUserId: officer.id,
+      targetUserId: recipient,
       lastMessage: '',
       lastMessageTime: '',
       unreadCount: 0,
@@ -2554,6 +2290,7 @@ function NativeAppScreen() {
     try {
       soundEngine.playIncomingChirp();
     } catch {}
+    return true;
   };
 
   const handleCreateGroupChatSubmit = () => {
@@ -2587,325 +2324,15 @@ function NativeAppScreen() {
     } catch {}
   };
 
-  const handleSaveContactSubmit = () => {
-    const cleanFirstName = newContactName.trim();
-    const cleanLastName = newContactLastName.trim();
-    const cleanPhone = newContactPhone.trim();
-    const cleanEmail = newContactEmail.trim();
-
-    if (!cleanFirstName) {
-      setAddContactError('Ingresa el nombre del oficial o contacto.');
-      return;
-    }
-
-    const fullName = cleanLastName ? `${cleanFirstName} ${cleanLastName}` : cleanFirstName;
-    // Generar indicativo táctico con los últimos 4 dígitos del número celular registrado (ej. termina en 8448 -> RADIO-8448)
-    const phoneDigits = cleanPhone.replace(/\D/g, '');
-    const last4 = phoneDigits.length >= 4
-      ? phoneDigits.slice(-4)
-      : (phoneDigits ? phoneDigits.padStart(4, '0') : `${Math.floor(1000 + Math.random() * 9000)}`);
-    const autoCallsign = `RADIO-${last4}`;
-
-    const tempId = `off-${Date.now()}`;
-    const newOfficer: ContactOfficer = {
-      id: tempId,
-      name: fullName,
-      callsign: autoCallsign,
-      unit: 'Sector Operativo Hidalgo C5i',
-      phone_number: cleanPhone,
-      email: cleanEmail,
-      status: 'online',
-      role: 'Oficial Operativo',
-    };
-
-    setOfficersList((prev) => [newOfficer, ...prev]);
-    setIsAddContactModalOpen(false);
-    setNewContactName('');
-    setNewContactLastName('');
-    setNewContactPhone('');
-    setNewContactEmail('');
-    setAddContactError(null);
-    showTacticalToast(`Contacto "${fullName}" guardado y sincronizado`, 'success');
-
-    try {
-      soundEngine.playIncomingChirp();
-    } catch {}
-
-    if (serverUrl) {
-      (async () => {
-        try {
-          const cleanUrl = serverUrl.replace(/\/+$/, '');
-          const isAlwaysdata = cleanUrl.includes('alwaysdata.net') || cleanUrl.includes('.php');
-          const headers = getSafePostHeaders();
-          const payload = JSON.stringify({
-            action: 'create',
-            name: fullName,
-            first_name: cleanFirstName,
-            last_name: cleanLastName,
-            callsign: newOfficer.callsign,
-            unit: newOfficer.unit,
-            phone_number: cleanPhone,
-            email: cleanEmail,
-            correo: cleanEmail,
-            user_id: currentUser?.id || 'usr-c5i-01',
-            role: newOfficer.role,
-          });
-
-          let res: any = null;
-          if (isAlwaysdata) {
-            res = await fetchWithTimeout(`${cleanUrl}/contacts.php`, {
-              method: 'POST',
-              headers,
-              body: payload,
-            }, 5000).catch(() => null);
-            if (res && res.status >= 400) {
-              isContactsPhpAvailableRef.current = false;
-            } else if (res && res.ok) {
-              isContactsPhpAvailableRef.current = true;
-            }
-          } else {
-            res = await fetchWithTimeout(`${cleanUrl}/api/contacts`, {
-              method: 'POST',
-              headers,
-              body: payload,
-            }, 5000).catch(() => null);
-          }
-
-          if (res && res.ok) {
-            const data = await res.json().catch(() => null);
-            if (data?.contact?.id) {
-              const realId = data.contact.id;
-              setOfficersList((prev) =>
-                prev.map((off) => (off.id === tempId ? { ...off, id: realId, callsign: data.contact.callsign || off.callsign } : off))
-              );
-            }
-          }
-        } catch (e) {
-          console.warn('Error syncing contact to backend:', e);
-        }
-      })();
-    }
+  const handleContactUpdated = (contact: ContactOfficer) => {
+    setConversations(prev => prev.map(c => c.type === 'direct' && c.targetUserId === contact.registered_user_id
+      ? { ...c, name: contact.name, callsign: contact.callsign } : c));
+    setActiveConversation(prev => prev?.type === 'direct' && prev.targetUserId === contact.registered_user_id
+      ? { ...prev, name: contact.name, callsign: contact.callsign } : prev);
   };
-
-  const handleOpenContactDetail = (contact: ContactOfficer) => {
-    setSelectedContactForDetail(contact);
-    setCopiedDetailField(null);
-    setIsContactDetailModalOpen(true);
-  };
-
-  const handleOpenEditContact = (contact: ContactOfficer) => {
-    const parts = contact.name.trim().split(' ');
-    const first = parts[0] || '';
-    const last = parts.slice(1).join(' ');
-    setEditContactName(first);
-    setEditContactLastName(last);
-    setEditContactPhone(contact.phone_number || '');
-    setEditContactEmail(contact.email || '');
-    setEditContactCallsign(contact.callsign || '');
-    setEditContactError(null);
-    setIsEditContactModalOpen(true);
-  };
-
-  const handleSaveEditContactSubmit = () => {
-    if (!selectedContactForDetail) return;
-    const cleanFirstName = editContactName.trim();
-    const cleanLastName = editContactLastName.trim();
-    const cleanPhone = editContactPhone.trim();
-    const cleanEmail = editContactEmail.trim();
-
-    // Si cambió el número de teléfono o la terminación, actualizar automáticamente el indicativo de radio
-    const editPhoneDigits = cleanPhone.replace(/\D/g, '');
-    const editLast4 = editPhoneDigits.length >= 4
-      ? editPhoneDigits.slice(-4)
-      : (editPhoneDigits ? editPhoneDigits.padStart(4, '0') : '0000');
-    const autoPhoneCallsign = `RADIO-${editLast4}`;
-
-    const oldDigits = (selectedContactForDetail.phone_number || '').replace(/\D/g, '');
-    const oldLast4 = oldDigits.slice(-4);
-    const phoneEndingChanged = Boolean(oldDigits && editPhoneDigits && editLast4 !== oldLast4);
-    const cleanCallsign = (phoneEndingChanged || !editContactCallsign.trim())
-      ? autoPhoneCallsign
-      : editContactCallsign.trim().toUpperCase();
-
-    if (!cleanFirstName) {
-      setEditContactError('Ingresa el nombre del oficial o contacto.');
-      return;
-    }
-
-    const fullName = cleanLastName ? `${cleanFirstName} ${cleanLastName}` : cleanFirstName;
-
-    const updatedOfficer: ContactOfficer = {
-      ...selectedContactForDetail,
-      name: fullName,
-      callsign: cleanCallsign,
-      phone_number: cleanPhone,
-      email: cleanEmail,
-    };
-
-    // Actualizar en lista local sin duplicar
-    setOfficersList((prev) =>
-      prev.map((off) => (off.id === updatedOfficer.id || (selectedContactForDetail.phone_number && off.phone_number === selectedContactForDetail.phone_number) ? updatedOfficer : off))
-    );
-    setSelectedContactForDetail(updatedOfficer);
-
-    // Actualizar conversación si está abierta
-    setConversations((prev) =>
-      prev.map((c) =>
-        c.type === 'direct' && (c.targetUserId === updatedOfficer.id || c.name === selectedContactForDetail.name)
-          ? { ...c, name: fullName, callsign: cleanCallsign }
-          : c
-      )
-    );
-
-    setIsEditContactModalOpen(false);
-    setEditContactError(null);
-    showTacticalToast(`Contacto "${fullName}" actualizado`, 'success');
-
-    try {
-      soundEngine.playIncomingChirp();
-    } catch {}
-
-    // Sincronizar en base de datos Alwaysdata y backend
-    if (serverUrl) {
-      (async () => {
-        try {
-          const cleanUrl = serverUrl.replace(/\/+$/, '');
-          const isAlwaysdata = cleanUrl.includes('alwaysdata.net') || cleanUrl.includes('.php');
-          const headers = getSafePostHeaders();
-          const payload = JSON.stringify({
-            action: 'update',
-            is_edit: true,
-            id: updatedOfficer.id,
-            old_id: selectedContactForDetail.id,
-            old_phone: selectedContactForDetail.phone_number,
-            name: fullName,
-            first_name: cleanFirstName,
-            last_name: cleanLastName,
-            callsign: cleanCallsign,
-            unit: updatedOfficer.unit,
-            phone_number: cleanPhone,
-            email: cleanEmail,
-            correo: cleanEmail,
-          });
-
-          if (isAlwaysdata) {
-            const res = await fetchWithTimeout(`${cleanUrl}/contacts.php`, {
-              method: 'POST',
-              headers,
-              body: payload,
-            }, 5000).catch(() => null);
-            if (res && res.ok) {
-              const data = await res.json().catch(() => null);
-              if (data?.contact?.id) {
-                const realId = data.contact.id;
-                setOfficersList((prev) =>
-                  prev.map((off) => (off.id === updatedOfficer.id ? { ...off, id: realId, callsign: data.contact.callsign || off.callsign } : off))
-                );
-                setSelectedContactForDetail((prev) => prev ? { ...prev, id: realId } : null);
-              }
-            }
-          } else {
-            await fetchWithTimeout(`${cleanUrl}/api/contacts/${encodeURIComponent(updatedOfficer.id)}`, {
-              method: 'PUT',
-              headers,
-              body: payload,
-            }, 5000).catch(() => null);
-          }
-        } catch (e) {
-          console.warn('Error syncing contact update:', e);
-        }
-      })();
-    }
-  };
-
-  const handleDeleteContact = (contact: ContactOfficer) => {
-    if (!contact) return;
-
-    const executeDelete = () => {
-      // 1. Agregar a lista negra en memoria y almacenamiento local
-      if (contact.id) deletedContactIdsRef.current.add(contact.id);
-      if (contact.phone_number) deletedContactIdsRef.current.add(contact.phone_number);
-
-      try {
-        const deletedArr = Array.from(deletedContactIdsRef.current);
-        safeStorage.setItem('c5i_deleted_contacts_v2', JSON.stringify(deletedArr));
-      } catch {}
-
-      // 2. Remover de lista local inmediatamente
-      setOfficersList((prev) =>
-        prev.filter((o) => o.id !== contact.id && (!contact.phone_number || o.phone_number !== contact.phone_number))
-      );
-      setIsContactDetailModalOpen(false);
-      setIsEditContactModalOpen(false);
-      setSelectedContactForDetail(null);
-      setTacticalAlertModal((prev) => ({ ...prev, isOpen: false }));
-
-      showTacticalToast(`Contacto "${contact.name}" eliminado de la BD`, 'warning');
-
-      try {
-        soundEngine.playIncomingChirp();
-      } catch {}
-
-      // 3. Sincronizar eliminación en servidor Alwaysdata y API local
-      if (serverUrl) {
-        (async () => {
-          try {
-            const cleanUrl = serverUrl.replace(/\/+$/, '');
-            const isAlwaysdata = cleanUrl.includes('alwaysdata.net') || cleanUrl.includes('.php');
-            const headers = getSafePostHeaders();
-            const deleteBody = JSON.stringify({
-              action: 'delete',
-              id: contact.id,
-              phone_number: contact.phone_number,
-              phone: contact.phone_number,
-            });
-
-            if (isAlwaysdata) {
-              // Enviar DELETE y también POST con action: 'delete' para garantizar compatibilidad con Apache Alwaysdata
-              await Promise.allSettled([
-                fetchWithTimeout(`${cleanUrl}/contacts.php?id=${encodeURIComponent(contact.id)}&phone=${encodeURIComponent(contact.phone_number || '')}&action=delete`, {
-                  method: 'DELETE',
-                  headers,
-                  body: deleteBody,
-                }, 4000),
-                fetchWithTimeout(`${cleanUrl}/contacts.php`, {
-                  method: 'POST',
-                  headers,
-                  body: deleteBody,
-                }, 4000),
-              ]);
-            } else {
-              await Promise.allSettled([
-                fetchWithTimeout(`${cleanUrl}/api/contacts/${encodeURIComponent(contact.id)}`, {
-                  method: 'DELETE',
-                  headers,
-                  body: deleteBody,
-                }, 4000),
-                fetchWithTimeout(`${cleanUrl}/api/contacts`, {
-                  method: 'POST',
-                  headers,
-                  body: deleteBody,
-                }, 4000),
-              ]);
-            }
-          } catch (e) {
-            console.warn('Error deleting contact on backend:', e);
-          }
-        })();
-      }
-    };
-
-    // Modal de Confirmación Táctico C5i (reemplaza window.confirm y Alert.alert del sistema)
-    showTacticalAlert(
-      '¿Eliminar Contacto C5i?',
-      `Estás a punto de dar de baja a "${contact.name}" (${contact.callsign || contact.phone_number || 'Oficial'}). Esta acción se sincronizará permanentemente con la base de datos C5i.`,
-      {
-        type: 'confirm_delete',
-        confirmText: 'Eliminar Contacto',
-        cancelText: 'Cancelar',
-        onConfirm: executeDelete,
-      }
-    );
+  const openContactRegistration = () => {
+    setIsNewChatModalOpen(false);
+    contactsScreenRef.current?.openCreate();
   };
 
   // Envío genérico de mensajes multimedia y tácticos
@@ -5104,232 +4531,9 @@ function NativeAppScreen() {
           </View>
         )}
 
-        {currentTab === 'Contactos' && (
-          <View style={{ flex: 1, backgroundColor: '#f8fafc' }}>
-            {/* Header exacto a Imagen 1 */}
-            <View style={{
-              flexDirection: 'row',
-              alignItems: 'center',
-              paddingHorizontal: 16,
-              paddingVertical: 14,
-              backgroundColor: '#ffffff',
-              borderBottomWidth: 1,
-              borderBottomColor: '#f1f5f9',
-            }}>
-              <View style={{
-                width: 44,
-                height: 44,
-                borderRadius: 14,
-                backgroundColor: '#fdf2f4',
-                borderWidth: 1,
-                borderColor: '#fecdd3',
-                alignItems: 'center',
-                justifyContent: 'center',
-              }}>
-                <UsersIcon size={22} color="#8a1a36" strokeWidth={2.2} />
-              </View>
-
-              <Text style={{
-                fontSize: 20,
-                fontWeight: '700',
-                color: '#0f172a',
-                marginLeft: 14,
-                flex: 1,
-              }}>
-                Contactos
-              </Text>
-
-              {/* Botón SOS Rojo */}
-              <TouchableOpacity
-                style={{
-                  width: 42,
-                  height: 42,
-                  borderRadius: 12,
-                  backgroundColor: '#dc2626',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  marginRight: 10,
-                  shadowColor: '#dc2626',
-                  shadowOpacity: 0.25,
-                  shadowRadius: 4,
-                  elevation: 2,
-                }}
-                onPress={handleTriggerSos}
-                activeOpacity={0.8}
-              >
-                <AlertTriangleIcon size={20} color="#ffffff" strokeWidth={2.2} />
-              </TouchableOpacity>
-
-              {/* Botón Agregar Contacto Granate */}
-              <TouchableOpacity
-                style={{
-                  width: 42,
-                  height: 42,
-                  borderRadius: 12,
-                  backgroundColor: '#6b1d2f',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  shadowColor: '#6b1d2f',
-                  shadowOpacity: 0.25,
-                  shadowRadius: 4,
-                  elevation: 2,
-                }}
-                onPress={() => {
-                  setAddContactError(null);
-                  setIsAddContactModalOpen(true);
-                }}
-                activeOpacity={0.8}
-              >
-                <UserPlusIcon size={20} color="#ffffff" strokeWidth={2.2} />
-              </TouchableOpacity>
-            </View>
-
-            {/* Barra de Búsqueda de Contactos */}
-            <View style={{
-              paddingHorizontal: 16,
-              paddingVertical: 12,
-              backgroundColor: '#ffffff',
-              borderBottomWidth: 1,
-              borderBottomColor: '#f1f5f9',
-            }}>
-              <View style={{
-                flexDirection: 'row',
-                alignItems: 'center',
-                backgroundColor: '#ffffff',
-                borderWidth: 1,
-                borderColor: '#e2e8f0',
-                borderRadius: 12,
-                paddingHorizontal: 12,
-                height: 44,
-              }}>
-                <SearchIcon size={18} color="#94a3b8" strokeWidth={2} />
-                <TextInput
-                  style={{
-                    flex: 1,
-                    marginLeft: 10,
-                    fontSize: 14,
-                    color: '#0f172a',
-                    paddingVertical: 0,
-                  }}
-                  value={contactSearchQuery}
-                  onChangeText={setContactSearchQuery}
-                  placeholder="Buscar por nombre, indicativo, teléfono o correo..."
-                  placeholderTextColor="#94a3b8"
-                />
-                {contactSearchQuery.length > 0 && (
-                  <TouchableOpacity onPress={() => setContactSearchQuery('')}>
-                    <XIcon size={16} color="#94a3b8" />
-                  </TouchableOpacity>
-                )}
-              </View>
-            </View>
-
-            {/* Lista de Contactos Tácticos C5i: Dividido solo por una línea entre uno y otro, división por letra, solo nombre */}
-            <ScrollView
-              style={{ flex: 1, backgroundColor: '#ffffff' }}
-              contentContainerStyle={{ paddingBottom: 100 }}
-              keyboardShouldPersistTaps="handled"
-            >
-              {filteredOfficers.length === 0 ? (
-                <View style={{
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  paddingVertical: 60,
-                  paddingHorizontal: 20,
-                }}>
-                  <View style={{
-                    width: 72,
-                    height: 72,
-                    borderRadius: 36,
-                    backgroundColor: '#f1f5f9',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    marginBottom: 16,
-                  }}>
-                    <UserIcon size={36} color="#94a3b8" strokeWidth={1.8} />
-                  </View>
-                  <Text style={{ fontSize: 17, fontWeight: '700', color: '#1e293b', marginBottom: 6 }}>
-                    Sin contactos registrados
-                  </Text>
-                  <Text style={{ fontSize: 13, color: '#64748b', textAlign: 'center', marginBottom: 20, maxWidth: 280 }}>
-                    Agrega a tu primer oficial o contacto para iniciar una conversación encriptada.
-                  </Text>
-                  <TouchableOpacity
-                    style={{
-                      flexDirection: 'row',
-                      alignItems: 'center',
-                      backgroundColor: '#6b1d2f',
-                      paddingHorizontal: 20,
-                      paddingVertical: 12,
-                      borderRadius: 12,
-                      gap: 8,
-                    }}
-                    onPress={() => {
-                      setAddContactError(null);
-                      setIsAddContactModalOpen(true);
-                    }}
-                  >
-                    <UserPlusIcon size={18} color="#ffffff" strokeWidth={2.2} />
-                    <Text style={{ color: '#ffffff', fontWeight: '700', fontSize: 14 }}>
-                      + Agregar Contacto
-                    </Text>
-                  </TouchableOpacity>
-                </View>
-              ) : (
-                groupedOfficers.map((group) => (
-                  <View key={group.letter}>
-                    {/* División por letra (ej. A, V) */}
-                    <View style={{
-                      backgroundColor: '#f8fafc',
-                      paddingHorizontal: 20,
-                      paddingVertical: 8,
-                      borderTopWidth: 1,
-                      borderBottomWidth: 1,
-                      borderColor: '#f1f5f9',
-                    }}>
-                      <Text style={{
-                        fontSize: 15,
-                        fontWeight: '800',
-                        color: '#6b1d2f',
-                        letterSpacing: 0.5,
-                      }}>
-                        {group.letter}
-                      </Text>
-                    </View>
-
-                    {/* Contactos bajo esta letra: solo el nombre, divididos por una sola línea */}
-                    {group.contacts.map((cnt, idx) => (
-                      <React.Fragment key={cnt.id}>
-                        <TouchableOpacity
-                          style={{
-                            paddingHorizontal: 20,
-                            paddingVertical: 16,
-                            backgroundColor: '#ffffff',
-                          }}
-                          onPress={() => handleOpenContactDetail(cnt)}
-                          activeOpacity={0.6}
-                        >
-                          <Text style={{
-                            fontSize: 16,
-                            fontWeight: '600',
-                            color: '#0f172a',
-                          }}>
-                            {cnt.name}
-                          </Text>
-                        </TouchableOpacity>
-
-                        {/* Línea divisoria simple entre uno y otro */}
-                        {idx < group.contacts.length - 1 && (
-                          <View style={{ height: 1, backgroundColor: '#f1f5f9', marginHorizontal: 20 }} />
-                        )}
-                      </React.Fragment>
-                    ))}
-                  </View>
-                ))
-              )}
-            </ScrollView>
-          </View>
-        )}
+        <ContactsScreen ref={contactsScreenRef} visible={currentTab === 'Contactos'} serverUrl={serverUrl}
+          directory={contactsDirectory} onSos={handleTriggerSos} onStartChat={contact => { if (handleStartDirectChat(contact)) setCurrentTab('Chat'); }}
+          onContactUpdated={handleContactUpdated} onOpenCamera={handleOpenCamera} />
 
         {currentTab === 'Perfil' && (
           <ScrollView style={styles.cleanScrollSection}>
@@ -6290,7 +5494,7 @@ function NativeAppScreen() {
         transparent
         onRequestClose={() => {
           setIsNewChatModalOpen(false);
-          setContactSearchQuery('');
+          contactsDirectory.setQuery('');
         }}
       >
         <View style={styles.chatModalBackdrop}>
@@ -6299,7 +5503,7 @@ function NativeAppScreen() {
             activeOpacity={1}
             onPress={() => {
               setIsNewChatModalOpen(false);
-              setContactSearchQuery('');
+              contactsDirectory.setQuery('');
             }}
           />
           <View style={styles.chatModalCard}>
@@ -6320,7 +5524,7 @@ function NativeAppScreen() {
                   style={styles.chatModalCloseBtn}
                   onPress={() => {
                     setIsNewChatModalOpen(false);
-                    setContactSearchQuery('');
+                    contactsDirectory.setQuery('');
                   }}
                   hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
                 >
@@ -6332,7 +5536,7 @@ function NativeAppScreen() {
               <View style={styles.chatModalActionsRow}>
                 <TouchableOpacity
                   style={styles.chatModalRegisterBtn}
-                  onPress={() => setIsAddContactModalOpen(true)}
+                  onPress={openContactRegistration}
                   activeOpacity={0.85}
                 >
                   <UserPlusIcon size={18} color="#ffffff" strokeWidth={2.2} />
@@ -6354,13 +5558,13 @@ function NativeAppScreen() {
                 <SearchIcon size={16} color="#94a3b8" strokeWidth={2} />
                 <TextInput
                   style={styles.chatModalSearchInput}
-                  value={contactSearchQuery}
-                  onChangeText={setContactSearchQuery}
+                  value={contactsDirectory.query}
+                  onChangeText={contactsDirectory.setQuery}
                   placeholder="Buscar por nombre, indicativo o teléfono..."
                   placeholderTextColor="#94a3b8"
                 />
-                {Boolean(contactSearchQuery) && (
-                  <TouchableOpacity onPress={() => setContactSearchQuery('')}>
+                {Boolean(contactsDirectory.query) && (
+                  <TouchableOpacity onPress={() => contactsDirectory.setQuery('')}>
                     <XIcon size={14} color="#94a3b8" />
                   </TouchableOpacity>
                 )}
@@ -6378,7 +5582,7 @@ function NativeAppScreen() {
                   </Text>
                   <TouchableOpacity
                     style={styles.chatModalEmptyAddBtn}
-                    onPress={() => setIsAddContactModalOpen(true)}
+                    onPress={openContactRegistration}
                     activeOpacity={0.85}
                   >
                     <Text style={styles.chatModalEmptyAddBtnText}>+ Agregar Contacto</Text>
@@ -6426,998 +5630,13 @@ function NativeAppScreen() {
                       </View>
                     </TouchableOpacity>
                   ))}
+                  {contactsDirectory.hasMore && <TouchableOpacity onPress={() => contactsDirectory.loadMore()} disabled={contactsDirectory.loading}>
+                    <Text style={{ padding: 16, color: '#6b1d2f' }}>Cargar más contactos</Text>
+                  </TouchableOpacity>}
                 </ScrollView>
               )}
             </View>
           </View>
-      </Modal>
-
-      {/* 7. MODAL: REGISTRAR NUEVO CONTACTO (Diseño exacto a Imagen 2) */}
-      <Modal
-        visible={isAddContactModalOpen}
-        animationType="fade"
-        transparent
-        onRequestClose={() => {
-          setIsAddContactModalOpen(false);
-          setAddContactError(null);
-        }}
-      >
-        <View style={{
-          flex: 1,
-          backgroundColor: 'rgba(15, 23, 42, 0.6)',
-          justifyContent: 'center',
-          alignItems: 'center',
-          padding: 16,
-        }}>
-          {/* Backdrop que cierra al tocar fuera sin interceptar clics dentro de la tarjeta */}
-          <TouchableOpacity
-            style={StyleSheet.absoluteFill}
-            activeOpacity={1}
-            onPress={() => {
-              setIsAddContactModalOpen(false);
-              setAddContactError(null);
-            }}
-          />
-
-          <View style={{
-            backgroundColor: '#ffffff',
-            borderRadius: 28,
-            width: '100%',
-            maxWidth: 420,
-            paddingHorizontal: 20,
-            paddingTop: 18,
-            paddingBottom: 24,
-            shadowColor: '#000000',
-            shadowOpacity: 0.15,
-            shadowRadius: 16,
-            shadowOffset: { width: 0, height: 8 },
-            elevation: 8,
-          }}>
-            {/* Header con dos circulitos para Cancelar y Guardar */}
-            <View style={{
-              flexDirection: 'row',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              paddingBottom: 12,
-              borderBottomWidth: 1,
-              borderBottomColor: '#f1f5f9',
-            }}>
-              {/* Botón Circular Izquierdo: Cancelar */}
-              <TouchableOpacity
-                style={{
-                  width: 38,
-                  height: 38,
-                  borderRadius: 19,
-                  backgroundColor: '#e2e8f0',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                }}
-                onPress={() => {
-                  setIsAddContactModalOpen(false);
-                  setAddContactError(null);
-                }}
-                activeOpacity={0.8}
-              >
-                <XIcon size={18} color="#475569" strokeWidth={2.2} />
-              </TouchableOpacity>
-
-              {/* Título Central */}
-              <Text style={{
-                fontSize: 18,
-                fontWeight: '700',
-                color: '#0f172a',
-                textAlign: 'center',
-              }}>
-                Nuevo Contacto
-              </Text>
-
-              {/* Botón Circular Derecho: Guardar */}
-              <TouchableOpacity
-                style={{
-                  width: 38,
-                  height: 38,
-                  borderRadius: 19,
-                  backgroundColor: '#6b1d2f',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  shadowColor: '#6b1d2f',
-                  shadowOpacity: 0.3,
-                  shadowRadius: 4,
-                  elevation: 2,
-                }}
-                onPress={handleSaveContactSubmit}
-                activeOpacity={0.8}
-              >
-                <CheckIcon size={18} color="#ffffff" strokeWidth={2.6} />
-              </TouchableOpacity>
-            </View>
-
-            <ScrollView
-              style={{ maxHeight: 460 }}
-              contentContainerStyle={{ paddingTop: 16, paddingBottom: 6 }}
-              keyboardShouldPersistTaps="handled"
-            >
-              {/* Círculo con Icono de Persona (sin agregar foto, solo persona) */}
-              <View style={{
-                alignSelf: 'center',
-                width: 86,
-                height: 86,
-                borderRadius: 43,
-                backgroundColor: '#f8fafc',
-                borderWidth: 2,
-                borderColor: '#fbcfe8',
-                alignItems: 'center',
-                justifyContent: 'center',
-                marginBottom: 20,
-              }}>
-                <UserIcon size={42} color="#94a3b8" strokeWidth={1.8} />
-              </View>
-
-              {addContactError && (
-                <View style={{
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  backgroundColor: '#ffe4e6',
-                  paddingHorizontal: 12,
-                  paddingVertical: 8,
-                  borderRadius: 10,
-                  marginBottom: 14,
-                  gap: 8,
-                }}>
-                  <AlertTriangleIcon size={16} color="#be123c" strokeWidth={2} />
-                  <Text style={{ color: '#be123c', fontSize: 13, fontWeight: '600', flex: 1 }}>
-                    {addContactError}
-                  </Text>
-                </View>
-              )}
-
-              {/* Tarjeta 1: Nombre(s) y Apellidos (Opcional) */}
-              <View style={{
-                backgroundColor: '#ffffff',
-                borderRadius: 16,
-                borderWidth: 1,
-                borderColor: '#e2e8f0',
-                paddingHorizontal: 16,
-                paddingVertical: 10,
-                marginBottom: 14,
-              }}>
-                <Text style={{ fontSize: 12, fontWeight: '600', color: '#64748b', marginBottom: 2 }}>
-                  Nombre(s) *
-                </Text>
-                <TextInput
-                  style={{
-                    fontSize: 15,
-                    color: '#0f172a',
-                    paddingVertical: 4,
-                  }}
-                  value={newContactName}
-                  onChangeText={setNewContactName}
-                  placeholder="Ej. Juan Carlos"
-                  placeholderTextColor="#94a3b8"
-                />
-
-                <View style={{ height: 1, backgroundColor: '#f1f5f9', marginVertical: 8 }} />
-
-                <Text style={{ fontSize: 12, fontWeight: '600', color: '#64748b', marginBottom: 2 }}>
-                  Apellidos (Opcional)
-                </Text>
-                <TextInput
-                  style={{
-                    fontSize: 15,
-                    color: '#0f172a',
-                    paddingVertical: 4,
-                  }}
-                  value={newContactLastName}
-                  onChangeText={setNewContactLastName}
-                  placeholder="Ej. Perez Hernandez"
-                  placeholderTextColor="#94a3b8"
-                />
-              </View>
-
-              {/* Tarjeta 2: Número de Teléfono (directo sin selector de país) */}
-              <View style={{
-                backgroundColor: '#ffffff',
-                borderRadius: 16,
-                borderWidth: 1,
-                borderColor: '#e2e8f0',
-                paddingHorizontal: 16,
-                paddingVertical: 10,
-                marginBottom: 14,
-              }}>
-                <Text style={{ fontSize: 12, fontWeight: '600', color: '#64748b', marginBottom: 2 }}>
-                  Número de Teléfono
-                </Text>
-                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                  <TextInput
-                    style={{
-                      flex: 1,
-                      fontSize: 15,
-                      color: '#0f172a',
-                      paddingVertical: 4,
-                    }}
-                    value={newContactPhone}
-                    onChangeText={setNewContactPhone}
-                    placeholder="771 123 4567"
-                    placeholderTextColor="#94a3b8"
-                    keyboardType="phone-pad"
-                  />
-                  <PhoneIcon size={18} color="#94a3b8" strokeWidth={1.8} />
-                </View>
-              </View>
-
-              {/* Tarjeta 3: Correo Electrónico (Opcional) */}
-              <View style={{
-                backgroundColor: '#ffffff',
-                borderRadius: 16,
-                borderWidth: 1,
-                borderColor: '#e2e8f0',
-                paddingHorizontal: 16,
-                paddingVertical: 10,
-                marginBottom: 8,
-              }}>
-                <Text style={{ fontSize: 12, fontWeight: '600', color: '#64748b', marginBottom: 2 }}>
-                  Correo Electrónico (Opcional)
-                </Text>
-                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                  <TextInput
-                    style={{
-                      flex: 1,
-                      fontSize: 15,
-                      color: '#0f172a',
-                      paddingVertical: 4,
-                    }}
-                    value={newContactEmail}
-                    onChangeText={setNewContactEmail}
-                    placeholder="ejemplo@c5i.gob.mx"
-                    placeholderTextColor="#94a3b8"
-                    keyboardType="email-address"
-                    autoCapitalize="none"
-                  />
-                  <MailIcon size={18} color="#94a3b8" strokeWidth={1.8} />
-                </View>
-              </View>
-            </ScrollView>
-          </View>
-        </View>
-      </Modal>
-
-      {/* 7b. MODAL: DETALLE DE CONTACTO / PERFIL (Diseño exacto a Imagen Captura 11.27.13) */}
-      <Modal
-        visible={isContactDetailModalOpen && !!selectedContactForDetail}
-        animationType="slide"
-        transparent={false}
-        onRequestClose={() => setIsContactDetailModalOpen(false)}
-      >
-        <SafeAreaView style={{ flex: 1, backgroundColor: '#ffffff' }}>
-          {/* Barra Superior con botón circular <, SOS y botón Editar */}
-          <View style={{
-            flexDirection: 'row',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            paddingHorizontal: 16,
-            paddingVertical: 12,
-            borderBottomWidth: 1,
-            borderBottomColor: '#f1f5f9',
-          }}>
-            {/* Botón Circular Izquierdo: Volver atrás */}
-            <TouchableOpacity
-              style={{
-                width: 40,
-                height: 40,
-                borderRadius: 20,
-                backgroundColor: '#f1f5f9',
-                alignItems: 'center',
-                justifyContent: 'center',
-              }}
-              onPress={() => setIsContactDetailModalOpen(false)}
-              activeOpacity={0.7}
-            >
-              <ArrowLeftIcon size={20} color="#334155" strokeWidth={2.2} />
-            </TouchableOpacity>
-
-            {/* Botones Derecha: SOS y Editar */}
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-              {/* Botón SOS Pill Rojo */}
-              <TouchableOpacity
-                style={{
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  backgroundColor: '#ef4444',
-                  paddingHorizontal: 12,
-                  paddingVertical: 7,
-                  borderRadius: 20,
-                  gap: 4,
-                  shadowColor: '#ef4444',
-                  shadowOpacity: 0.3,
-                  shadowRadius: 4,
-                  elevation: 2,
-                }}
-                onPress={handleTriggerSos}
-                activeOpacity={0.8}
-              >
-                <AlertTriangleIcon size={16} color="#ffffff" strokeWidth={2.4} />
-                <Text style={{ color: '#ffffff', fontWeight: '800', fontSize: 13, letterSpacing: 0.5 }}>
-                  SOS
-                </Text>
-              </TouchableOpacity>
-
-              {/* Botón Editar Pill Granate */}
-              <TouchableOpacity
-                style={{
-                  backgroundColor: '#6b1d2f',
-                  paddingHorizontal: 18,
-                  paddingVertical: 7,
-                  borderRadius: 20,
-                  shadowColor: '#6b1d2f',
-                  shadowOpacity: 0.3,
-                  shadowRadius: 4,
-                  elevation: 2,
-                }}
-                onPress={() => {
-                  if (selectedContactForDetail) {
-                    handleOpenEditContact(selectedContactForDetail);
-                  }
-                }}
-                activeOpacity={0.8}
-              >
-                <Text style={{ color: '#ffffff', fontWeight: '700', fontSize: 14 }}>
-                  Editar
-                </Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-
-          <ScrollView
-            style={{ flex: 1, backgroundColor: '#ffffff' }}
-            contentContainerStyle={{ paddingHorizontal: 20, paddingTop: 20, paddingBottom: 40 }}
-            showsVerticalScrollIndicator={false}
-          >
-            {/* Avatar Central Grande con Inicial */}
-            <View style={{ alignItems: 'center', marginBottom: 14 }}>
-              <View style={{
-                width: 110,
-                height: 110,
-                borderRadius: 55,
-                backgroundColor: '#e0f2fe',
-                borderWidth: 2.5,
-                borderColor: '#fbcfe8',
-                alignItems: 'center',
-                justifyContent: 'center',
-                shadowColor: '#000000',
-                shadowOpacity: 0.08,
-                shadowRadius: 8,
-                shadowOffset: { width: 0, height: 4 },
-                elevation: 3,
-              }}>
-                <Text style={{
-                  fontSize: 44,
-                  fontWeight: '800',
-                  color: '#6b1d2f',
-                }}>
-                  {(selectedContactForDetail?.name.trim()[0] || 'K').toUpperCase()}
-                </Text>
-              </View>
-
-              {/* Nombre del Contacto */}
-              <Text style={{
-                fontSize: 22,
-                fontWeight: '800',
-                color: '#0f172a',
-                marginTop: 12,
-                textAlign: 'center',
-              }}>
-                {selectedContactForDetail?.name}
-              </Text>
-
-              {/* Indicativo de Radio Pill */}
-              <View style={{
-                backgroundColor: '#f1f5f9',
-                paddingHorizontal: 12,
-                paddingVertical: 4,
-                borderRadius: 12,
-                marginTop: 6,
-              }}>
-                <Text style={{
-                  fontSize: 12,
-                  fontWeight: '700',
-                  color: '#7a1c30',
-                  letterSpacing: 0.5,
-                }}>
-                  {selectedContactForDetail?.callsign || 'RADIO-654'}
-                </Text>
-              </View>
-            </View>
-
-            {/* 4 Botones Circulares de Acción Rápida Granate */}
-            <View style={{
-              flexDirection: 'row',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: 16,
-              marginVertical: 18,
-            }}>
-              {/* 1. Chat */}
-              <TouchableOpacity
-                style={{
-                  width: 50,
-                  height: 50,
-                  borderRadius: 25,
-                  backgroundColor: '#6b1d2f',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  shadowColor: '#6b1d2f',
-                  shadowOpacity: 0.35,
-                  shadowRadius: 6,
-                  elevation: 3,
-                }}
-                onPress={() => {
-                  if (selectedContactForDetail) {
-                    setIsContactDetailModalOpen(false);
-                    handleStartDirectChat(selectedContactForDetail);
-                    setCurrentTab('Chat');
-                  }
-                }}
-                activeOpacity={0.8}
-              >
-                <MessageSquareIcon size={22} color="#ffffff" strokeWidth={2.2} />
-              </TouchableOpacity>
-
-              {/* 2. Llamada */}
-              <TouchableOpacity
-                style={{
-                  width: 50,
-                  height: 50,
-                  borderRadius: 25,
-                  backgroundColor: '#6b1d2f',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  shadowColor: '#6b1d2f',
-                  shadowOpacity: 0.35,
-                  shadowRadius: 6,
-                  elevation: 3,
-                }}
-                onPress={() => {
-                  if (selectedContactForDetail?.phone_number) {
-                    if (Platform.OS === 'web') {
-                      window.open(`tel:${selectedContactForDetail.phone_number}`);
-                    } else {
-                      Linking.openURL(`tel:${selectedContactForDetail.phone_number}`).catch(() => {});
-                    }
-                  } else {
-                    showTacticalAlert('Llamada Telefónica', 'Este oficial o contacto no tiene un número celular registrado en la red C5i.', { type: 'warning' });
-                  }
-                }}
-                activeOpacity={0.8}
-              >
-                <PhoneIcon size={22} color="#ffffff" strokeWidth={2.2} />
-              </TouchableOpacity>
-
-              {/* 3. Video */}
-              <TouchableOpacity
-                style={{
-                  width: 50,
-                  height: 50,
-                  borderRadius: 25,
-                  backgroundColor: '#6b1d2f',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  shadowColor: '#6b1d2f',
-                  shadowOpacity: 0.35,
-                  shadowRadius: 6,
-                  elevation: 3,
-                }}
-                onPress={() => {
-                  setIsContactDetailModalOpen(false);
-                  if (selectedContactForDetail) {
-                    handleStartDirectChat(selectedContactForDetail);
-                    setCurrentTab('Chat');
-                  }
-                  handleOpenCamera();
-                }}
-                activeOpacity={0.8}
-              >
-                <VideoIcon size={22} color="#ffffff" strokeWidth={2.2} />
-              </TouchableOpacity>
-
-              {/* 4. Correo */}
-              <TouchableOpacity
-                style={{
-                  width: 50,
-                  height: 50,
-                  borderRadius: 25,
-                  backgroundColor: '#6b1d2f',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  shadowColor: '#6b1d2f',
-                  shadowOpacity: 0.35,
-                  shadowRadius: 6,
-                  elevation: 3,
-                }}
-                onPress={() => {
-                  if (selectedContactForDetail?.email) {
-                    if (Platform.OS === 'web') {
-                      window.open(`mailto:${selectedContactForDetail.email}`);
-                    } else {
-                      Linking.openURL(`mailto:${selectedContactForDetail.email}`).catch(() => {});
-                    }
-                  } else {
-                    showTacticalAlert('Correo Institucional', 'Este oficial o contacto no tiene un correo institucional registrado.', { type: 'warning' });
-                  }
-                }}
-                activeOpacity={0.8}
-              >
-                <MailIcon size={22} color="#ffffff" strokeWidth={2.2} />
-              </TouchableOpacity>
-            </View>
-
-            {/* 4 Tarjetas de Información */}
-
-            {/* Tarjeta 1: móvil (red celular) */}
-            <View style={{
-              backgroundColor: '#ffffff',
-              borderRadius: 18,
-              borderWidth: 1,
-              borderColor: '#e2e8f0',
-              paddingHorizontal: 16,
-              paddingVertical: 12,
-              marginBottom: 12,
-              shadowColor: '#000000',
-              shadowOpacity: 0.03,
-              shadowRadius: 4,
-              elevation: 1,
-            }}>
-              <Text style={{
-                fontSize: 12,
-                fontWeight: '700',
-                color: '#8a1a36',
-                marginBottom: 4,
-                fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
-              }}>
-                móvil (red celular)
-              </Text>
-              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                <Text style={{ fontSize: 16, fontWeight: '700', color: '#0f172a' }}>
-                  {selectedContactForDetail?.phone_number || 'Sin número registrado'}
-                </Text>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                  {/* Copiar */}
-                  <TouchableOpacity
-                    style={{
-                      width: 36,
-                      height: 36,
-                      borderRadius: 18,
-                      backgroundColor: '#f8fafc',
-                      borderWidth: 1,
-                      borderColor: '#e2e8f0',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                    }}
-                    onPress={() => {
-                      if (selectedContactForDetail?.phone_number) {
-                        Clipboard.setString(selectedContactForDetail.phone_number);
-                        setCopiedDetailField('phone');
-                        setTimeout(() => setCopiedDetailField(null), 2000);
-                      }
-                    }}
-                    activeOpacity={0.7}
-                  >
-                    {copiedDetailField === 'phone' ? (
-                      <CheckIcon size={16} color="#16a34a" strokeWidth={2.4} />
-                    ) : (
-                      <CopyIcon size={16} color="#64748b" strokeWidth={2} />
-                    )}
-                  </TouchableOpacity>
-
-                  {/* Llamar */}
-                  <TouchableOpacity
-                    style={{
-                      width: 36,
-                      height: 36,
-                      borderRadius: 18,
-                      backgroundColor: '#fdf2f4',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                    }}
-                    onPress={() => {
-                      if (selectedContactForDetail?.phone_number) {
-                        if (Platform.OS === 'web') {
-                          window.open(`tel:${selectedContactForDetail.phone_number}`);
-                        } else {
-                          Linking.openURL(`tel:${selectedContactForDetail.phone_number}`).catch(() => {});
-                        }
-                      }
-                    }}
-                    activeOpacity={0.7}
-                  >
-                    <PhoneIcon size={16} color="#8a1a36" strokeWidth={2} />
-                  </TouchableOpacity>
-                </View>
-              </View>
-            </View>
-
-            {/* Tarjeta 2: correo institucional */}
-            <View style={{
-              backgroundColor: '#ffffff',
-              borderRadius: 18,
-              borderWidth: 1,
-              borderColor: '#e2e8f0',
-              paddingHorizontal: 16,
-              paddingVertical: 12,
-              marginBottom: 12,
-              shadowColor: '#000000',
-              shadowOpacity: 0.03,
-              shadowRadius: 4,
-              elevation: 1,
-            }}>
-              <Text style={{
-                fontSize: 12,
-                fontWeight: '700',
-                color: '#8a1a36',
-                marginBottom: 4,
-                fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
-              }}>
-                correo institucional
-              </Text>
-              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                <Text style={{
-                  fontSize: 15,
-                  fontWeight: '700',
-                  color: selectedContactForDetail?.email ? '#0f172a' : '#94a3b8',
-                  flex: 1,
-                  marginRight: 8,
-                }}>
-                  {selectedContactForDetail?.email || 'Sin correo registrado'}
-                </Text>
-                <View style={{
-                  width: 36,
-                  height: 36,
-                  borderRadius: 18,
-                  backgroundColor: '#fdf2f4',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                }}>
-                  <MailIcon size={16} color="#8a1a36" strokeWidth={2} />
-                </View>
-              </View>
-            </View>
-
-            {/* Tarjeta 3: indicativo de radio (callsign) */}
-            <View style={{
-              backgroundColor: '#ffffff',
-              borderRadius: 18,
-              borderWidth: 1,
-              borderColor: '#e2e8f0',
-              paddingHorizontal: 16,
-              paddingVertical: 12,
-              marginBottom: 12,
-              shadowColor: '#000000',
-              shadowOpacity: 0.03,
-              shadowRadius: 4,
-              elevation: 1,
-            }}>
-              <Text style={{
-                fontSize: 12,
-                fontWeight: '700',
-                color: '#8a1a36',
-                marginBottom: 4,
-                fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
-              }}>
-                indicativo de radio (callsign)
-              </Text>
-              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                <Text style={{ fontSize: 16, fontWeight: '700', color: '#0f172a' }}>
-                  {selectedContactForDetail?.callsign || 'RADIO-654'}
-                </Text>
-                <View style={{
-                  width: 36,
-                  height: 36,
-                  borderRadius: 18,
-                  backgroundColor: '#fdf2f4',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                }}>
-                  <ShieldIcon size={16} color="#8a1a36" strokeWidth={2} />
-                </View>
-              </View>
-            </View>
-
-            {/* Botón Eliminar Contacto con estilo C5i */}
-            {selectedContactForDetail && (
-              <TouchableOpacity
-                style={{
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  backgroundColor: '#fef2f2',
-                  borderWidth: 1,
-                  borderColor: '#fecdd3',
-                  paddingVertical: 13,
-                  borderRadius: 16,
-                  gap: 8,
-                  marginTop: 10,
-                }}
-                onPress={() => handleDeleteContact(selectedContactForDetail)}
-                activeOpacity={0.8}
-              >
-                <TrashIcon size={18} color="#dc2626" strokeWidth={2.2} />
-                <Text style={{ color: '#dc2626', fontWeight: '700', fontSize: 14 }}>
-                  Eliminar Contacto
-                </Text>
-              </TouchableOpacity>
-            )}
-          </ScrollView>
-        </SafeAreaView>
-      </Modal>
-
-      {/* 7c. MODAL: EDITAR CONTACTO (CRUD CON BASE DE DATOS C5i) */}
-      <Modal
-        visible={isEditContactModalOpen}
-        animationType="fade"
-        transparent
-        onRequestClose={() => {
-          setIsEditContactModalOpen(false);
-          setEditContactError(null);
-        }}
-      >
-        <View style={{
-          flex: 1,
-          backgroundColor: 'rgba(15, 23, 42, 0.6)',
-          justifyContent: 'center',
-          alignItems: 'center',
-          padding: 16,
-        }}>
-          {/* Backdrop que cierra al tocar fuera */}
-          <TouchableOpacity
-            style={StyleSheet.absoluteFill}
-            activeOpacity={1}
-            onPress={() => {
-              setIsEditContactModalOpen(false);
-              setEditContactError(null);
-            }}
-          />
-
-          <View style={{
-            backgroundColor: '#ffffff',
-            borderRadius: 28,
-            width: '100%',
-            maxWidth: 420,
-            paddingHorizontal: 20,
-            paddingTop: 18,
-            paddingBottom: 24,
-            shadowColor: '#000000',
-            shadowOpacity: 0.15,
-            shadowRadius: 16,
-            shadowOffset: { width: 0, height: 8 },
-            elevation: 8,
-          }}>
-            {/* Header con botón Cancelar y Guardar */}
-            <View style={{
-              flexDirection: 'row',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              paddingBottom: 12,
-              borderBottomWidth: 1,
-              borderBottomColor: '#f1f5f9',
-            }}>
-              <TouchableOpacity
-                style={{
-                  width: 38,
-                  height: 38,
-                  borderRadius: 19,
-                  backgroundColor: '#e2e8f0',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                }}
-                onPress={() => {
-                  setIsEditContactModalOpen(false);
-                  setEditContactError(null);
-                }}
-                activeOpacity={0.8}
-              >
-                <XIcon size={18} color="#475569" strokeWidth={2.2} />
-              </TouchableOpacity>
-
-              <Text style={{
-                fontSize: 18,
-                fontWeight: '700',
-                color: '#0f172a',
-                textAlign: 'center',
-              }}>
-                Editar Contacto
-              </Text>
-
-              <TouchableOpacity
-                style={{
-                  width: 38,
-                  height: 38,
-                  borderRadius: 19,
-                  backgroundColor: '#6b1d2f',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  shadowColor: '#6b1d2f',
-                  shadowOpacity: 0.3,
-                  shadowRadius: 4,
-                  elevation: 2,
-                }}
-                onPress={handleSaveEditContactSubmit}
-                activeOpacity={0.8}
-              >
-                <CheckIcon size={18} color="#ffffff" strokeWidth={2.6} />
-              </TouchableOpacity>
-            </View>
-
-            <ScrollView
-              style={{ maxHeight: 460 }}
-              contentContainerStyle={{ paddingTop: 16, paddingBottom: 6 }}
-              keyboardShouldPersistTaps="handled"
-            >
-              {editContactError && (
-                <View style={{
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  backgroundColor: '#ffe4e6',
-                  paddingHorizontal: 12,
-                  paddingVertical: 8,
-                  borderRadius: 10,
-                  marginBottom: 14,
-                  gap: 8,
-                }}>
-                  <AlertTriangleIcon size={16} color="#be123c" strokeWidth={2} />
-                  <Text style={{ color: '#be123c', fontSize: 13, fontWeight: '600', flex: 1 }}>
-                    {editContactError}
-                  </Text>
-                </View>
-              )}
-
-              {/* Nombre y Apellidos */}
-              <View style={{
-                backgroundColor: '#ffffff',
-                borderRadius: 16,
-                borderWidth: 1,
-                borderColor: '#e2e8f0',
-                paddingHorizontal: 16,
-                paddingVertical: 10,
-                marginBottom: 14,
-              }}>
-                <Text style={{ fontSize: 12, fontWeight: '600', color: '#64748b', marginBottom: 2 }}>
-                  Nombre(s) *
-                </Text>
-                <TextInput
-                  style={{ fontSize: 15, color: '#0f172a', paddingVertical: 4 }}
-                  value={editContactName}
-                  onChangeText={setEditContactName}
-                  placeholder="Ej. Juan Carlos"
-                  placeholderTextColor="#94a3b8"
-                />
-
-                <View style={{ height: 1, backgroundColor: '#f1f5f9', marginVertical: 8 }} />
-
-                <Text style={{ fontSize: 12, fontWeight: '600', color: '#64748b', marginBottom: 2 }}>
-                  Apellidos (Opcional)
-                </Text>
-                <TextInput
-                  style={{ fontSize: 15, color: '#0f172a', paddingVertical: 4 }}
-                  value={editContactLastName}
-                  onChangeText={setEditContactLastName}
-                  placeholder="Ej. Perez Hernandez"
-                  placeholderTextColor="#94a3b8"
-                />
-              </View>
-
-              {/* Teléfono */}
-              <View style={{
-                backgroundColor: '#ffffff',
-                borderRadius: 16,
-                borderWidth: 1,
-                borderColor: '#e2e8f0',
-                paddingHorizontal: 16,
-                paddingVertical: 10,
-                marginBottom: 14,
-              }}>
-                <Text style={{ fontSize: 12, fontWeight: '600', color: '#64748b', marginBottom: 2 }}>
-                  Número de Teléfono
-                </Text>
-                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                  <TextInput
-                    style={{ flex: 1, fontSize: 15, color: '#0f172a', paddingVertical: 4 }}
-                    value={editContactPhone}
-                    onChangeText={(text) => {
-                      setEditContactPhone(text);
-                      const digits = text.replace(/\D/g, '');
-                      if (digits.length >= 4) {
-                        setEditContactCallsign(`RADIO-${digits.slice(-4)}`);
-                      } else if (digits.length > 0) {
-                        setEditContactCallsign(`RADIO-${digits.padStart(4, '0')}`);
-                      }
-                    }}
-                    placeholder="771 123 4567"
-                    placeholderTextColor="#94a3b8"
-                    keyboardType="phone-pad"
-                  />
-                  <PhoneIcon size={18} color="#94a3b8" strokeWidth={1.8} />
-                </View>
-              </View>
-
-              {/* Correo */}
-              <View style={{
-                backgroundColor: '#ffffff',
-                borderRadius: 16,
-                borderWidth: 1,
-                borderColor: '#e2e8f0',
-                paddingHorizontal: 16,
-                paddingVertical: 10,
-                marginBottom: 14,
-              }}>
-                <Text style={{ fontSize: 12, fontWeight: '600', color: '#64748b', marginBottom: 2 }}>
-                  Correo Electrónico (Opcional)
-                </Text>
-                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                  <TextInput
-                    style={{ flex: 1, fontSize: 15, color: '#0f172a', paddingVertical: 4 }}
-                    value={editContactEmail}
-                    onChangeText={setEditContactEmail}
-                    placeholder="ejemplo@c5i.gob.mx"
-                    placeholderTextColor="#94a3b8"
-                    keyboardType="email-address"
-                    autoCapitalize="none"
-                  />
-                  <MailIcon size={18} color="#94a3b8" strokeWidth={1.8} />
-                </View>
-              </View>
-
-              {/* Indicativo de Radio */}
-              <View style={{
-                backgroundColor: '#ffffff',
-                borderRadius: 16,
-                borderWidth: 1,
-                borderColor: '#e2e8f0',
-                paddingHorizontal: 16,
-                paddingVertical: 10,
-                marginBottom: 18,
-              }}>
-                <Text style={{ fontSize: 12, fontWeight: '600', color: '#64748b', marginBottom: 2 }}>
-                  Indicativo de Radio (Callsign)
-                </Text>
-                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                  <TextInput
-                    style={{ flex: 1, fontSize: 15, color: '#0f172a', paddingVertical: 4 }}
-                    value={editContactCallsign}
-                    onChangeText={setEditContactCallsign}
-                    placeholder="RADIO-654"
-                    placeholderTextColor="#94a3b8"
-                    autoCapitalize="characters"
-                  />
-                  <ShieldIcon size={18} color="#94a3b8" strokeWidth={1.8} />
-                </View>
-              </View>
-
-              {/* Botón Eliminar Contacto (CRUD Delete) */}
-              {selectedContactForDetail && (
-                <TouchableOpacity
-                  style={{
-                    flexDirection: 'row',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    backgroundColor: '#fef2f2',
-                    borderWidth: 1,
-                    borderColor: '#fecdd3',
-                    paddingVertical: 12,
-                    borderRadius: 14,
-                    gap: 8,
-                    marginTop: 6,
-                  }}
-                  onPress={() => handleDeleteContact(selectedContactForDetail)}
-                  activeOpacity={0.8}
-                >
-                  <TrashIcon size={18} color="#dc2626" strokeWidth={2} />
-                  <Text style={{ color: '#dc2626', fontWeight: '700', fontSize: 14 }}>
-                    Eliminar Contacto
-                  </Text>
-                </TouchableOpacity>
-              )}
-            </ScrollView>
-          </View>
-        </View>
       </Modal>
 
       {/* 8. MODAL: CREAR GRUPO DE CONVERSACIÓN */}
@@ -7497,9 +5716,11 @@ function NativeAppScreen() {
                     Marca los oficiales que participarán en el grupo cifrado
                   </Text>
 
+                  <TextInput value={contactsDirectory.query} onChangeText={contactsDirectory.setQuery}
+                    placeholder="Buscar miembros por nombre o teléfono..." style={styles.recoveryInput} />
                   <View style={{ gap: 8, marginTop: 8 }}>
-                    {officersList.map((off) => {
-                      const isChecked = selectedGroupMembers.includes(off.id);
+                    {officersList.filter(off => off.registered_user_id).map((off) => {
+                      const isChecked = selectedGroupMembers.includes(off.registered_user_id!);
                       return (
                         <TouchableOpacity
                           key={off.id}
@@ -7507,7 +5728,7 @@ function NativeAppScreen() {
                             styles.chatGroupMemberItem,
                             isChecked && styles.chatGroupMemberItemChecked,
                           ]}
-                          onPress={() => toggleGroupMemberSelection(off.id)}
+                          onPress={() => toggleGroupMemberSelection(off.registered_user_id!)}
                           activeOpacity={0.7}
                         >
                           <View
@@ -7528,6 +5749,9 @@ function NativeAppScreen() {
                       );
                     })}
                   </View>
+                  {contactsDirectory.hasMore && <TouchableOpacity onPress={() => contactsDirectory.loadMore()} disabled={contactsDirectory.loading}>
+                    <Text style={{ padding: 16, color: '#6b1d2f' }}>Cargar más contactos</Text>
+                  </TouchableOpacity>}
                 </View>
               </ScrollView>
 
@@ -7554,196 +5778,7 @@ function NativeAppScreen() {
           </View>
       </Modal>
 
-      {/* 8b. MODAL DE ALERTA Y CONFIRMACIÓN TÁCTICA C5I (REEMPLAZA ALERT.ALERT Y WINDOW.CONFIRM) */}
-      <Modal
-        visible={tacticalAlertModal.isOpen}
-        animationType="fade"
-        transparent
-        onRequestClose={() => {
-          tacticalAlertModal.onCancel?.();
-          setTacticalAlertModal((prev) => ({ ...prev, isOpen: false }));
-        }}
-      >
-        <View style={{
-          flex: 1,
-          backgroundColor: 'rgba(15, 23, 42, 0.75)',
-          alignItems: 'center',
-          justifyContent: 'center',
-          padding: 24,
-        }}>
-          <View style={{
-            width: '100%',
-            maxWidth: 380,
-            backgroundColor: '#ffffff',
-            borderRadius: 24,
-            padding: 24,
-            alignItems: 'center',
-            shadowColor: '#000000',
-            shadowOffset: { width: 0, height: 10 },
-            shadowOpacity: 0.25,
-            shadowRadius: 20,
-            elevation: 10,
-            borderWidth: 1,
-            borderColor: tacticalAlertModal.type === 'confirm_delete' ? '#fecdd3' : '#e2e8f0',
-          }}>
-            {/* Tactical Badge Icon */}
-            <View style={{
-              width: 64,
-              height: 64,
-              borderRadius: 32,
-              backgroundColor: tacticalAlertModal.type === 'confirm_delete' ? '#fee2e2' : '#fdf2f4',
-              borderWidth: 2,
-              borderColor: tacticalAlertModal.type === 'confirm_delete' ? '#fca5a5' : '#fbcfe8',
-              alignItems: 'center',
-              justifyContent: 'center',
-              marginBottom: 16,
-            }}>
-              {tacticalAlertModal.type === 'confirm_delete' ? (
-                <TrashIcon size={30} color="#dc2626" strokeWidth={2.2} />
-              ) : tacticalAlertModal.type === 'warning' ? (
-                <AlertTriangleIcon size={30} color="#d97706" strokeWidth={2.2} />
-              ) : tacticalAlertModal.type === 'success' ? (
-                <CheckCircleIcon size={30} color="#059669" strokeWidth={2.2} />
-              ) : (
-                <ShieldIcon size={30} color="#6b1d2f" strokeWidth={2.2} />
-              )}
-            </View>
-
-            {/* Title */}
-            <Text style={{
-              fontSize: 18,
-              fontWeight: '800',
-              color: '#0f172a',
-              textAlign: 'center',
-              marginBottom: 8,
-              letterSpacing: -0.3,
-            }}>
-              {tacticalAlertModal.title}
-            </Text>
-
-            {/* Message */}
-            <Text style={{
-              fontSize: 14,
-              lineHeight: 20,
-              color: '#475569',
-              textAlign: 'center',
-              marginBottom: 22,
-            }}>
-              {tacticalAlertModal.message}
-            </Text>
-
-            {/* Buttons */}
-            <View style={{ width: '100%', gap: 10 }}>
-              {tacticalAlertModal.onConfirm ? (
-                <>
-                  <TouchableOpacity
-                    style={{
-                      width: '100%',
-                      backgroundColor: tacticalAlertModal.type === 'confirm_delete' ? '#dc2626' : '#6b1d2f',
-                      paddingVertical: 13,
-                      borderRadius: 14,
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      shadowColor: tacticalAlertModal.type === 'confirm_delete' ? '#dc2626' : '#6b1d2f',
-                      shadowOpacity: 0.3,
-                      shadowRadius: 6,
-                      elevation: 3,
-                    }}
-                    onPress={() => {
-                      tacticalAlertModal.onConfirm?.();
-                    }}
-                    activeOpacity={0.85}
-                  >
-                    <Text style={{ color: '#ffffff', fontWeight: '800', fontSize: 14 }}>
-                      {tacticalAlertModal.confirmText || 'Confirmar'}
-                    </Text>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    style={{
-                      width: '100%',
-                      backgroundColor: '#f8fafc',
-                      borderWidth: 1,
-                      borderColor: '#e2e8f0',
-                      paddingVertical: 12,
-                      borderRadius: 14,
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                    }}
-                    onPress={() => {
-                      tacticalAlertModal.onCancel?.();
-                      setTacticalAlertModal((prev) => ({ ...prev, isOpen: false }));
-                    }}
-                    activeOpacity={0.7}
-                  >
-                    <Text style={{ color: '#64748b', fontWeight: '700', fontSize: 14 }}>
-                      {tacticalAlertModal.cancelText || 'Cancelar'}
-                    </Text>
-                  </TouchableOpacity>
-                </>
-              ) : (
-                <TouchableOpacity
-                  style={{
-                    width: '100%',
-                    backgroundColor: '#6b1d2f',
-                    paddingVertical: 13,
-                    borderRadius: 14,
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                  }}
-                  onPress={() => {
-                    setTacticalAlertModal((prev) => ({ ...prev, isOpen: false }));
-                  }}
-                  activeOpacity={0.85}
-                >
-                  <Text style={{ color: '#ffffff', fontWeight: '800', fontSize: 14 }}>
-                    {tacticalAlertModal.confirmText || 'Entendido'}
-                  </Text>
-                </TouchableOpacity>
-              )}
-            </View>
-          </View>
-        </View>
-      </Modal>
-
-      {/* 8c. TOAST TÁCTICO FLOTANTE C5I */}
-      {tacticalToast.visible && (
-        <View style={{
-          position: 'absolute',
-          top: Platform.OS === 'web' ? 24 : 50,
-          left: 20,
-          right: 20,
-          zIndex: 999999,
-          alignItems: 'center',
-          pointerEvents: 'none',
-        }}>
-          <View style={{
-            flexDirection: 'row',
-            alignItems: 'center',
-            backgroundColor: tacticalToast.type === 'warning' ? '#991b1b' : '#0f172a',
-            paddingHorizontal: 18,
-            paddingVertical: 11,
-            borderRadius: 30,
-            gap: 10,
-            shadowColor: '#000000',
-            shadowOffset: { width: 0, height: 4 },
-            shadowOpacity: 0.35,
-            shadowRadius: 10,
-            elevation: 8,
-            borderWidth: 1,
-            borderColor: tacticalToast.type === 'warning' ? '#f87171' : '#334155',
-          }}>
-            {tacticalToast.type === 'warning' ? (
-              <TrashIcon size={16} color="#fca5a5" strokeWidth={2.4} />
-            ) : (
-              <CheckCircleIcon size={16} color="#34d399" strokeWidth={2.4} />
-            )}
-            <Text style={{ color: '#ffffff', fontSize: 13, fontWeight: '700' }}>
-              {tacticalToast.message}
-            </Text>
-          </View>
-        </View>
-      )}
+      {feedback}
 
       {/* 9. MODAL: CÁMARA TÁCTICA EN VIVO C5I (CAPTURA REAL SIN SIMULACIÓN) */}
       <Modal

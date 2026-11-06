@@ -1,0 +1,57 @@
+// Requiere fixture PHP/MySQL local de pruebas; nunca usa el servidor de producción.
+import {createRequire} from 'node:module';
+import assert from 'node:assert/strict';
+const {chromium}=createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODULE || 'playwright');
+const backend=process.env.CONTACTS_TEST_BACKEND;
+if(!backend || !/^http:\/\/(localhost|127\.0\.0\.1):\d+$/.test(backend)) throw new Error('Usa CONTACTS_TEST_BACKEND local exclusivo de pruebas');
+const browser=await chromium.launch({executablePath:process.env.CHROMIUM_PATH,headless:true,args:['--no-sandbox']});
+try {
+ const page=await browser.newPage({viewport:{width:430,height:900}});
+ const errors=[];page.on('pageerror',error=>errors.push(error.message));
+ await page.addInitScript(url=>localStorage.setItem('c5i_native_server_url',url),backend);
+ await page.goto(process.env.CONTACTS_UI_URL || 'http://localhost:3000');
+ const login=async(phone,password)=>{
+  await page.getByPlaceholder('Ingresa tu teléfono o correo',{exact:true}).fill(phone);
+  await page.getByPlaceholder('Ingresa tu contraseña',{exact:true}).fill(password);
+  await page.getByText('Iniciar Sesión',{exact:true}).click();
+  await page.getByText('Contactos',{exact:true}).waitFor();
+ };
+ await login('7710000001','password-a');
+ await page.getByText('Contactos',{exact:true}).click();
+ await page.getByText('50 contactos cargados',{exact:true}).waitFor();
+ assert.equal(await page.getByText(/Privado B/).count(),0);
+ await page.mouse.move(220,650); await page.mouse.wheel(0,8000);
+ await page.getByLabel('Cargar más contactos',{exact:true}).click();
+ await page.getByText('100 contactos cargados',{exact:true}).waitFor();
+ console.log('OK: sesión A descarga páginas de 50 y solo sus registros');
+ const search=page.getByPlaceholder('Buscar por nombre, indicativo, teléfono o correo...');
+ await search.fill('Privado A10');
+ await page.getByText('10 contactos cargados',{exact:true}).waitFor();
+ await search.fill(''); await page.getByText('50 contactos cargados',{exact:true}).waitFor();
+ await page.getByText('Perfil',{exact:true}).click();
+ await page.getByText('CERRAR SESIÓN',{exact:true}).click();
+ await login('7710000002','password-b');
+ await page.getByText('Contactos',{exact:true}).click();
+ await page.getByText('3 contactos cargados',{exact:true}).waitFor();
+ assert.equal(await page.getByText(/Privado A/).count(),0);
+ assert.equal(await page.getByText('Privado B0',{exact:true}).count(),1);
+ console.log('OK: cambio de cuenta limpia la agenda A y muestra solo agenda B');
+ const response=await fetch(backend+'/login.php',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({identificador:'7710000002',password:'password-b'})});
+ const session=await response.json();assert.ok(session.token);
+ const forged=await fetch(backend+'/contacts.php',{method:'POST',headers:{Authorization:`Bearer ${session.token}`,'Content-Type':'application/json'},body:JSON.stringify({action:'delete',id:'ui-a-0',owner_user_id:'owner-a'})});
+ assert.equal(forged.status,404);
+ assert.equal((await fetch(backend+'/contacts.php')).status,401);
+ console.log('OK: PHP HTTP real rechaza consulta anónima y borrado de otro dueño');
+ const anonymousReset=await fetch(backend+'/reset-password.php',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({identifier:'7710000001',new_password:'forged-pass'})});
+ assert.equal(anonymousReset.status,401);
+ const change=await fetch(backend+'/reset-password.php',{method:'POST',headers:{Authorization:`Bearer ${session.token}`,'Content-Type':'application/json'},body:JSON.stringify({identifier:'7710000001',new_password:'new-password-b'})});
+ assert.equal(change.status,200);
+ const loginA=await fetch(backend+'/login.php',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({identificador:'7710000001',password:'password-a'})});
+ assert.ok((await loginA.json()).token);
+ assert.equal((await fetch(backend+'/contacts.php',{headers:{Authorization:`Bearer ${session.token}`}})).status,401);
+ await page.getByLabel('Actualizar contactos',{exact:true}).click();
+ await page.getByText('Tu sesión venció. Inicia sesión de nuevo para consultar tu agenda privada.',{exact:true}).waitFor();
+ assert.equal(await page.getByText(/Privado B/).count(),0);
+ console.log('OK: cambio de contraseña no afecta otra cuenta, exige sesión, revoca tokens y limpia la lista tras 401');
+ assert.deepEqual(errors,[]);
+} finally { await browser.close(); }

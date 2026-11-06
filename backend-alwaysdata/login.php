@@ -3,14 +3,16 @@
 // login.php - Autenticación Segura C5i Hidalgo (Alwaysdata)
 // ========================================================
 
+require_once __DIR__ . '/cors.php';
 require_once __DIR__ . '/conexion.php';
+require_once __DIR__ . '/auth-session.php';
 
 $data = getJsonInput();
 
 $identificador = trim($data['identificador'] ?? $data['phone_number'] ?? $data['correo'] ?? '');
 $password = trim($data['password'] ?? '');
 
-if (empty($identificador)) {
+if (empty($identificador) || $password === '') {
     http_response_code(400);
     echo json_encode([
         'success' => false,
@@ -66,21 +68,8 @@ if (!empty($user['locked_until']) && strtotime($user['locked_until']) > time()) 
     exit();
 }
 
-// Validación de contraseña
-$isValid = false;
-$storedHash = $user['password_hash'] ?? '';
-$storedSalt = $user['salt'] ?? '';
-
-if ($storedHash === 'hash_demo') {
-    // Compatibilidad para usuarios semilla
-    $isValid = true;
-} elseif (password_verify($password, $storedHash)) {
-    $isValid = true;
-} elseif (!empty($storedSalt) && hash('sha512', $password . $storedSalt) === $storedHash) {
-    $isValid = true;
-} elseif ($storedHash === $password) {
-    $isValid = true;
-}
+// Validación compartida de contraseña (sin acceso automático para cuentas demo).
+$isValid = verifyAccountPassword($password, $user);
 
 if (!$isValid) {
     // Incrementar intentos fallidos
@@ -100,6 +89,17 @@ if (!$isValid) {
     ]);
     exit();
 }
+
+// La sesión se emite únicamente después de validar la contraseña.
+try {
+    $session = issueAuthSession($pdo, (string)$user['id']);
+} catch (Throwable $e) {
+    error_log('Login session: ' . $e->getMessage());
+    http_response_code(503);
+    echo json_encode(['success' => false, 'message' => 'No se pudo crear la sesión. Aplica la migración 002_private_contacts.sql.']);
+    exit();
+}
+header('Cache-Control: no-store');
 
 // Acceso exitoso: reiniciar contador de fallos y actualizar estado online
 try {
@@ -121,6 +121,8 @@ try {
 
 echo json_encode([
     'success' => true,
+    'token' => $session['token'],
+    'expires_at' => $session['expires_at'],
     'code' => 'SUCCESS',
     'message' => 'Sesión iniciada con éxito en la base de datos C5i.',
     'user' => [
