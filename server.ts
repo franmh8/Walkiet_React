@@ -7,6 +7,7 @@ import mysql from 'mysql2/promise';
 import bcrypt from 'bcryptjs';
 import { randomUUID } from 'node:crypto';
 import { contactsDirectory } from './src/services/contactsDirectory';
+import { channelsDirectory, ChannelsRequestError } from './src/services/channelsDirectory';
 import { authenticateContactOwner, issueAuthSession, revokeAuthSession, verifyAccountPassword } from './src/services/authSessions';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -59,6 +60,17 @@ async function ensureMysqlTables() {
         created_by VARCHAR(64) NULL,
         category VARCHAR(50) DEFAULT 'operativo',
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    `);
+
+    await mysqlPool.query(`
+      CREATE TABLE IF NOT EXISTS channel_members (
+        id VARCHAR(64) PRIMARY KEY,
+        channel_id VARCHAR(64) NOT NULL,
+        user_id VARCHAR(64) NOT NULL,
+        joined_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE KEY uk_channel_user (channel_id, user_id),
+        KEY idx_cm_user (user_id)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
     `);
 
@@ -487,124 +499,23 @@ app.put('/api/users/:id/status', (req: Request, res: Response) => {
   res.json({ success: true, status: user.status });
 });
 
-// 6. Channels: List Channels (with member counts)
-app.get(['/api/channels', '/channels.php', '/api/channels.php'], (_req: Request, res: Response) => {
-  const db = loadDatabase();
-  const channelsWithCounts = db.channels.map((chan, idx) => {
-    const memberCount = db.channel_members.filter((cm) => cm.channel_id === chan.id).length;
-    const creator = db.users.find((u) => u.id === chan.created_by);
-    return {
-      ...chan,
-      member_count: Math.max(memberCount, 1),
-      admin_name: creator ? creator.name : 'Administrador C5i',
-      pin: chan.access_code || '1090',
-      frequency: `15${4 + (idx % 5)}.${((idx * 175) % 800) || '800'} MHz`,
-      is_encrypted: true,
-    };
-  });
-
-  res.json({ success: true, channels: channelsWithCounts });
-});
-
-// 7. Channels: Create Channel
-app.post(['/api/channels', '/channels.php'], (req: Request, res: Response) => {
-  const { name, is_private, access_code, pin, created_by, category } = req.body;
-
-  if (!name || !name.trim()) {
-    return res.status(400).json({ success: false, message: 'El nombre del canal es requerido' });
+// Grupos persistentes por membresía; comparte BD y sesiones con PHP.
+const handleChannelRequest = async (req: Request, res: Response) => {
+  res.set('Cache-Control', 'no-store');
+  if (!isMysqlConnected || !mysqlPool) return res.status(503).json({ success: false, message: 'La base de datos MySQL no está disponible para grupos.' });
+  try {
+    const owner = await authenticateContactOwner(mysqlPool, req.get('authorization'));
+    const data = { ...req.body, ...(req.params.id ? { id: req.params.id } : {}), ...(req.params.action ? { action: req.params.action } : {}) };
+    return res.json(await channelsDirectory(mysqlPool, req.method, data, { ...req.query, ...(req.params.id ? { id: req.params.id } : {}) }, owner));
+  } catch (error: any) {
+    if (error instanceof ChannelsRequestError) return res.status(error.status).json({ success: false, message: error.message });
+    console.error('[Channels]', error.code || error.message);
+    return res.status(500).json({ success: false, message: 'No se pudo acceder a los grupos. Revisa la conexión y las tablas channels y channel_members.' });
   }
-
-  const resolvedPin = (pin || access_code) ? String(pin || access_code).trim() : '1090';
-  const db = loadDatabase();
-  const newChan = {
-    id: `chan-${Date.now()}`,
-    name: name.trim().toUpperCase(),
-    is_private: is_private ? 1 : 0,
-    access_code: resolvedPin,
-    pin: resolvedPin,
-    created_by: created_by || 'usr-c5i-01',
-    category: category || 'tactico',
-    created_at: new Date().toISOString(),
-  };
-
-  db.channels.push(newChan);
-
-  // Automatically add creator to channel_members
-  db.channel_members.push({
-    id: `cm-${Date.now()}`,
-    channel_id: newChan.id,
-    user_id: newChan.created_by,
-    joined_at: new Date().toISOString(),
-  });
-
-  saveDatabase(db);
-
-  res.json({
-    success: true,
-    message: 'Canal creado exitosamente en la BD',
-    channel: {
-      ...newChan,
-      member_count: 1,
-      admin_name: 'Tú',
-      role: 'admin',
-    },
-  });
-});
-
-// 8. Channels: Join Channel
-app.post('/api/channels/:id/join', (req: Request, res: Response) => {
-  const id = req.params.id as string;
-  const { user_id, pin } = req.body;
-
-  const db = loadDatabase();
-  const chan = db.channels.find((c) => c.id === id);
-
-  if (!chan) {
-    return res.status(404).json({ success: false, message: 'Canal no encontrado en la BD' });
-  }
-
-  if (chan.is_private && chan.access_code) {
-    if (!pin || String(pin).trim() !== chan.access_code.trim()) {
-      return res.status(403).json({ success: false, message: 'Código PIN de canal incorrecto' });
-    }
-  }
-
-  const userId = user_id || 'usr-c5i-01';
-  const alreadyJoined = db.channel_members.some((cm) => cm.channel_id === id && cm.user_id === userId);
-
-  if (!alreadyJoined) {
-    db.channel_members.push({
-      id: `cm-${Date.now()}`,
-      channel_id: id,
-      user_id: userId,
-      joined_at: new Date().toISOString(),
-    });
-    saveDatabase(db);
-  }
-
-  const memberCount = db.channel_members.filter((cm) => cm.channel_id === id).length;
-
-  res.json({
-    success: true,
-    channel: {
-      ...chan,
-      member_count: Math.max(memberCount, 1),
-    },
-  });
-});
-
-// 9. Channels: Delete Channel
-app.delete(['/api/channels/:id', '/api/channels', '/channels.php'], (req: Request, res: Response) => {
-  const id = (req.params.id || req.body?.id || req.query?.id) as string;
-  const db = loadDatabase();
-
-  db.channels = db.channels.filter((c) => c.id !== id);
-  db.channel_members = db.channel_members.filter((cm) => cm.channel_id !== id);
-  db.voice_messages = db.voice_messages.filter((vm) => vm.channel_id !== id);
-
-  saveDatabase(db);
-  res.json({ success: true, message: 'Canal eliminado' });
-});
+};
+app.get(['/api/channels', '/channels.php', '/api/channels.php'], handleChannelRequest);
+app.post(['/api/channels', '/channels.php', '/api/channels.php', '/api/channels/:id/:action'], handleChannelRequest);
+app.delete(['/api/channels/:id', '/api/channels', '/channels.php', '/api/channels.php'], handleChannelRequest);
 
 // Contacts: misma tabla MySQL y contrato que contacts.php. No hay éxito local simulado.
 const handleContactRequest = async (req: Request, res: Response) => {
