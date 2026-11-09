@@ -537,68 +537,22 @@ app.post(['/api/contacts', '/contacts.php'], handleContactRequest);
 app.put(['/api/contacts/:id', '/api/contacts', '/contacts.php'], handleContactRequest);
 app.delete(['/api/contacts/:id', '/api/contacts', '/contacts.php'], handleContactRequest);
 
-// 12. Voice Messages: List for Channel
-app.get(['/api/voice-messages', '/voice-messages.php', '/api/voice-messages.php'], (req: Request, res: Response) => {
-  const channel_id = req.query.channel_id as string | undefined;
-  const db = loadDatabase();
-
-  let filtered = db.voice_messages;
-  if (channel_id) {
-    filtered = filtered.filter((vm) => vm.channel_id === channel_id || vm.channel_id === null);
+// El servidor PHP es la autoridad del control PTT y comparte auth_sessions/MySQL.
+// El proxy opcional facilita usar este servidor de desarrollo sin duplicar turnos ni claves.
+app.post(['/api/ptt', '/ptt.php'], async (req: Request, res: Response) => {
+  const origin = process.env.PTT_PHP_ORIGIN?.replace(/\/+$/, '');
+  if (!origin || !/^https:\/\/[a-z0-9.-]+(?::\d+)?$/i.test(origin) && !/^http:\/\/(127\.0\.0\.1|localhost):\d+$/.test(origin)) {
+    return res.status(503).json({ success: false, message: 'Configura PTT_PHP_ORIGIN con el backend PHP de radio.' });
   }
-
-  // Join with users table
-  const enriched = filtered
-    .map((vm) => {
-      const sender = db.users.find((u) => u.id === vm.sender_id);
-      return {
-        ...vm,
-        sender_name: sender ? sender.name : 'Oficial',
-        sender_callsign: sender?.callsign || 'OPERATIVO',
-      };
-    })
-    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-
-  res.json({ success: true, voice_messages: enriched });
+  try {
+    const response = await fetch(origin + '/ptt.php', { method: 'POST', redirect: 'error', signal: AbortSignal.timeout(10000),
+      headers: { 'Content-Type': 'application/json', Authorization: req.get('authorization') || '' }, body: JSON.stringify(req.body || {}) });
+    const data = await response.json();
+    return res.status(response.status).json(data);
+  } catch { return res.status(502).json({ success: false, message: 'No se pudo contactar al backend PHP de radio.' }); }
 });
-
-// 13. Voice Messages: Record/Transmit Voice Message
-app.post(['/api/voice-messages', '/api/security/transmit', '/voice-messages.php', '/api/voice-messages.php'], (req: Request, res: Response) => {
-  const { sender_id, channel_id, receiver_id, audio_url, duration_seconds, is_emergency, text, text_content } = req.body;
-
-  const db = loadDatabase();
-  const senderId = sender_id || 'usr-c5i-01';
-
-  const newBurst = {
-    id: `vm-${Date.now()}`,
-    sender_id: senderId,
-    channel_id: channel_id || null,
-    receiver_id: receiver_id || null,
-    audio_url: audio_url || `ptt-audio-${Date.now()}`,
-    duration_seconds: duration_seconds || 2,
-    created_at: new Date().toISOString(),
-    is_emergency: Boolean(is_emergency),
-    text_content: text || text_content || '',
-  };
-
-  db.voice_messages.unshift(newBurst);
-  // Keep last 100
-  if (db.voice_messages.length > 100) {
-    db.voice_messages = db.voice_messages.slice(0, 100);
-  }
-  saveDatabase(db);
-
-  const sender = db.users.find((u) => u.id === senderId);
-
-  res.json({
-    success: true,
-    message: 'Ráfaga de voz registrada en la BD',
-    voice_message: {
-      ...newBurst,
-      sender_name: sender ? sender.name : 'Oficial',
-      sender_callsign: sender?.callsign || 'OPERATIVO',
-    },
-  });
+app.all(['/api/voice-messages', '/api/security/transmit', '/voice-messages.php', '/api/voice-messages.php'], (_req: Request, res: Response) => {
+  res.status(410).json({ success: false, code: 'PTT_LIVE_REQUIRED', message: 'Actualiza la app: la radio en vivo utiliza ptt.php. No se transmitió audio desde esta ruta.' });
 });
 
 // 14. Emergency SOS Alert

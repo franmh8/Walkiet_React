@@ -5,7 +5,7 @@ if (strpos($dsn, 'dbname=contacts_test_') === false) throw new RuntimeException(
 $destination = $argv[1] ?? '';
 if (!$destination || !is_dir($destination)) throw new RuntimeException('Indica un directorio temporal existente como primer argumento.');
 $source = __DIR__ . '/../../backend-alwaysdata';
-foreach (['channels.php','channels-handler.php','contacts.php','contacts-handler.php','auth-session.php','login.php','logout.php','reset-password.php','cors.php'] as $name) copy($source . '/' . $name, $destination . '/' . $name);
+foreach (['ptt.php','ptt-worker.php','ptt-handler.php','ptt-livekit.php','voice-messages.php','channels.php','channels-handler.php','contacts.php','contacts-handler.php','auth-session.php','login.php','logout.php','reset-password.php','cors.php'] as $name) copy($source . '/' . $name, $destination . '/' . $name);
 file_put_contents($destination . '/conexion.php', <<<'CONNECTION'
 <?php
 $dsn = getenv('CONTACTS_TEST_DSN') ?: '';
@@ -17,10 +17,11 @@ CONNECTION
 file_put_contents($destination . '/router.php', <<<'ROUTER'
 <?php
 $path = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
+if ($path === '/api/ptt') { require __DIR__ . '/ptt.php'; return true; }
 if ($path === '/api/channels') { require __DIR__ . '/channels.php'; return true; }
 if ($path === '/api/contacts') { require __DIR__ . '/contacts.php'; return true; }
 if ($path === '/api/auth/logout') { require __DIR__ . '/logout.php'; return true; }
-if (in_array($path, ['/channels.php', '/login.php', '/logout.php', '/contacts.php', '/reset-password.php'], true)) return false;
+if (in_array($path, ['/ptt.php', '/voice-messages.php', '/channels.php', '/login.php', '/logout.php', '/contacts.php', '/reset-password.php'], true)) return false;
 require __DIR__ . '/cors.php';
 echo json_encode(['success' => true, 'channels' => [], 'contacts' => []]);
 ROUTER

@@ -41,10 +41,8 @@ import {
   UsersIcon,
   MessageSquareIcon,
   BookOpenIcon,
-  WifiIcon,
   XIcon,
   PlusIcon,
-  RadioIcon,
   SearchIcon,
   CameraIcon,
   EditIcon,
@@ -61,6 +59,9 @@ import { GroupsScreen } from './groups/GroupsScreen';
 import { useChannelsDirectory } from './groups/useChannelsDirectory';
 import { ChannelMembersModal } from './groups/ChannelMembersModal';
 import { soundEngine } from '../services/soundEngine';
+import { PttScreen } from './ptt/PttScreen';
+import { useLiveRadio } from './ptt/useLiveRadio';
+import { useRadioNotifications } from './ptt/useRadioNotifications';
 
 // Tipos para React Native
 interface User {
@@ -299,10 +300,6 @@ function NativeAppScreen() {
     revision: number;
   } | null>(null);
   const channelChoiceRevisionRef = useRef(0);
-  const [isTransmitting, setIsTransmitting] = useState(false);
-  const [txDuration, setTxDuration] = useState(0);
-  const [signalStrength] = useState(98);
-  const [batteryLevel] = useState(91);
   const [serverUrl, setServerUrl] = useState('https://walkiet.alwaysdata.net');
   const [dbStatus, setDbStatus] = useState<'ONLINE' | 'STANDBY' | 'CONNECTING'>('ONLINE');
   const [isSosActive, setIsSosActive] = useState(false);
@@ -311,11 +308,7 @@ function NativeAppScreen() {
   const [isMembersModalOpen, setIsMembersModalOpen] = useState(false);
   
   // History & Messages
-  const [transmissions, setTransmissions] = useState<Transmission[]>([
-    { id: '1', sender: 'Central C5i Hidalgo', badge: 'CTR-01', channel: 'OPERACIONES ESPECIALES TÁCTICAS', timestamp: '10:14', duration: 3, type: 'voice' },
-    { id: '2', sender: 'Patrulla P-204', badge: 'PAT-204', channel: 'OPERACIONES ESPECIALES TÁCTICAS', timestamp: '10:18', duration: 4, type: 'voice' },
-    { id: '3', sender: 'Comandante Morales', badge: 'HALCÓN-01', channel: 'OPERACIONES ESPECIALES TÁCTICAS', timestamp: '10:20', duration: 2, type: 'text', text: '10-4 Unidad en posición de patrullaje preventivo C5i' },
-  ]);
+  const [transmissions, setTransmissions] = useState<Transmission[]>([]);
   const [messageInput, setMessageInput] = useState('');
 
   // Chat & Messaging State (WhatsApp-style C5i)
@@ -385,13 +378,6 @@ function NativeAppScreen() {
   const { channels, synced: channelsSyncedFromServer, refresh: refreshChannels } = channelsDirectory;
   const officersList = contactsDirectory.contacts;
   const contactsScreenRef = useRef<ContactsScreenHandle>(null);
-
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  // Referencias de PTT: impiden liberaciones duplicadas y cierres con estado antiguo.
-  const pttPressedRef = useRef(false);
-  const pttStartedAtRef = useRef(0);
-  const pttChannelAtPressRef = useRef<Channel | null>(null);
-  const pttUserAtPressRef = useRef<User | null>(null);
 
   // Circuit breaker para endpoints PHP en Alwaysdata (evita spam de 404 en consola si aún no se han subido los archivos)
   const isChatPhpAvailableRef = useRef<boolean | null>(null);
@@ -608,142 +594,19 @@ function NativeAppScreen() {
     }
   };
 
-  // PTT: se puede probar el botón sin grupo, pero solo se transmite metadata
-  // al canal que el usuario haya seleccionado manualmente antes de pulsarlo.
-  const handlePttPressIn = useCallback(() => {
-    if (!currentUser || pttPressedRef.current || currentTab !== 'PTT') return;
-    pttPressedRef.current = true;
-    pttStartedAtRef.current = Date.now();
-    pttChannelAtPressRef.current = selectedChannel;
-    pttUserAtPressRef.current = currentUser;
-    setIsTransmitting(true);
-    setTxDuration(0);
-
-    try { soundEngine.playPttStart(); } catch (error) {
-      console.warn('No se pudo reproducir el aviso de PTT:', error);
-    }
-    if (Platform.OS !== 'web') {
-      try { Vibration.vibrate(60); } catch {}
-    }
-    if (timerRef.current) clearInterval(timerRef.current);
-    timerRef.current = setInterval(() => {
-      if (pttPressedRef.current) {
-        setTxDuration(Math.floor((Date.now() - pttStartedAtRef.current) / 1000));
-      }
-    }, 250);
-  }, [currentUser, currentTab, selectedChannel?.id]);
-
-  const handlePttPressOut = useCallback(() => {
-    // El evento onPressOut puede dispararse tras una liberación por teclado.
-    // La referencia evita procesarlo por segunda vez.
-    if (!pttPressedRef.current) return;
-    pttPressedRef.current = false;
-    if (timerRef.current) {
-      clearInterval(timerRef.current);
-      timerRef.current = null;
-    }
-    setIsTransmitting(false);
-    setTxDuration(0);
-
-    if (Platform.OS !== 'web') {
-      try { Vibration.vibrate([0, 30, 40, 30]); } catch {}
-    }
-
-    const channelAtRelease = pttChannelAtPressRef.current;
-    const userAtRelease = pttUserAtPressRef.current;
-    const elapsedMs = Math.max(0, Date.now() - pttStartedAtRef.current);
-    const durationSeconds = Math.max(1, Math.ceil(elapsedMs / 1000));
-    pttChannelAtPressRef.current = null;
-    pttUserAtPressRef.current = null;
-    pttStartedAtRef.current = 0;
-
-    // En modo prueba, no crear registros ni enviar datos al servidor.
-    // También se cancela el envío si el usuario abandonó/cambió el canal.
-    const channelStillSelected = !!channelAtRelease && selectedChannel?.id === channelAtRelease.id;
-    if (channelStillSelected && userAtRelease && elapsedMs >= 1000) {
-      const channel = channelAtRelease!;
-      const user = userAtRelease;
-      const newTx: Transmission = {
-        id: Date.now().toString(),
-        sender: user.name,
-        badge: user.badge,
-        channel: channel.name,
-        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        duration: durationSeconds,
-        type: 'voice',
-      };
-      setTransmissions((prev) => [newTx, ...prev]);
-
-      // Se conserva el envío de metadata del proyecto; no se captura audio real aquí.
-      if (serverUrl) {
-        (async () => {
-          try {
-            const cleanUrl = serverUrl.replace(/\/+$/, '');
-            const payload = JSON.stringify({
-              sender_id: user.id,
-              channel_id: channel.id,
-              audio_url: `burst-${Date.now()}`,
-              duration_seconds: durationSeconds,
-              text: `Ráfaga PTT de ${user.badge} (${durationSeconds}s)`,
-            });
-            const res = await fetchWithTimeout(`${cleanUrl}/voice-messages.php`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: payload,
-            }, 3000).catch(() => null);
-            if (!res || !res.ok) {
-              await fetchWithTimeout(`${cleanUrl}/api/voice-messages`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: payload,
-              }, 3000).catch(() => null);
-            }
-          } catch (error) {
-            console.warn('No se pudo guardar el registro PTT:', error);
-          }
-        })();
-      }
-    }
-
-    try { soundEngine.playRogerBeep(); } catch (error) {
-      console.warn('No se pudo reproducir el fin de PTT:', error);
-    }
-  }, [selectedChannel?.id, serverUrl]);
-
-  // Liberar recursos cuando la pantalla se desmonta.
-  useEffect(() => () => {
-    pttPressedRef.current = false;
-    if (timerRef.current) {
-      clearInterval(timerRef.current);
-      timerRef.current = null;
-    }
-  }, []);
-
-  // Atajo de teclado en web: barra espaciadora para PTT solo en pestaña PTT.
-  useEffect(() => {
-    if (Platform.OS !== 'web' || !currentUser || currentTab !== 'PTT') return;
-    const isTyping = (target: EventTarget | null) =>
-      target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement ||
-      (target instanceof HTMLElement && target.isContentEditable);
-    const onDown = (e: KeyboardEvent) => {
-      if (e.code !== 'Space' || isTyping(e.target)) return;
-      e.preventDefault();
-      if (!e.repeat) handlePttPressIn();
-    };
-    const onUp = (e: KeyboardEvent) => {
-      if (e.code !== 'Space' || isTyping(e.target)) return;
-      e.preventDefault();
-      handlePttPressOut();
-    };
-    window.addEventListener('keydown', onDown);
-    window.addEventListener('keyup', onUp);
-    return () => {
-      window.removeEventListener('keydown', onDown);
-      window.removeEventListener('keyup', onUp);
-      // Al abandonar PTT o perder la sesión no debe quedar pulsado.
-      if (pttPressedRef.current) handlePttPressOut();
-    };
-  }, [currentUser, currentTab, handlePttPressIn, handlePttPressOut]);
+  const radio = useLiveRadio(serverUrl, currentUser?.id || '', currentUser?.authToken || '', selectedChannel);
+  const notificationSession = useRef('');
+  notificationSession.current = JSON.stringify([serverUrl, currentUser?.id, currentUser?.authToken]);
+  const notifications = useRadioNotifications(serverUrl, currentUser?.authToken || '', currentUser?.id || '', async channelId => {
+    const scope = notificationSession.current;
+    try {
+      const list = await channelsDirectory.api.list();
+      if (notificationSession.current !== scope) return;
+      const matching = list.find(channel => channel.id === channelId);
+      if (!matching) { showTacticalToast('Ya no perteneces al grupo de este aviso.', 'info'); return; }
+      chooseAndRememberChannel(matching); setCurrentTab('PTT');
+    } catch { showTacticalToast('No se pudo consultar el grupo. Abre Grupos y vuelve a intentar.', 'warning'); }
+  });
 
   const handleLogin = async () => {
     setIdentifierError(null);
@@ -1375,15 +1238,7 @@ function NativeAppScreen() {
     setSelectedGroupMembers([]);
     setIsNewChatModalOpen(false);
     setIsCreateGroupChatModalOpen(false);
-    pttPressedRef.current = false;
-    pttChannelAtPressRef.current = null;
-    pttUserAtPressRef.current = null;
-    if (timerRef.current) {
-      clearInterval(timerRef.current);
-      timerRef.current = null;
-    }
-    setIsTransmitting(false);
-    setTxDuration(0);
+    void radio.disconnect();
     // Refuerzo al cerrar sesión: persistir la selección actual ANTES de limpiar
     // el estado del usuario. Si no había grupo, conservamos la preferencia previa.
     if (currentUser && selectedChannel) {
@@ -1456,45 +1311,6 @@ function NativeAppScreen() {
         },
       ]
     );
-  };
-
-  const handleSendMessage = () => {
-    if (!messageInput.trim()) return;
-    if (!selectedChannel) {
-      showTacticalToast('Selecciona un grupo antes de enviar mensajes.', 'warning');
-      setCurrentTab('Grupos');
-      return;
-    }
-    const textToSend = messageInput.trim();
-    const newMsg: Transmission = {
-      id: Date.now().toString(),
-      sender: currentUser?.name || 'Oficial',
-      badge: currentUser?.badge || 'OF-104',
-      channel: selectedChannel.name,
-      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      duration: 1,
-      type: 'text',
-      text: textToSend,
-    };
-    setTransmissions((prev) => [newMsg, ...prev]);
-    setMessageInput('');
-
-    if (serverUrl) {
-      try {
-        const cleanUrl = serverUrl.replace(/\/+$/, '');
-        fetchWithTimeout(`${cleanUrl}/api/voice-messages`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            sender_id: currentUser?.id,
-            channel_id: selectedChannel.id,
-            audio_url: 'text-msg',
-            duration_seconds: 1,
-            text: textToSend,
-          }),
-        }, 3000).catch(() => {});
-      } catch {}
-    }
   };
 
   // Filtros y contadores para la pestaña Chat (WhatsApp-style C5i)
@@ -2837,11 +2653,6 @@ function NativeAppScreen() {
     );
   }
 
-  const memberCount = selectedChannel?.memberCount ?? 0;
-  const channelTitle = selectedChannel?.name || (pendingSavedChannel && currentUser?.id === pendingSavedChannel.userId
-    ? `${pendingSavedChannel.channel.name} (verificando...)`
-    : (channels.length === 0 ? 'Sin canales disponibles' : 'Ningún grupo seleccionado'));
-
   return (
     <SafeAreaView style={styles.cleanContainer}>
       <StatusBar barStyle="dark-content" />
@@ -2856,136 +2667,8 @@ function NativeAppScreen() {
       {/* Main Tab Content */}
       <View style={styles.cleanMainContent}>
         {currentTab === 'PTT' && (
-          <View style={styles.cleanPttContainer}>
-            {/* TOP BAR: CANAL ACTUAL, SOS & MEMBER BADGE (Matching Image 2) */}
-            <View style={styles.cleanTopBar}>
-              <TouchableOpacity
-                onPress={() => setCurrentTab('Grupos')}
-                style={styles.cleanChannelBox}
-                activeOpacity={0.7}
-              >
-                <Text style={styles.cleanChannelLabel}>CANAL ACTUAL</Text>
-                <Text
-                  style={[styles.cleanChannelTitle, Platform.OS === 'android' && styles.cleanChannelTitleAndroid]}
-                  numberOfLines={Platform.OS === 'android' ? 3 : 1}
-                >
-                  {channelTitle}
-                </Text>
-              </TouchableOpacity>
-
-              <View style={styles.cleanHeaderActions}>
-                {/* Emergency Call / SOS Button (ICON-ONLY rounded square matching Image 4) */}
-                <TouchableOpacity
-                  style={styles.cleanSosBtn}
-                  onPress={handleTriggerSos}
-                  activeOpacity={0.85}
-                  accessibilityLabel="Llamada de Emergencia SOS"
-                >
-                  <AlertTriangleIcon size={18} color="#ffffff" strokeWidth={2.2} />
-                </TouchableOpacity>
-
-                {/* Member count pill - Opens Channel Members Modal */}
-                <TouchableOpacity
-                  style={styles.cleanMembersPill}
-                  onPress={() => setIsMembersModalOpen(true)}
-                  disabled={!selectedChannel}
-                  activeOpacity={0.8}
-                  accessibilityLabel={selectedChannel ? 'Ver usuarios dentro del canal' : 'No hay grupo seleccionado'}
-                >
-                  <UsersIcon size={16} color="#64748b" strokeWidth={1.8} />
-                  <Text style={styles.cleanMembersCount}>{memberCount}</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-
-            {/* CENTER AREA: STATUS, CONCENTRIC PTT & WIFI PILL */}
-            <View style={styles.cleanCenterArea}>
-              {/* Status prompt */}
-              <View style={styles.cleanStatusPrompt}>
-                {isTransmitting ? (
-                  <View style={styles.cleanStatusRow}>
-                    <View style={styles.cleanPulseRedDot} />
-                    <Text style={styles.cleanStatusTextRed}>
-                      {pttChannelAtPressRef.current
-                        ? `Transmitiendo (${txDuration.toString().padStart(2, '0')}s)...`
-                        : `Prueba del botón PTT (${txDuration.toString().padStart(2, '0')}s) · Sin envío`}
-                    </Text>
-                  </View>
-                ) : !selectedChannel ? (
-                  <TouchableOpacity
-                    style={styles.cleanStatusRow}
-                    onPress={() => setCurrentTab('Grupos')}
-                    accessibilityLabel="Abrir Grupos para seleccionar un canal"
-                  >
-                    <RadioIcon size={15} color="#64748b" strokeWidth={2} />
-                    <Text style={styles.cleanStatusTextIdle}>
-                      {pendingSavedChannel ? 'Verificando el grupo guardado con el servidor...' : 'Puedes probar el botón; elige grupo para transmitir'}
-                    </Text>
-                  </TouchableOpacity>
-                ) : (
-                  <View style={styles.cleanStatusRow}>
-                    <View style={styles.cleanGreenDot} />
-                    <Text style={styles.cleanStatusTextIdle}>
-                      Mantén presionado para hablar
-                    </Text>
-                  </View>
-                )}
-              </View>
-
-              {/* PTT Concentric Circle Button with Soundwaves */}
-              <View style={styles.pttCircleContainer}>
-                {isTransmitting && (
-                  // Aros sin Animated.loop: no se desmontan animaciones activas al soltar.
-                  <>
-                    <View
-                      pointerEvents="none"
-                      style={[styles.cleanPttExpandingWave, {
-                        width: 310, height: 310, borderRadius: 155, opacity: 0.38,
-                      }]}
-                    />
-                    <View
-                      pointerEvents="none"
-                      style={[styles.cleanPttExpandingWave, {
-                        width: 286, height: 286, borderRadius: 143, opacity: 0.60,
-                      }]}
-                    />
-                  </>
-                )}
-
-                <View
-                  style={[
-                    styles.cleanPttCircleOuter,
-                    isTransmitting && styles.cleanPttCircleOuterActive,
-                  ]}
-                >
-                  <TouchableOpacity
-                    activeOpacity={0.9}
-                    onPressIn={handlePttPressIn}
-                    onPressOut={handlePttPressOut}
-                    accessibilityLabel={selectedChannel
-                      ? 'Mantén presionado para transmitir al grupo'
-                      : 'Mantén presionado para probar el botón, sin transmitir'}
-                    style={[
-                      styles.cleanPttCircleInner,
-                      isTransmitting && styles.cleanPttCircleInnerActive,
-                    ]}
-                  >
-                    <MicIcon
-                      size={48}
-                      color={isTransmitting ? '#ffffff' : '#334155'}
-                      strokeWidth={2}
-                    />
-                  </TouchableOpacity>
-                </View>
-              </View>
-
-              {/* Connected Dynamic Status Pill */}
-              <View style={styles.cleanWifiPill}>
-                <WifiIcon size={14} color="#10b981" strokeWidth={2} />
-                <Text style={styles.cleanWifiPillText}>Conectado (Wi-Fi)</Text>
-              </View>
-            </View>
-          </View>
+          <PttScreen channel={selectedChannel} radio={radio} notifications={notifications}
+            onGroups={() => setCurrentTab('Grupos')} onMembers={() => setIsMembersModalOpen(true)} onSos={handleTriggerSos} />
         )}
 
         {currentTab === 'Grupos' && (
@@ -4095,190 +3778,6 @@ const styles = StyleSheet.create({
   cleanMainContent: {
     flex: 1,
     backgroundColor: '#f8fafc',
-  },
-  cleanPttContainer: {
-    flex: 1,
-    justifyContent: 'space-between',
-    paddingHorizontal: 20,
-    paddingTop: 16,
-    paddingBottom: Platform.OS === 'android' ? 16 : 24,
-  },
-  cleanTopBar: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    width: '100%',
-  },
-  cleanChannelBox: {
-    flex: 1,
-    marginRight: 12,
-  },
-  cleanChannelLabel: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#64748b',
-    letterSpacing: 0.8,
-    textTransform: 'uppercase',
-  },
-  cleanChannelTitle: {
-    fontSize: 22,
-    fontWeight: '800',
-    color: '#0f172a',
-    letterSpacing: -0.5,
-    marginTop: 2,
-  },
-  // Solo Android: los nombres largos de canales no se cortan tan pronto.
-  cleanChannelTitleAndroid: {
-    fontSize: 18,
-    lineHeight: 22,
-  },
-  cleanHeaderActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  cleanSosBtn: {
-    width: 42,
-    height: 42,
-    borderRadius: 15,
-    backgroundColor: '#e11d48',
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#e11d48',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.35,
-    shadowRadius: 8,
-    elevation: 4,
-  },
-  cleanMembersPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#ffffff',
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
-    paddingHorizontal: 12,
-    height: 42,
-    borderRadius: 15,
-    gap: 6,
-    shadowColor: '#64748b',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.08,
-    shadowRadius: 2,
-    elevation: 1,
-  },
-  cleanMembersCount: {
-    color: '#334155',
-    fontSize: 13,
-    fontWeight: '700',
-  },
-  pttCircleContainer: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    position: 'relative',
-  },
-  cleanPttExpandingWave: {
-    position: 'absolute',
-    width: 270,
-    height: 270,
-    borderRadius: 135,
-    borderWidth: 2,
-    borderColor: 'rgba(225, 29, 72, 0.45)',
-    backgroundColor: 'rgba(225, 29, 72, 0.12)',
-  },
-  cleanCenterArea: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginVertical: 16,
-  },
-  cleanStatusPrompt: {
-    marginBottom: 28,
-  },
-  cleanStatusRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  cleanGreenDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: '#10b981',
-  },
-  cleanPulseRedDot: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-    backgroundColor: '#e11d48',
-  },
-  cleanStatusTextIdle: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: '#334155',
-  },
-  cleanStatusTextRed: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#e11d48',
-  },
-  cleanPttCircleOuter: {
-    width: 270,
-    height: 270,
-    borderRadius: 135,
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
-    backgroundColor: 'rgba(255, 255, 255, 0.95)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#64748b',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.12,
-    shadowRadius: 18,
-    elevation: 6,
-  },
-  cleanPttCircleOuterActive: {
-    borderColor: 'rgba(225, 29, 72, 0.35)',
-    backgroundColor: '#fff1f2',
-    shadowColor: '#e11d48',
-    shadowOpacity: 0.3,
-    shadowRadius: 24,
-    elevation: 8,
-  },
-  cleanPttCircleInner: {
-    width: 185,
-    height: 185,
-    borderRadius: 92.5,
-    borderWidth: 1,
-    borderColor: '#cbd5e1',
-    backgroundColor: '#f1f5f9',
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#000000',
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.06,
-    shadowRadius: 6,
-    elevation: 3,
-  },
-  cleanPttCircleInnerActive: {
-    backgroundColor: '#be123c',
-    borderColor: '#9f1239',
-  },
-  cleanWifiPill: {
-    marginTop: 32,
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#ecfdf5',
-    borderWidth: 1,
-    borderColor: '#a7f3d0',
-    paddingHorizontal: 16,
-    paddingVertical: 7,
-    borderRadius: 20,
-    gap: 8,
-  },
-  cleanWifiPillText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#059669',
   },
   cleanNavBar: {
     flexDirection: 'row',
