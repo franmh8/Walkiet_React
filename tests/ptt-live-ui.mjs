@@ -26,7 +26,7 @@ try {
   await request(aSession.token,'register_device',{push_token:'ExpoPushToken[ptt_sender_synthetic_1234]',platform:'android'});
   await request(bSession.token,'register_device',{push_token:'ExpoPushToken[ptt_recipient_synthetic_5678]',platform:'ios'});
   await request(cSession.token,'register_device',{push_token:'ExpoPushToken[ptt_outsider_synthetic_9012]',platform:'android'});
-  const setup=async(session)=>{
+  const setup=async(session, cancelInitial=false)=>{
     const context=await browser.newContext({viewport:{width:430,height:932},permissions:['microphone']});
     await context.route('**/walkiet.alwaysdata.net/**',route=>route.abort());
     await context.addInitScript(({server,user})=>{
@@ -40,13 +40,36 @@ try {
       navigator.mediaDevices.getUserMedia=async(...args)=>{const stream=await capture(...args);window.__pttTracks.push(...stream.getTracks());return stream;};
     },{server:base,user:session});
     const page=await context.newPage();page.on('pageerror',e=>errors.push(e.message));
+    let releaseInitial; let initialStarts=0;
+    const initialGate=new Promise(resolve=>{releaseInitial=resolve;});
+    if(cancelInitial) await page.route('**/api/ptt',async route=>{
+      const action=route.request().postDataJSON()?.action;
+      if(action==='connect') await initialGate;
+      if(action==='start') initialStarts++;
+      await route.continue();
+    });
     await page.goto(process.env.PTT_UI_URL||'http://localhost:3000');
     await page.getByText('GRUPO RADIO DE PRUEBAS',{exact:true}).waitFor();
-    await page.getByLabel('Conectar radio',{exact:true}).click();
+    assert.equal(await page.getByLabel('Conectar radio',{exact:true}).count(),0);
+    assert.equal(await page.getByLabel('Desconectar radio',{exact:true}).count(),0);
+    if(cancelInitial){
+      const button=page.getByLabel('Mantén presionado para transmitir al grupo',{exact:true});
+      assert.equal(await button.isEnabled(),true);
+      const rect=await button.boundingBox();assert.ok(rect);
+      await page.mouse.move(rect.x+rect.width/2,rect.y+rect.height/2);await page.mouse.down();
+      await page.getByText('Conectando al canal... Mantén presionado',{exact:true}).waitFor();
+      await page.mouse.up();releaseInitial();
+    }
     await page.getByText('Radio conectada',{exact:true}).waitFor({timeout:35000}).catch(async error=>{console.log('Estado de radio:',await page.locator('body').innerText());console.log('Errores',errors);console.log('RTC',await page.evaluate(()=>window.__pttPeers.map(p=>({connection:p.connectionState,ice:p.iceConnectionState,local:!!p.localDescription,remote:!!p.remoteDescription}))));await page.screenshot({path:'/tmp/ptt-connect-error.png'});throw error;});
+    if(cancelInitial){
+      await page.waitForTimeout(250);
+      assert.equal(initialStarts,0,'Soltar antes de conectar no debe solicitar el turno.');
+      assert.equal(await page.evaluate(()=>window.__pttTracks.length),0,'La escucha automática no debe capturar micrófono.');
+      await page.unroute('**/api/ptt');
+    }
     return page;
   };
-  const a=await setup(aSession), b=await setup(bSession);
+  const a=await setup(aSession,true), b=await setup(bSession);
   // Aún conectadas, las salas no autorizan publicar hasta pulsar PTT.
   const permissions=await request(aSession.token,'connect',{device_id:'c'.repeat(32)});
   const claims=JSON.parse(Buffer.from(permissions.data.token.split('.')[1],'base64url').toString());
@@ -98,9 +121,34 @@ try {
       assert.equal(await a.evaluate(()=>window.__pttTracks.every(t=>t.readyState==='ended')),true);
     }finally{await db.end();}
   }
-  await a.getByLabel('Desconectar radio',{exact:true}).click();
-  await a.getByText('Radio desconectada',{exact:true}).waitFor();
-  await b.getByLabel('Desconectar radio',{exact:true}).click();
+  // La misma pulsación espera una conexión pendiente; no requiere otro botón ni soltar y volver a pulsar.
+  let releaseConnect;let connectCalls=0;let reconnectStarts=0;
+  const reconnectGate=new Promise(resolve=>{releaseConnect=resolve;});
+  await a.route('**/api/ptt',async route=>{
+    const action=route.request().postDataJSON()?.action;
+    if(action==='connect'){connectCalls++;await reconnectGate;}
+    if(action==='start')reconnectStarts++;
+    await route.continue();
+  });
+  await a.reload();await a.getByText('GRUPO RADIO DE PRUEBAS',{exact:true}).waitFor();
+  await a.keyboard.down('Space');
+  await a.getByText('Conectando al canal... Mantén presionado',{exact:true}).waitFor();
+  releaseConnect();
+  await a.getByText(/Transmitiendo ·/).waitFor({timeout:35000});
+  await b.getByText('Hablando: Radio A',{exact:true}).waitFor({timeout:10000}).catch(async error=>{
+    for(const [label,page] of [['emisor',a],['receptor',b]]){
+      console.log(label,await page.locator('body').innerText());
+      console.log(label+' RTC',JSON.stringify(await page.evaluate(async()=>({tracks:window.__pttTracks.map(t=>({state:t.readyState,enabled:t.enabled})),trace:window.__pttTrace,peers:await Promise.all(window.__pttPeers.map(async p=>({state:p.connectionState,ice:p.iceConnectionState,reports:[...(await p.getStats()).values()].filter(r=>['inbound-rtp','outbound-rtp','media-source','candidate-pair'].includes(r.type)).map(r=>({type:r.type,kind:r.kind,state:r.state,bytesSent:r.bytesSent,bytesReceived:r.bytesReceived,packetsReceived:r.packetsReceived,packetsSent:r.packetsSent,totalAudioEnergy:r.totalAudioEnergy}))})))}))));
+    }
+    throw error;
+  });
+  assert.equal(connectCalls,1,'La escucha automática y PTT deben compartir una sola conexión.');
+  assert.equal(reconnectStarts,1,'Una pulsación concede un solo turno.');
+  await a.keyboard.up('Space');
+  await a.getByText('Mantén presionado para hablar',{exact:true}).waitFor();
+  assert.equal(await a.evaluate(()=>window.__pttTracks.every(t=>t.readyState==='ended')),true);
+  await a.unroute('**/api/ptt');
+  await a.screenshot({path:'/tmp/ptt-automatic.png',fullPage:true});
   assert.deepEqual(errors,[]);
-  console.log('OK PTT real: CORS, autorización por grupo, WebRTC/Opus recibido con energía de audio, turno exclusivo, corte al soltar, respuesta tardía segura y push solo a otro miembro.');
+  console.log('OK PTT automático sin conectar/desconectar, escucha sin micrófono, liberación durante conexión, misma pulsación tras conectar, conexión única, teclado seguro, PTT real: CORS, autorización por grupo, WebRTC/Opus recibido con energía de audio, turno exclusivo, corte al soltar, respuesta tardía segura y push solo a otro miembro.');
 }finally{await browser.close();}

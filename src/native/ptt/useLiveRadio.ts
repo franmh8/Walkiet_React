@@ -5,6 +5,7 @@ import { createPttApi, type PttApi } from '../../services/pttApi';
 import { createRadioTransport } from './transport';
 import type { RadioTransport } from './transport.types';
 
+interface RadioConnection { scope: string; transport: RadioTransport; api: PttApi; }
 interface Lease { id: string; api: PttApi; transport: RadioTransport; started: number; timer?: ReturnType<typeof setInterval>; }
 export function useLiveRadio(server: string, userId: string, token: string, channel: { id: string; name: string } | null) {
   const scope = JSON.stringify([server, userId, token, channel?.id]);
@@ -17,7 +18,10 @@ export function useLiveRadio(server: string, userId: string, token: string, chan
   const [duration, setDuration] = useState(0); const [starting, setStarting] = useState(false);
   const transport = useRef<RadioTransport | null>(null); const api = useRef<PttApi | null>(null);
   const lease = useRef<Lease | null>(null); const down = useRef(false);
-  const generation = useRef(0); const connectionGeneration = useRef(0); const mounted = useRef(true); const connecting = useRef(false); const preparing = useRef<{ scope: string; id: string } | null>(null);
+  const generation = useRef(0); const connectionGeneration = useRef(0); const mounted = useRef(true);
+  const connection = useRef<{ scope: string; promise: Promise<RadioConnection | null> } | null>(null);
+  const ready = useRef<RadioConnection | null>(null);
+  const preparing = useRef<{ scope: string; operation: object } | null>(null);
   const stop = useCallback(async () => {
     down.current = false; const stoppedVersion = ++generation.current; const stoppedScope = active.current;
     const previous = lease.current; lease.current = null;
@@ -28,7 +32,7 @@ export function useLiveRadio(server: string, userId: string, token: string, chan
     if (previous && results[1]?.status === 'rejected' && mounted.current && active.current === stoppedScope && generation.current === stoppedVersion) setError('El micrófono se cerró. El servidor liberará el turno al vencer su permiso.');
   }, []);
   const disconnect = useCallback(async () => {
-    const stopping = stop(); ++connectionGeneration.current; connecting.current = false;
+    const stopping = stop(); ++connectionGeneration.current; connection.current = null; ready.current = null;
     const oldTransport = transport.current; transport.current = null;
     const oldApi = api.current; api.current = null;
     if (mounted.current) { setState('off'); setSpeakers([]); }
@@ -39,57 +43,88 @@ export function useLiveRadio(server: string, userId: string, token: string, chan
     return () => { mounted.current = false; void disconnect(); };
   }, [disconnect]);
   useEffect(() => { void disconnect(); setError(null); }, [scope, disconnect]);
-  const connect = useCallback(async () => {
-    if (!channel || !userId || !token || connecting.current || transport.current) return;
-    connecting.current = true; const version = ++connectionGeneration.current;
+  const connect = useCallback((): Promise<RadioConnection | null> => {
+    if (!channel || !userId || !token || active.current !== scope) return Promise.resolve(null);
+    if (connection.current?.scope === scope) return connection.current.promise;
+    if (ready.current?.scope === scope && transport.current === ready.current.transport) return Promise.resolve(ready.current);
+    if (transport.current) { setError('La radio está recuperando la conexión. Suelta PTT y vuelve a intentarlo cuando esté conectada.'); return Promise.resolve(null); }
+    const version = ++connectionGeneration.current;
     setError(null); setState('connecting');
-    let connected = false;
-    let created: RadioTransport | null = null; let client: PttApi | null = null;
     const valid = () => mounted.current && active.current === scope && connectionGeneration.current === version;
-    try {
-      const id = newId();
-      client = createPttApi(server, token, channel.id, id);
-      const credentials = await client.connect();
-      if (!valid()) return;
-      created = await createRadioTransport({
-        state: next => {
-          if (!mounted.current || active.current !== scope || transport.current !== created) return;
-          if (next === 'disconnected') { void disconnect(); setState('off'); setError('Se perdió la conexión de radio. Vuelve a conectarla.'); }
-          else { if (next === 'reconnecting') void stop(); setState(next); }
-        },
-        speakers: names => { if (mounted.current && active.current === scope) setSpeakers(names); },
-        playback: enabled => { if (mounted.current && active.current === scope) setAudioEnabled(enabled); },
-        error: message => { if (mounted.current && active.current === scope) setError(message); },
-      }, channel.name, valid);
-      if (!valid()) return;
-      transport.current = created; api.current = client;
-      await created.connect(credentials);
-      if (!valid()) return;
-      connected = true; setState('connected');
-    } catch (cause) {
-      if (mounted.current && active.current === scope && connectionGeneration.current === version) { setError(cause instanceof Error ? cause.message : 'No se pudo conectar la radio.'); setState('off'); }
-    } finally {
-      if (!connected || !valid() || !created || transport.current !== created || !api.current) {
-        if (transport.current === created) { transport.current = null; api.current = null; }
-        await created?.close(); await client?.disconnect().catch(() => {});
+    const promise = (async () => {
+      let connected = false; let registered = false;
+      let created: RadioTransport | null = null; let client: PttApi | null = null;
+      try {
+        const id = newId();
+        client = createPttApi(server, token, channel.id, id);
+        const credentials = await client.connect();
+        registered = true;
+        if (!valid()) return null;
+        created = await createRadioTransport({
+          state: next => {
+            if (!valid() || transport.current !== created) return;
+            if (next === 'disconnected') { void disconnect(); setError('Se perdió la conexión de radio. Mantén presionado PTT para reintentar.'); }
+            else {
+              if (next === 'reconnecting') { ready.current = null; void stop(); }
+              if (next === 'connected' && created && client) ready.current = { scope, transport: created, api: client };
+              setState(next);
+            }
+          },
+          speakers: names => { if (valid()) setSpeakers(names); },
+          playback: enabled => { if (valid()) setAudioEnabled(enabled); },
+          error: message => { if (valid()) setError(message); },
+        }, channel.name, valid);
+        if (!valid()) return null;
+        transport.current = created; api.current = client;
+        await created.connect(credentials);
+        if (!valid()) return null;
+        connected = true; setState('connected');
+        ready.current = { scope, transport: created, api: client };
+        return ready.current;
+      } catch (cause) {
+        if (valid()) { setError(cause instanceof Error ? cause.message : 'No se pudo conectar la radio.'); setState('off'); }
+        return null;
+      } finally {
+        if (!connected || !valid() || !created || transport.current !== created) {
+          if (transport.current === created) { transport.current = null; api.current = null; ready.current = null; }
+          // Un fallo de limpieza no debe sustituir el diagnóstico original.
+          await Promise.allSettled([created?.close(), registered ? client?.disconnect() : undefined]);
+        }
+        if (valid()) connection.current = null;
       }
-      if (active.current === scope && connectionGeneration.current === version) connecting.current = false;
-    }
+    })();
+    connection.current = { scope, promise };
+    return promise;
   }, [server, userId, token, channel?.id, channel?.name, scope, stop, disconnect]);
+  useEffect(() => {
+    // La escucha se prepara al elegir grupo, sin publicar el micrófono.
+    // No reintentar en bucle si el PHP o el servicio multimedia no están disponibles.
+    const resume = () => { if (AppState.currentState === 'active') void connect(); };
+    resume();
+    const subscription = AppState.addEventListener('change', next => { if (next === 'active') void connect(); });
+    return () => subscription.remove();
+  }, [connect]);
   const press = useCallback(async () => {
-    if (preparing.current?.scope === scope || down.current || !transport.current || !api.current || state !== 'connected') return;
+    if (!channel || !userId || !token || preparing.current?.scope === scope || down.current) return;
     down.current = true; setPressed(true); setStarting(true); setError(null);
     const version = ++generation.current; const currentScope = scope;
-    const deviceTransport = transport.current; const client = api.current; const id = newId();
-    preparing.current = { scope, id };
+    const operation = {};
+    let deviceTransport: RadioTransport | null = null; let client: PttApi | null = null; let id: string | null = null;
+    let startRequested = false;
+    preparing.current = { scope, operation };
     let granted = false;
     const valid = () => mounted.current && down.current && active.current === currentScope && generation.current === version;
     try {
+      const connected = await connect();
+      if (!valid()) return;
+      if (!connected) { await stop(); return; }
+      deviceTransport = connected.transport; client = connected.api; id = newId();
       await deviceTransport.prepareMicrophone();
       if (!valid()) return;
-      await client.start(id); granted = true;
+      startRequested = true; await client.start(id); granted = true;
       if (!valid()) return;
       lease.current = { id, api: client, transport: deviceTransport, started: Date.now() };
+      const liveClient = client; const liveId = id;
       const grantedAt = Date.now(); let heartbeating = false; let ticks = 0;
       lease.current!.timer = setInterval(() => {
         if (!valid()) return;
@@ -97,7 +132,7 @@ export function useLiveRadio(server: string, userId: string, token: string, chan
         if (seconds >= 44) { void stop(); return; }
         if (++ticks % 16 === 0 && !heartbeating) {
           heartbeating = true;
-          void client.heartbeat(id).catch(cause => {
+          void liveClient.heartbeat(liveId).catch(cause => {
             if (lease.current?.id !== id || active.current !== currentScope) return;
             void stop(); if (mounted.current) setError(cause instanceof Error ? cause.message : 'Se perdió el turno de radio.');
           }).finally(() => { heartbeating = false; });
@@ -112,13 +147,13 @@ export function useLiveRadio(server: string, userId: string, token: string, chan
       if (valid()) { await stop(); setError(cause instanceof Error ? cause.message : 'No se pudo abrir el micrófono.'); }
     } finally {
       if (!valid()) {
-        await deviceTransport.silence().catch(() => {});
+        await deviceTransport?.silence().catch(() => {});
         // Incluso si la respuesta de start se perdió, stop es idempotente por ID.
-        await client.stop(id).catch(() => {});
+        if (startRequested && id) await client?.stop(id).catch(() => {});
       } else if (!granted) await stop();
-      if (preparing.current?.scope === currentScope && preparing.current.id === id) preparing.current = null;
+      if (preparing.current?.scope === currentScope && preparing.current.operation === operation) preparing.current = null;
     }
-  }, [state, scope, stop]);
+  }, [channel?.id, userId, token, scope, stop, connect]);
   useEffect(() => {
     const subscription = AppState.addEventListener('change', next => { if (next !== 'active') void stop(); });
     const onBlur = () => { void stop(); };

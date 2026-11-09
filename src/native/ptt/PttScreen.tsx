@@ -1,6 +1,6 @@
 import React, { useEffect, useRef } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Platform, ActivityIndicator } from 'react-native';
-import { AlertTriangleIcon, MicIcon, UsersIcon, RadioIcon } from '../icons';
+import { AlertTriangleIcon, MicIcon, UsersIcon } from '../icons';
 import { soundEngine } from '../../services/soundEngine';
 import type { Channel } from '../../services/channelsApi';
 import type { LiveRadio } from './useLiveRadio';
@@ -23,7 +23,7 @@ export function PttScreen({ channel, radio, notifications, onGroups, onMembers, 
   }, [radio.press, radio.stop]);
   const connected = radio.state === 'connected';
   const stateText = radio.state === 'connecting' ? 'Conectando radio...' : radio.state === 'reconnecting' ? 'Recuperando conexión...' : connected ? 'Radio conectada' : 'Radio desconectada';
-  const prompt = radio.starting ? 'Preparando micrófono y turno...' : radio.transmitting ? `Transmitiendo · ${radio.duration}s` : radio.speakers.length ? `Hablando: ${radio.speakers.join(', ')}` : connected ? 'Mantén presionado para hablar' : 'Conecta la radio para escuchar y hablar';
+  const prompt = radio.starting ? (connected ? 'Preparando micrófono y turno...' : 'Conectando al canal... Mantén presionado') : radio.transmitting ? `Transmitiendo · ${radio.duration}s` : radio.speakers.length ? `Hablando: ${radio.speakers.join(', ')}` : 'Mantén presionado para hablar';
   return <View style={styles.screen}>
     <View style={styles.header}>
       <TouchableOpacity style={styles.titleArea} onPress={onGroups} accessibilityLabel="Seleccionar grupo de radio">
@@ -39,16 +39,13 @@ export function PttScreen({ channel, radio, notifications, onGroups, onMembers, 
       <Text style={[styles.prompt, radio.transmitting && styles.promptOn]} accessibilityLiveRegion="polite">{channel ? prompt : 'Crea un grupo o únete a uno para comunicarte'}</Text>
       <View style={[styles.circle, radio.transmitting && styles.circleOn]}>
         <TouchableOpacity style={[styles.button, radio.transmitting && styles.buttonOn]}
-          disabled={!connected || !channel} onPressIn={() => { void radio.press(); }} onPressOut={() => { void radio.stop(); }}
-          accessibilityRole="button" accessibilityLabel="Mantén presionado para transmitir al grupo" accessibilityState={{ disabled: !connected || !channel }}>
+          disabled={!channel} onPressIn={() => { void radio.press(); }} onPressOut={() => { void radio.stop(); }}
+          accessibilityRole="button" accessibilityLabel="Mantén presionado para transmitir al grupo" accessibilityState={{ disabled: !channel }}>
           {radio.starting ? <ActivityIndicator size="large" color="#691c32" /> : <MicIcon size={52} color={radio.transmitting ? '#fff' : '#334155'} strokeWidth={2} />}
         </TouchableOpacity>
       </View>
       <View style={[styles.status, connected && styles.statusOn]}><View style={[styles.dot, connected && styles.dotOn]} /><Text style={styles.statusText}>{stateText}</Text></View>
-      {!channel ? <TouchableOpacity style={styles.action} onPress={onGroups}><Text style={styles.actionText}>Seleccionar grupo</Text></TouchableOpacity>
-        : <TouchableOpacity style={styles.action} onPress={() => { void (radio.state !== 'off' ? radio.disconnect() : radio.connect()); }} accessibilityLabel={radio.state === 'connecting' ? 'Cancelar conexión' : connected ? 'Desconectar radio' : 'Conectar radio'}>
-          <RadioIcon size={18} color="#691c32" /><Text style={styles.actionText}>{radio.state === 'connecting' ? 'Cancelar conexión' : connected || radio.state === 'reconnecting' ? 'Desconectar radio' : 'Conectar radio'}</Text>
-        </TouchableOpacity>}
+      {!channel && <TouchableOpacity style={styles.action} onPress={onGroups}><Text style={styles.actionText}>Seleccionar grupo</Text></TouchableOpacity>}
       {connected && !radio.audioEnabled && <TouchableOpacity style={styles.action} onPress={() => { void radio.enableAudio(); }}><Text style={styles.actionText}>Activar audio</Text></TouchableOpacity>}
       {notifications.available && <TouchableOpacity style={styles.noticeButton} disabled={notifications.enabled || notifications.busy} onPress={() => { void notifications.enable(); }}>
         <Text style={styles.noticeText}>{notifications.busy ? 'Activando avisos...' : notifications.enabled ? 'Avisos activados en este teléfono' : 'Activar avisos de los grupos'}</Text>

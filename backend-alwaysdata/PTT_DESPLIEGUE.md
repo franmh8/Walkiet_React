@@ -9,7 +9,7 @@ CORS. Ahora el control utiliza `ptt.php` y el audio circula por WebRTC/LiveKit.
 transmisión inexistente. No se guardan grabaciones ni se ofrece reproducción de
 transmisiones pasadas en esta etapa.
 
-La implementación permite conectar la radio, escuchar el grupo seleccionado y
+La radio se conecta automáticamente al grupo seleccionado para escuchar y permite
 publicar el micrófono mientras se mantiene pulsado PTT. La captura se prepara al
 pulsar, pero el audio no se publica hasta que el servidor concede el turno. El cliente corta su track al soltar,
 salir de PTT, perder foco, cambiar de sesión/grupo o pasar a segundo plano mientras
@@ -19,7 +19,7 @@ habla. La escucha continúa mientras el sistema permite mantener la conexión.
   “Activar audio”. Una pestaña suspendida o cerrada no equivale a una radio móvil.
 - **Android instalado:** módulo local `walkiet-radio-service` con foreground
   service de micrófono/reproducción y notificación persistente. Se inicia desde
-  la app visible al tocar “Conectar radio”. No reinicia una app forzada a cerrar.
+  la app visible al seleccionar un grupo. No reinicia una app forzada a cerrar.
 - **iPhone instalado:** audio WebRTC y modos de audio/notificación en segundo
   plano configurados. Esto permite una sesión de audio activa, pero **NO implementa
   todavía Apple Push to Talk/APNs `pushtotalk`**. Si iOS suspende la app inactiva,
@@ -101,6 +101,33 @@ y procesa avisos pendientes. Si lleva más de 15 segundos sin registrar activida
 el servidor rechaza nuevas conexiones/turnos con 503. No se debe omitir el worker.
 Revisar el log PHP por el prefijo `PTT API:`/`PTT worker:` sin divulgar claves.
 
+### Si el navegador muestra CORS al solicitar ptt.php
+
+La comprobación pública de `https://walkiet.alwaysdata.net/ptt.php` devolvió **404**,
+sin `Access-Control-Allow-Origin`. Eso significa que esa URL no llega al script
+publicado; cambiar el cliente o agregar cabeceras al 404 no instala la API.
+
+1. En Alwaysdata revisar **Sitios → directorio raíz** del sitio. Colocar los PHP
+   de la lista anterior en ese directorio, junto a `login.php` y `conexion.php`.
+   No subir solamente el proxy `api/ptt.php`: necesita el archivo raíz `ptt.php`.
+2. Comprobar el nombre exacto `ptt.php`, sin `.txt`, y permisos de lectura del
+   proceso PHP. Si se sube dentro de `backend-alwaysdata/`, pero esa carpeta no es
+   la raíz del sitio, `/ptt.php` seguirá dando 404.
+3. Verificar sin enviar tokens ni credenciales:
+
+   ```sh
+   curl -i -X OPTIONS 'https://walkiet.alwaysdata.net/ptt.php' \
+     -H 'Origin: http://localhost:8081' \
+     -H 'Access-Control-Request-Method: POST' \
+     -H 'Access-Control-Request-Headers: authorization,content-type'
+   ```
+
+   Debe devolver **200**, `Access-Control-Allow-Origin: http://localhost:8081`
+   y JSON `preflight_ok`. OPTIONS funciona aun sin configurar BD/LiveKit porque
+   `cors.php` se carga primero. Un 404 indica ruta/archivo; un 500 obliga a revisar
+   el registro PHP. Después completar la migración, LiveKit y worker: un preflight
+   correcto por sí solo no habilita la transmisión.
+
 ## 3. Compilación Android e iPhone
 
 Después de actualizar la rama:
@@ -130,9 +157,13 @@ npx eas-cli build --platform ios --profile development
 proyectos, credenciales y firmas deben aprovisionarse antes de lanzar los builds.
 No se creó un proyecto cloud ni se generó una compilación firmada automáticamente.
 
-En cada teléfono, con cuentas distintas para la prueba: iniciar sesión, seleccionar el mismo grupo, tocar **Conectar
-radio** y **Activar avisos de los grupos**. Mantener PTT pulsado en uno y verificar
-que el otro escucha mientras se habla. La notificación de actividad abre el grupo
+En cada teléfono, con cuentas distintas para la prueba: iniciar sesión, seleccionar
+el mismo grupo y tocar **Activar avisos de los grupos**. La escucha se conecta
+automáticamente. Mantener PTT pulsado en uno y verificar
+que el otro escucha mientras se habla. Si la radio aún está conectando, mantener
+PTT espera esa conexión y transmite solo si se sigue presionando. Soltar antes
+cancela la emisión; no hay un botón aparte de conectar/desconectar. Un fallo
+se muestra sin reintentos en bucle; mantener PTT reintenta. La notificación de actividad abre el grupo
 y valida otra vez que la cuenta siga siendo miembro.
 
 Para usar el servidor Node de desarrollo como proxy del control, configurar
@@ -188,9 +219,13 @@ Usar exclusivamente MySQL/MariaDB local con la preparación de
 7. `PTT_TEST_BACKEND=http://127.0.0.1:8101 node tests/ptt-live-ui.mjs` comprueba
    WebRTC/Opus real entre dos contextos Chromium, paquetes recibidos y energía de
    audio decodificado, autorización, CORS, turno ocupado, liberación y respuesta
-   tardía segura. `CONTACTS_TEST_SOCKET` añade una prueba de expiración del turno.
+   tardía segura, conexión automática compartida, teclado y cancelación antes de
+   conectar. `CONTACTS_TEST_SOCKET` añade una prueba de expiración del turno.
 8. Con las variables sintéticas de LiveKit/DB ejecutar
    `php tests/ptt-backend.php`: permisos, rollback, expiración y revocación.
+9. `PTT_TEST_BACKEND=http://127.0.0.1:8101 node tests/ptt-auto-errors.mjs` comprueba
+   fallos de red/503, ausencia de reintentos en bucle, reintento desde PTT y
+   ausencia de captura o éxito ficticio cuando no se consigue conectar.
 
 `PLAYWRIGHT_MODULE`, `CHROMIUM_PATH` y `PTT_UI_URL` permiten seleccionar las
 herramientas locales. La captura de micrófono en la prueba es sintética de

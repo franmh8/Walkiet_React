@@ -20,7 +20,7 @@ export function createPttApi(baseUrl: string, token: string, channelId: string, 
       return data;
     } catch (cause) {
       if (cause instanceof PttApiError) throw cause;
-      throw new Error('No se pudo contactar al servidor de radio. Revisa la conexión.');
+      throw new Error('No se pudo acceder al servidor de radio. Comprueba que ptt.php esté publicado en la URL del servidor y permita OPTIONS/CORS.');
     } finally { clearTimeout(timer); }
   }
   return {
