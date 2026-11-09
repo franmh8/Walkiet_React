@@ -1,8 +1,9 @@
+import { useThemeStyles } from '../profile/AppTheme';
 import React, { useEffect, useRef, useState } from 'react';
 import { View, Text, Platform, TouchableOpacity, ActivityIndicator, StyleSheet } from 'react-native';
 import { CameraView, Camera } from 'expo-camera';
 import { CameraIcon } from '../icons';
-import { groupStyles as styles } from './groupStyles';
+import { groupStyles as baseStyles } from './groupStyles';
 
 function loadWebDecoder() {
   if ((window as any).BarcodeDetector || (window as any).jsQR || document.getElementById('c5i-qr-decoder-script')) return;
@@ -13,6 +14,7 @@ function loadWebDecoder() {
 }
 // La cámara y sus recursos pertenecen al escáner: se liberan al volver al PIN o cerrar.
 export function ChannelQrScanner({ onScan }: { onScan: (raw: string) => void }) {
+  const styles = useThemeStyles(baseStyles);
   const [permission, setPermission] = useState<'loading' | 'granted' | 'denied'>('loading');
   const [attempt, setAttempt] = useState(0);
   const video = useRef<HTMLVideoElement | null>(null);

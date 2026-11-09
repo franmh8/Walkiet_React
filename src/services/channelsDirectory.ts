@@ -30,6 +30,8 @@ export async function channelsDirectory(pool: Pool, method: string, data: Record
   let pinLock: string | null = null;
   try {
     await db.beginTransaction();
+    const [account] = await db.execute<RowDataPacket[]>('SELECT id FROM users WHERE id=? FOR UPDATE', [owner]);
+    if (!account.length) return fail(401, 'La cuenta ya no está disponible.');
     if (action === 'create') {
       const name = String(data.name || '').trim(); const requested = String(data.pin || '').trim();
       if (!name || [...name].length > 100) return fail(400, 'Ingresa un nombre de hasta 100 caracteres.');

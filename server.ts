@@ -537,6 +537,19 @@ app.post(['/api/contacts', '/contacts.php'], handleContactRequest);
 app.put(['/api/contacts/:id', '/api/contacts', '/contacts.php'], handleContactRequest);
 app.delete(['/api/contacts/:id', '/api/contacts', '/contacts.php'], handleContactRequest);
 
+// Perfil y preferencias tienen la misma autoridad PHP en desarrollo y Alwaysdata.
+app.all(['/api/account', '/account.php'], async (req: Request, res: Response) => {
+  res.setHeader('Cache-Control', 'no-store');
+  if (!['GET','POST'].includes(req.method)) return res.status(405).json({ success: false, message: 'Usa GET o POST para gestionar la cuenta.' });
+  const origin = (process.env.ACCOUNT_PHP_ORIGIN || process.env.PTT_PHP_ORIGIN)?.replace(/\/+$/, '');
+  if (!origin || !/^https:\/\/[a-z0-9.-]+(?::\d+)?$/i.test(origin) && !/^http:\/\/(127\.0\.0\.1|localhost):\d+$/.test(origin)) return res.status(503).json({ success: false, message: 'Configura ACCOUNT_PHP_ORIGIN con el backend PHP de cuentas.' });
+  try {
+    const result = await fetch(origin + '/account.php', { method: 'POST', redirect: 'error', signal: AbortSignal.timeout(10000),
+      headers: { 'Content-Type': 'application/json', Authorization: req.get('authorization') || '' }, body: JSON.stringify(req.method === 'GET' ? { action: 'get' } : req.body || {}) });
+    return res.status(result.status).json(await result.json());
+  } catch { return res.status(502).json({ success: false, message: 'No se pudo contactar al backend PHP de cuentas.' }); }
+});
+
 // El servidor PHP es la autoridad del control PTT y comparte auth_sessions/MySQL.
 // El proxy opcional facilita usar este servidor de desarrollo sin duplicar turnos ni claves.
 app.post(['/api/ptt', '/ptt.php'], async (req: Request, res: Response) => {

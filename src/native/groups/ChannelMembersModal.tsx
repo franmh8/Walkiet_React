@@ -1,12 +1,14 @@
+import { useThemeStyles } from '../profile/AppTheme';
 import React, { useEffect, useState } from 'react';
 import { Modal, View, Text, TouchableOpacity, ScrollView, ActivityIndicator, useWindowDimensions } from 'react-native';
 import { UsersIcon, XIcon } from '../icons';
 import type { Channel, ChannelMember, ChannelsApi } from '../../services/channelsApi';
-import { groupStyles as styles } from './groupStyles';
+import { groupStyles as baseStyles } from './groupStyles';
 
 export function ChannelMembersModal({ visible, channel, userId, api, onClose }: {
   visible: boolean; channel: Channel | null; userId: string; api: ChannelsApi; onClose: () => void;
 }) {
+  const styles = useThemeStyles(baseStyles);
   const { height } = useWindowDimensions();
   const [members, setMembers] = useState<ChannelMember[]>([]);
   const [count, setCount] = useState(0); const [loading, setLoading] = useState(false);

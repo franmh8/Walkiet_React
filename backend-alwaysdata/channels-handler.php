@@ -37,6 +37,8 @@ function handleChannels(PDO $pdo, $method, array $data, array $query, $owner) {
     $pinLock = null;
     $pdo->beginTransaction();
     try {
+        $accountLock=$pdo->prepare('SELECT id FROM users WHERE id=? FOR UPDATE'); $accountLock->execute([$owner]);
+        if (!$accountLock->fetchColumn()) throw new ChannelsRequestError(401, 'La cuenta ya no está disponible.');
         if ($action === 'create') {
             $name = trim((string)($data['name'] ?? ''));
             if ($name === '' || strlen($name) > 100 * 4 || preg_match_all('/./us', $name) > 100) throw new ChannelsRequestError(400, 'Ingresa un nombre de hasta 100 caracteres.');

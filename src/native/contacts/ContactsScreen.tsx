@@ -1,3 +1,4 @@
+import { useAppTheme } from '../profile/AppTheme';
 import React, { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { View, Text, TouchableOpacity, TextInput, ScrollView, SectionList, StyleSheet, Modal, SafeAreaView, ActivityIndicator, Platform, Clipboard, Linking } from 'react-native';
 import { UserIcon, UsersIcon, UserPlusIcon, AlertTriangleIcon, SearchIcon, XIcon, CheckIcon, PhoneIcon, MailIcon, ArrowLeftIcon, MicIcon, MessageSquareIcon, CopyIcon, ShieldIcon, TrashIcon, VideoIcon } from '../icons';
@@ -19,6 +20,7 @@ interface Props {
 export const ContactsScreen = forwardRef<ContactsScreenHandle, Props>(function ContactsScreen(
   { visible, serverUrl, directory, onSos: handleTriggerSos, onStartChat, onContactUpdated, onOpenCamera }, ref
 ) {
+  const { palette } = useAppTheme();
   const officersList = directory.contacts;
   const contactsError = directory.error;
   const isLoadingContacts = directory.loading;
@@ -185,22 +187,22 @@ export const ContactsScreen = forwardRef<ContactsScreenHandle, Props>(function C
 
   return (<>
         {visible && (
-          <View style={{ flex: 1, backgroundColor: '#f8fafc' }}>
+          <View style={{ flex: 1, backgroundColor: palette.background }}>
             {/* Header exacto a Imagen 1 */}
             <View style={{
               flexDirection: 'row',
               alignItems: 'center',
               paddingHorizontal: 16,
               paddingVertical: 14,
-              backgroundColor: '#ffffff',
+              backgroundColor: palette.card,
               borderBottomWidth: 1,
-              borderBottomColor: '#f1f5f9',
+              borderBottomColor: palette.border,
             }}>
               <View style={{
                 width: 44,
                 height: 44,
                 borderRadius: 14,
-                backgroundColor: '#fdf2f4',
+                backgroundColor: palette.soft,
                 borderWidth: 1,
                 borderColor: '#fecdd3',
                 alignItems: 'center',
@@ -212,7 +214,7 @@ export const ContactsScreen = forwardRef<ContactsScreenHandle, Props>(function C
               <Text style={{
                 fontSize: 20,
                 fontWeight: '700',
-                color: '#0f172a',
+                color: palette.text,
                 marginLeft: 14,
                 flex: 1,
               }}>
@@ -268,16 +270,16 @@ export const ContactsScreen = forwardRef<ContactsScreenHandle, Props>(function C
             <View style={{
               paddingHorizontal: 16,
               paddingVertical: 12,
-              backgroundColor: '#ffffff',
+              backgroundColor: palette.card,
               borderBottomWidth: 1,
-              borderBottomColor: '#f1f5f9',
+              borderBottomColor: palette.border,
             }}>
               <View style={{
                 flexDirection: 'row',
                 alignItems: 'center',
-                backgroundColor: '#ffffff',
+                backgroundColor: palette.card,
                 borderWidth: 1,
-                borderColor: '#e2e8f0',
+                borderColor: palette.border,
                 borderRadius: 12,
                 paddingHorizontal: 12,
                 height: 44,
@@ -288,7 +290,7 @@ export const ContactsScreen = forwardRef<ContactsScreenHandle, Props>(function C
                     flex: 1,
                     marginLeft: 10,
                     fontSize: 14,
-                    color: '#0f172a',
+                    color: palette.text,
                     paddingVertical: 0,
                   }}
                   value={contactSearchQuery}
@@ -318,16 +320,16 @@ export const ContactsScreen = forwardRef<ContactsScreenHandle, Props>(function C
               sections={groupedOfficers.map(group => ({ ...group, data: group.contacts }))}
               keyExtractor={contact => contact.id}
               initialNumToRender={20} maxToRenderPerBatch={20} windowSize={7}
-              style={{ flex: 1, backgroundColor: '#ffffff' }}
+              style={{ flex: 1, backgroundColor: palette.card }}
               contentContainerStyle={{ paddingBottom: 100 }} keyboardShouldPersistTaps="handled"
-              renderSectionHeader={({ section }) => <View style={{ backgroundColor: '#f8fafc', paddingHorizontal: 20, paddingVertical: 8 }}>
+              renderSectionHeader={({ section }) => <View style={{ backgroundColor: palette.background, paddingHorizontal: 20, paddingVertical: 8 }}>
                 <Text style={{ fontSize: 15, fontWeight: '800', color: '#6b1d2f' }}>{section.letter}</Text>
               </View>}
               renderItem={({ item }) => <TouchableOpacity onPress={() => handleOpenContactDetail(item)}
-                style={{ paddingHorizontal: 20, paddingVertical: 16, backgroundColor: '#ffffff' }}>
-                <Text style={{ fontSize: 16, fontWeight: '600', color: '#0f172a' }}>{item.name}</Text>
+                style={{ paddingHorizontal: 20, paddingVertical: 16, backgroundColor: palette.card }}>
+                <Text style={{ fontSize: 16, fontWeight: '600', color: palette.text }}>{item.name}</Text>
               </TouchableOpacity>}
-              ItemSeparatorComponent={() => <View style={{ height: 1, backgroundColor: '#f1f5f9', marginHorizontal: 20 }} />}
+              ItemSeparatorComponent={() => <View style={{ height: 1, backgroundColor: palette.input, marginHorizontal: 20 }} />}
               ListEmptyComponent={(<View style={{
                   alignItems: 'center',
                   justifyContent: 'center',
@@ -338,17 +340,17 @@ export const ContactsScreen = forwardRef<ContactsScreenHandle, Props>(function C
                     width: 72,
                     height: 72,
                     borderRadius: 36,
-                    backgroundColor: '#f1f5f9',
+                    backgroundColor: palette.input,
                     alignItems: 'center',
                     justifyContent: 'center',
                     marginBottom: 16,
                   }}>
                     <UserIcon size={36} color="#94a3b8" strokeWidth={1.8} />
                   </View>
-                  <Text style={{ fontSize: 17, fontWeight: '700', color: '#1e293b', marginBottom: 6 }}>
+                  <Text style={{ fontSize: 17, fontWeight: '700', color: palette.text, marginBottom: 6 }}>
                     {isLoadingContacts ? 'Cargando contactos…' : contactsError ? 'No se pudo actualizar el directorio' : contactSearchQuery ? 'Sin coincidencias' : 'Sin contactos registrados'}
                   </Text>
-                  <Text style={{ fontSize: 13, color: '#64748b', textAlign: 'center', marginBottom: 20, maxWidth: 280 }}>
+                  <Text style={{ fontSize: 13, color: palette.muted, textAlign: 'center', marginBottom: 20, maxWidth: 280 }}>
                     Agrega a tu primer oficial o contacto para iniciar una conversación encriptada.
                   </Text>
                   <TouchableOpacity
@@ -412,7 +414,7 @@ export const ContactsScreen = forwardRef<ContactsScreenHandle, Props>(function C
           />
 
           <View style={{
-            backgroundColor: '#ffffff',
+            backgroundColor: palette.card,
             borderRadius: 28,
             width: '100%',
             maxWidth: 420,
@@ -432,7 +434,7 @@ export const ContactsScreen = forwardRef<ContactsScreenHandle, Props>(function C
               justifyContent: 'space-between',
               paddingBottom: 12,
               borderBottomWidth: 1,
-              borderBottomColor: '#f1f5f9',
+              borderBottomColor: palette.border,
             }}>
               {/* Botón Circular Izquierdo: Cancelar */}
               <TouchableOpacity
@@ -440,7 +442,7 @@ export const ContactsScreen = forwardRef<ContactsScreenHandle, Props>(function C
                   width: 38,
                   height: 38,
                   borderRadius: 19,
-                  backgroundColor: '#e2e8f0',
+                  backgroundColor: palette.border,
                   alignItems: 'center',
                   justifyContent: 'center',
                 }}
@@ -451,14 +453,14 @@ export const ContactsScreen = forwardRef<ContactsScreenHandle, Props>(function C
                 }}
                 activeOpacity={0.8}
               >
-                <XIcon size={18} color="#475569" strokeWidth={2.2} />
+                <XIcon size={18} color={palette.secondary} strokeWidth={2.2} />
               </TouchableOpacity>
 
               {/* Título Central */}
               <Text style={{
                 fontSize: 18,
                 fontWeight: '700',
-                color: '#0f172a',
+                color: palette.text,
                 textAlign: 'center',
               }}>
                 Nuevo Contacto
@@ -498,7 +500,7 @@ export const ContactsScreen = forwardRef<ContactsScreenHandle, Props>(function C
                 width: 86,
                 height: 86,
                 borderRadius: 43,
-                backgroundColor: '#f8fafc',
+                backgroundColor: palette.background,
                 borderWidth: 2,
                 borderColor: '#fbcfe8',
                 alignItems: 'center',
@@ -528,22 +530,22 @@ export const ContactsScreen = forwardRef<ContactsScreenHandle, Props>(function C
 
               {/* Tarjeta 1: Nombre(s) y Apellidos (Opcional) */}
               <View style={{
-                backgroundColor: '#ffffff',
+                backgroundColor: palette.card,
                 borderRadius: 16,
                 borderWidth: 1,
-                borderColor: '#e2e8f0',
+                borderColor: palette.border,
                 paddingHorizontal: 16,
                 paddingVertical: 10,
                 marginBottom: 14,
               }}>
-                <Text style={{ fontSize: 12, fontWeight: '600', color: '#64748b', marginBottom: 2 }}>
+                <Text style={{ fontSize: 12, fontWeight: '600', color: palette.muted, marginBottom: 2 }}>
                   Nombre(s) *
                 </Text>
                 <TextInput
                   editable={!isSavingContact}
                   style={{
                     fontSize: 15,
-                    color: '#0f172a',
+                    color: palette.text,
                     paddingVertical: 4,
                   }}
                   value={newContactName}
@@ -552,16 +554,16 @@ export const ContactsScreen = forwardRef<ContactsScreenHandle, Props>(function C
                   placeholderTextColor="#94a3b8"
                 />
 
-                <View style={{ height: 1, backgroundColor: '#f1f5f9', marginVertical: 8 }} />
+                <View style={{ height: 1, backgroundColor: palette.input, marginVertical: 8 }} />
 
-                <Text style={{ fontSize: 12, fontWeight: '600', color: '#64748b', marginBottom: 2 }}>
+                <Text style={{ fontSize: 12, fontWeight: '600', color: palette.muted, marginBottom: 2 }}>
                   Apellidos (Opcional)
                 </Text>
                 <TextInput
                   editable={!isSavingContact}
                   style={{
                     fontSize: 15,
-                    color: '#0f172a',
+                    color: palette.text,
                     paddingVertical: 4,
                   }}
                   value={newContactLastName}
@@ -573,15 +575,15 @@ export const ContactsScreen = forwardRef<ContactsScreenHandle, Props>(function C
 
               {/* Tarjeta 2: Número de Teléfono (directo sin selector de país) */}
               <View style={{
-                backgroundColor: '#ffffff',
+                backgroundColor: palette.card,
                 borderRadius: 16,
                 borderWidth: 1,
-                borderColor: '#e2e8f0',
+                borderColor: palette.border,
                 paddingHorizontal: 16,
                 paddingVertical: 10,
                 marginBottom: 14,
               }}>
-                <Text style={{ fontSize: 12, fontWeight: '600', color: '#64748b', marginBottom: 2 }}>
+                <Text style={{ fontSize: 12, fontWeight: '600', color: palette.muted, marginBottom: 2 }}>
                   Número de Teléfono
                 </Text>
                 <View style={{ flexDirection: 'row', alignItems: 'center' }}>
@@ -590,7 +592,7 @@ export const ContactsScreen = forwardRef<ContactsScreenHandle, Props>(function C
                     style={{
                       flex: 1,
                       fontSize: 15,
-                      color: '#0f172a',
+                      color: palette.text,
                       paddingVertical: 4,
                     }}
                     value={newContactPhone}
@@ -605,15 +607,15 @@ export const ContactsScreen = forwardRef<ContactsScreenHandle, Props>(function C
 
               {/* Tarjeta 3: Correo Electrónico (Opcional) */}
               <View style={{
-                backgroundColor: '#ffffff',
+                backgroundColor: palette.card,
                 borderRadius: 16,
                 borderWidth: 1,
-                borderColor: '#e2e8f0',
+                borderColor: palette.border,
                 paddingHorizontal: 16,
                 paddingVertical: 10,
                 marginBottom: 8,
               }}>
-                <Text style={{ fontSize: 12, fontWeight: '600', color: '#64748b', marginBottom: 2 }}>
+                <Text style={{ fontSize: 12, fontWeight: '600', color: palette.muted, marginBottom: 2 }}>
                   Correo Electrónico (Opcional)
                 </Text>
                 <View style={{ flexDirection: 'row', alignItems: 'center' }}>
@@ -622,7 +624,7 @@ export const ContactsScreen = forwardRef<ContactsScreenHandle, Props>(function C
                     style={{
                       flex: 1,
                       fontSize: 15,
-                      color: '#0f172a',
+                      color: palette.text,
                       paddingVertical: 4,
                     }}
                     value={newContactEmail}
@@ -649,7 +651,7 @@ export const ContactsScreen = forwardRef<ContactsScreenHandle, Props>(function C
         transparent={false}
         onRequestClose={() => setIsContactDetailModalOpen(false)}
       >
-        <SafeAreaView style={{ flex: 1, backgroundColor: '#ffffff' }}>
+        <SafeAreaView style={{ flex: 1, backgroundColor: palette.card }}>
           {/* Barra Superior con botón circular <, SOS y botón Editar */}
           <View style={{
             flexDirection: 'row',
@@ -658,7 +660,7 @@ export const ContactsScreen = forwardRef<ContactsScreenHandle, Props>(function C
             paddingHorizontal: 16,
             paddingVertical: 12,
             borderBottomWidth: 1,
-            borderBottomColor: '#f1f5f9',
+            borderBottomColor: palette.border,
           }}>
             {/* Botón Circular Izquierdo: Volver atrás */}
             <TouchableOpacity
@@ -666,14 +668,14 @@ export const ContactsScreen = forwardRef<ContactsScreenHandle, Props>(function C
                 width: 40,
                 height: 40,
                 borderRadius: 20,
-                backgroundColor: '#f1f5f9',
+                backgroundColor: palette.input,
                 alignItems: 'center',
                 justifyContent: 'center',
               }}
               onPress={() => setIsContactDetailModalOpen(false)}
               activeOpacity={0.7}
             >
-              <ArrowLeftIcon size={20} color="#334155" strokeWidth={2.2} />
+              <ArrowLeftIcon size={20} color={palette.secondary} strokeWidth={2.2} />
             </TouchableOpacity>
 
             {/* Botones Derecha: SOS y Editar */}
@@ -729,7 +731,7 @@ export const ContactsScreen = forwardRef<ContactsScreenHandle, Props>(function C
           </View>
 
           <ScrollView
-            style={{ flex: 1, backgroundColor: '#ffffff' }}
+            style={{ flex: 1, backgroundColor: palette.card }}
             contentContainerStyle={{ paddingHorizontal: 20, paddingTop: 20, paddingBottom: 40 }}
             showsVerticalScrollIndicator={false}
           >
@@ -763,7 +765,7 @@ export const ContactsScreen = forwardRef<ContactsScreenHandle, Props>(function C
               <Text style={{
                 fontSize: 22,
                 fontWeight: '800',
-                color: '#0f172a',
+                color: palette.text,
                 marginTop: 12,
                 textAlign: 'center',
               }}>
@@ -772,7 +774,7 @@ export const ContactsScreen = forwardRef<ContactsScreenHandle, Props>(function C
 
               {/* Indicativo de Radio Pill */}
               <View style={{
-                backgroundColor: '#f1f5f9',
+                backgroundColor: palette.input,
                 paddingHorizontal: 12,
                 paddingVertical: 4,
                 borderRadius: 12,
@@ -913,10 +915,10 @@ export const ContactsScreen = forwardRef<ContactsScreenHandle, Props>(function C
 
             {/* Tarjeta 1: móvil (red celular) */}
             <View style={{
-              backgroundColor: '#ffffff',
+              backgroundColor: palette.card,
               borderRadius: 18,
               borderWidth: 1,
-              borderColor: '#e2e8f0',
+              borderColor: palette.border,
               paddingHorizontal: 16,
               paddingVertical: 12,
               marginBottom: 12,
@@ -935,7 +937,7 @@ export const ContactsScreen = forwardRef<ContactsScreenHandle, Props>(function C
                 móvil (red celular)
               </Text>
               <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                <Text style={{ fontSize: 16, fontWeight: '700', color: '#0f172a' }}>
+                <Text style={{ fontSize: 16, fontWeight: '700', color: palette.text }}>
                   {selectedContactForDetail?.phone_number || 'Sin número registrado'}
                 </Text>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
@@ -945,9 +947,9 @@ export const ContactsScreen = forwardRef<ContactsScreenHandle, Props>(function C
                       width: 36,
                       height: 36,
                       borderRadius: 18,
-                      backgroundColor: '#f8fafc',
+                      backgroundColor: palette.background,
                       borderWidth: 1,
-                      borderColor: '#e2e8f0',
+                      borderColor: palette.border,
                       alignItems: 'center',
                       justifyContent: 'center',
                     }}
@@ -963,7 +965,7 @@ export const ContactsScreen = forwardRef<ContactsScreenHandle, Props>(function C
                     {copiedDetailField === 'phone' ? (
                       <CheckIcon size={16} color="#16a34a" strokeWidth={2.4} />
                     ) : (
-                      <CopyIcon size={16} color="#64748b" strokeWidth={2} />
+                      <CopyIcon size={16} color={palette.muted} strokeWidth={2} />
                     )}
                   </TouchableOpacity>
 
@@ -973,7 +975,7 @@ export const ContactsScreen = forwardRef<ContactsScreenHandle, Props>(function C
                       width: 36,
                       height: 36,
                       borderRadius: 18,
-                      backgroundColor: '#fdf2f4',
+                      backgroundColor: palette.soft,
                       alignItems: 'center',
                       justifyContent: 'center',
                     }}
@@ -996,10 +998,10 @@ export const ContactsScreen = forwardRef<ContactsScreenHandle, Props>(function C
 
             {/* Tarjeta 2: correo institucional */}
             <View style={{
-              backgroundColor: '#ffffff',
+              backgroundColor: palette.card,
               borderRadius: 18,
               borderWidth: 1,
-              borderColor: '#e2e8f0',
+              borderColor: palette.border,
               paddingHorizontal: 16,
               paddingVertical: 12,
               marginBottom: 12,
@@ -1031,7 +1033,7 @@ export const ContactsScreen = forwardRef<ContactsScreenHandle, Props>(function C
                   width: 36,
                   height: 36,
                   borderRadius: 18,
-                  backgroundColor: '#fdf2f4',
+                  backgroundColor: palette.soft,
                   alignItems: 'center',
                   justifyContent: 'center',
                 }}>
@@ -1042,10 +1044,10 @@ export const ContactsScreen = forwardRef<ContactsScreenHandle, Props>(function C
 
             {/* Tarjeta 3: indicativo de radio (callsign) */}
             <View style={{
-              backgroundColor: '#ffffff',
+              backgroundColor: palette.card,
               borderRadius: 18,
               borderWidth: 1,
-              borderColor: '#e2e8f0',
+              borderColor: palette.border,
               paddingHorizontal: 16,
               paddingVertical: 12,
               marginBottom: 12,
@@ -1064,14 +1066,14 @@ export const ContactsScreen = forwardRef<ContactsScreenHandle, Props>(function C
                 indicativo de radio (callsign)
               </Text>
               <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                <Text style={{ fontSize: 16, fontWeight: '700', color: '#0f172a' }}>
+                <Text style={{ fontSize: 16, fontWeight: '700', color: palette.text }}>
                   {selectedContactForDetail?.callsign || 'RADIO-654'}
                 </Text>
                 <View style={{
                   width: 36,
                   height: 36,
                   borderRadius: 18,
-                  backgroundColor: '#fdf2f4',
+                  backgroundColor: palette.soft,
                   alignItems: 'center',
                   justifyContent: 'center',
                 }}>
@@ -1142,7 +1144,7 @@ export const ContactsScreen = forwardRef<ContactsScreenHandle, Props>(function C
           />
 
           <View style={{
-            backgroundColor: '#ffffff',
+            backgroundColor: palette.card,
             borderRadius: 28,
             width: '100%',
             maxWidth: 420,
@@ -1162,14 +1164,14 @@ export const ContactsScreen = forwardRef<ContactsScreenHandle, Props>(function C
               justifyContent: 'space-between',
               paddingBottom: 12,
               borderBottomWidth: 1,
-              borderBottomColor: '#f1f5f9',
+              borderBottomColor: palette.border,
             }}>
               <TouchableOpacity
                 style={{
                   width: 38,
                   height: 38,
                   borderRadius: 19,
-                  backgroundColor: '#e2e8f0',
+                  backgroundColor: palette.border,
                   alignItems: 'center',
                   justifyContent: 'center',
                 }}
@@ -1181,13 +1183,13 @@ export const ContactsScreen = forwardRef<ContactsScreenHandle, Props>(function C
                 }}
                 activeOpacity={0.8}
               >
-                <XIcon size={18} color="#475569" strokeWidth={2.2} />
+                <XIcon size={18} color={palette.secondary} strokeWidth={2.2} />
               </TouchableOpacity>
 
               <Text style={{
                 fontSize: 18,
                 fontWeight: '700',
-                color: '#0f172a',
+                color: palette.text,
                 textAlign: 'center',
               }}>
                 Editar Contacto
@@ -1240,34 +1242,34 @@ export const ContactsScreen = forwardRef<ContactsScreenHandle, Props>(function C
 
               {/* Nombre y Apellidos */}
               <View style={{
-                backgroundColor: '#ffffff',
+                backgroundColor: palette.card,
                 borderRadius: 16,
                 borderWidth: 1,
-                borderColor: '#e2e8f0',
+                borderColor: palette.border,
                 paddingHorizontal: 16,
                 paddingVertical: 10,
                 marginBottom: 14,
               }}>
-                <Text style={{ fontSize: 12, fontWeight: '600', color: '#64748b', marginBottom: 2 }}>
+                <Text style={{ fontSize: 12, fontWeight: '600', color: palette.muted, marginBottom: 2 }}>
                   Nombre(s) *
                 </Text>
                 <TextInput
                   editable={!isSavingEditContact}
-                  style={{ fontSize: 15, color: '#0f172a', paddingVertical: 4 }}
+                  style={{ fontSize: 15, color: palette.text, paddingVertical: 4 }}
                   value={editContactName}
                   onChangeText={setEditContactName}
                   placeholder="Ej. Juan Carlos"
                   placeholderTextColor="#94a3b8"
                 />
 
-                <View style={{ height: 1, backgroundColor: '#f1f5f9', marginVertical: 8 }} />
+                <View style={{ height: 1, backgroundColor: palette.input, marginVertical: 8 }} />
 
-                <Text style={{ fontSize: 12, fontWeight: '600', color: '#64748b', marginBottom: 2 }}>
+                <Text style={{ fontSize: 12, fontWeight: '600', color: palette.muted, marginBottom: 2 }}>
                   Apellidos (Opcional)
                 </Text>
                 <TextInput
                   editable={!isSavingEditContact}
-                  style={{ fontSize: 15, color: '#0f172a', paddingVertical: 4 }}
+                  style={{ fontSize: 15, color: palette.text, paddingVertical: 4 }}
                   value={editContactLastName}
                   onChangeText={setEditContactLastName}
                   placeholder="Ej. Perez Hernandez"
@@ -1277,21 +1279,21 @@ export const ContactsScreen = forwardRef<ContactsScreenHandle, Props>(function C
 
               {/* Teléfono */}
               <View style={{
-                backgroundColor: '#ffffff',
+                backgroundColor: palette.card,
                 borderRadius: 16,
                 borderWidth: 1,
-                borderColor: '#e2e8f0',
+                borderColor: palette.border,
                 paddingHorizontal: 16,
                 paddingVertical: 10,
                 marginBottom: 14,
               }}>
-                <Text style={{ fontSize: 12, fontWeight: '600', color: '#64748b', marginBottom: 2 }}>
+                <Text style={{ fontSize: 12, fontWeight: '600', color: palette.muted, marginBottom: 2 }}>
                   Número de Teléfono
                 </Text>
                 <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                   <TextInput
                   editable={!isSavingEditContact}
-                    style={{ flex: 1, fontSize: 15, color: '#0f172a', paddingVertical: 4 }}
+                    style={{ flex: 1, fontSize: 15, color: palette.text, paddingVertical: 4 }}
                     value={editContactPhone}
                     onChangeText={(text) => {
                       setEditContactPhone(text);
@@ -1312,21 +1314,21 @@ export const ContactsScreen = forwardRef<ContactsScreenHandle, Props>(function C
 
               {/* Correo */}
               <View style={{
-                backgroundColor: '#ffffff',
+                backgroundColor: palette.card,
                 borderRadius: 16,
                 borderWidth: 1,
-                borderColor: '#e2e8f0',
+                borderColor: palette.border,
                 paddingHorizontal: 16,
                 paddingVertical: 10,
                 marginBottom: 14,
               }}>
-                <Text style={{ fontSize: 12, fontWeight: '600', color: '#64748b', marginBottom: 2 }}>
+                <Text style={{ fontSize: 12, fontWeight: '600', color: palette.muted, marginBottom: 2 }}>
                   Correo Electrónico (Opcional)
                 </Text>
                 <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                   <TextInput
                   editable={!isSavingEditContact}
-                    style={{ flex: 1, fontSize: 15, color: '#0f172a', paddingVertical: 4 }}
+                    style={{ flex: 1, fontSize: 15, color: palette.text, paddingVertical: 4 }}
                     value={editContactEmail}
                     onChangeText={setEditContactEmail}
                     placeholder="ejemplo@c5i.gob.mx"
@@ -1340,21 +1342,21 @@ export const ContactsScreen = forwardRef<ContactsScreenHandle, Props>(function C
 
               {/* Indicativo de Radio */}
               <View style={{
-                backgroundColor: '#ffffff',
+                backgroundColor: palette.card,
                 borderRadius: 16,
                 borderWidth: 1,
-                borderColor: '#e2e8f0',
+                borderColor: palette.border,
                 paddingHorizontal: 16,
                 paddingVertical: 10,
                 marginBottom: 18,
               }}>
-                <Text style={{ fontSize: 12, fontWeight: '600', color: '#64748b', marginBottom: 2 }}>
+                <Text style={{ fontSize: 12, fontWeight: '600', color: palette.muted, marginBottom: 2 }}>
                   Indicativo de Radio (Callsign)
                 </Text>
                 <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                   <TextInput
                   editable={!isSavingEditContact}
-                    style={{ flex: 1, fontSize: 15, color: '#0f172a', paddingVertical: 4 }}
+                    style={{ flex: 1, fontSize: 15, color: palette.text, paddingVertical: 4 }}
                     value={editContactCallsign}
                     onChangeText={setEditContactCallsign}
                     placeholder="RADIO-654"

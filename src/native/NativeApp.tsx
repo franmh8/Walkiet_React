@@ -62,6 +62,10 @@ import { soundEngine } from '../services/soundEngine';
 import { PttScreen } from './ptt/PttScreen';
 import { useLiveRadio } from './ptt/useLiveRadio';
 import { useRadioNotifications } from './ptt/useRadioNotifications';
+import { ProfileScreen } from './profile/ProfileScreen';
+import { useAccountProfile } from './profile/useAccountProfile';
+import { AppThemeProvider, useAppTheme, useThemeStyles } from './profile/AppTheme';
+import type { AccountUser } from '../services/accountApi';
 
 // Tipos para React Native
 interface User {
@@ -228,6 +232,8 @@ async function fetchWithTimeout(url: string, options: any = {}, timeoutMs = 3500
 }
 
 function NativeAppScreen() {
+  const styles = useThemeStyles(baseStyles);
+  const { palette, dark, setMode } = useAppTheme();
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
@@ -301,10 +307,20 @@ function NativeAppScreen() {
   } | null>(null);
   const channelChoiceRevisionRef = useRef(0);
   const [serverUrl, setServerUrl] = useState('https://walkiet.alwaysdata.net');
-  const [dbStatus, setDbStatus] = useState<'ONLINE' | 'STANDBY' | 'CONNECTING'>('ONLINE');
+  const updateProfileUser = useCallback((profile: AccountUser) => {
+    setCurrentUser(previous => {
+      if (!previous || previous.id !== profile.id) return previous;
+      const next = { ...previous, name: profile.name, unit: profile.unit, role: profile.role || previous.role,
+        phone_number: profile.phone_number, email: profile.correo || undefined, callsign: profile.callsign, badge: profile.callsign || previous.badge };
+      void safeStorage.setItem('c5i_native_user', JSON.stringify(next));
+      return next;
+    });
+  }, []);
+  const account = useAccountProfile(serverUrl, currentUser?.id || '', currentUser?.authToken || '', updateProfileUser, () => { setInlineWarning('Tu sesión venció. Vuelve a iniciar sesión.'); void handleLogout(); });
+  useEffect(() => { setMode(account.settings.theme); }, [account.settings.theme, setMode]);
+  useEffect(() => { soundEngine.setMessageSounds(account.settings.messageSounds); soundEngine.setRogerBeep(account.settings.rogerBeep); }, [account.settings.messageSounds, account.settings.rogerBeep]);
+
   const [isSosActive, setIsSosActive] = useState(false);
-  const [isTestingServer, setIsTestingServer] = useState(false);
-  const [serverLatency, setServerLatency] = useState<number | null>(null);
   const [isMembersModalOpen, setIsMembersModalOpen] = useState(false);
   
   // History & Messages
@@ -553,48 +569,8 @@ function NativeAppScreen() {
     }
   }, [serverUrl, syncConversationMessages, activeConversation]);
 
-  // Probar conectividad con el servidor configurado (Alwaysdata PHP y Node Express)
-  const testServerConnection = async () => {
-    setIsTestingServer(true);
-    setServerLatency(null);
-    const start = Date.now();
-    try {
-      const cleanUrl = serverUrl.replace(/\/+$/, '');
-      let res = await fetchWithTimeout(`${cleanUrl}/status.php`, {}, 4000).catch(() => null);
-      if (!res || !res.ok) {
-        res = await fetchWithTimeout(`${cleanUrl}/api/status.php`, {}, 4000).catch(() => null);
-      }
-      if (!res || !res.ok) {
-        res = await fetchWithTimeout(`${cleanUrl}/api/database/status`, {}, 4000).catch(() => null);
-      }
-
-      const elapsed = Date.now() - start;
-      if (res && res.ok) {
-        const data = await res.json().catch(() => ({}));
-        setServerLatency(elapsed);
-        setDbStatus('ONLINE');
-        const dbName = data.database_name || data.database || 'walkiet_c5i';
-        const motor = data.engine || (data.database ? 'Alwaysdata MySQL' : 'MySQL Server');
-        const usersCount = data.users_count !== undefined ? data.users_count : (data.tables?.users ?? '3');
-        Alert.alert(
-          '✅ Conexión Exitosa',
-          `Enlace con servidor C5i establecido (${elapsed}ms).\nHost: ${cleanUrl.replace('https://', '')}\nBase de datos: ${dbName}\nMotor: ${motor}\nUsuarios registrados: ${usersCount}`
-        );
-      } else {
-        throw new Error(res ? `Código HTTP: ${res.status}` : 'Sin respuesta del host');
-      }
-    } catch (e: any) {
-      setDbStatus('STANDBY');
-      Alert.alert(
-        '⚠️ Modo Táctico Autónomo',
-        `No fue posible contactar a ${serverUrl} (${e.message || 'Sin respuesta'}). El radio continuará operando en modo táctico local con cifrado de emergencia.`
-      );
-    } finally {
-      setIsTestingServer(false);
-    }
-  };
-
   const radio = useLiveRadio(serverUrl, currentUser?.id || '', currentUser?.authToken || '', selectedChannel);
+  useEffect(() => { soundEngine.setRadioActive(radio.state !== 'off'); }, [radio.state]);
   const notificationSession = useRef('');
   notificationSession.current = JSON.stringify([serverUrl, currentUser?.id, currentUser?.authToken]);
   const notifications = useRadioNotifications(serverUrl, currentUser?.authToken || '', currentUser?.id || '', async channelId => {
@@ -606,7 +582,13 @@ function NativeAppScreen() {
       if (!matching) { showTacticalToast('Ya no perteneces al grupo de este aviso.', 'info'); return; }
       chooseAndRememberChannel(matching); setCurrentTab('PTT');
     } catch { showTacticalToast('No se pudo consultar el grupo. Abre Grupos y vuelve a intentar.', 'warning'); }
-  });
+  }, account.settings.backgroundNotifications, account.settings.messageSounds);
+  const incomingRadio = useRef(false);
+  useEffect(() => {
+    const speaking = radio.speakers.length > 0;
+    if (speaking && !incomingRadio.current && selectedChannel) { soundEngine.playIncomingChirp(); notifications.notify(radio.speakers, selectedChannel.id); }
+    incomingRadio.current = speaking;
+  }, [radio.speakers, selectedChannel?.id, notifications.notify]);
 
   const handleLogin = async () => {
     setIdentifierError(null);
@@ -1231,7 +1213,7 @@ function NativeAppScreen() {
     setRecoverVisible(false);
   };
 
-  const handleLogout = async () => {
+  const handleLogout = async (forgetAccount = false) => {
     void logoutContactSession(serverUrl, currentUser?.authToken).catch(() => {});
     setConversations([]);
     setActiveConversation(null);
@@ -1239,9 +1221,12 @@ function NativeAppScreen() {
     setIsNewChatModalOpen(false);
     setIsCreateGroupChatModalOpen(false);
     void radio.disconnect();
+    soundEngine.stopAllAudio();
+    setPassword(''); setShowPassword(false);
+    if (forgetAccount && currentUser) { try { await writeSavedChannelSelection(currentUser, null); } catch {} }
     // Refuerzo al cerrar sesión: persistir la selección actual ANTES de limpiar
     // el estado del usuario. Si no había grupo, conservamos la preferencia previa.
-    if (currentUser && selectedChannel) {
+    if (!forgetAccount && currentUser && selectedChannel) {
       try {
         await writeSavedChannelSelection(currentUser, selectedChannel);
       } catch (error) {
@@ -1702,7 +1687,7 @@ function NativeAppScreen() {
   if (!currentUser) {
     return (
       <SafeAreaView style={styles.loginContainer}>
-        <StatusBar barStyle="dark-content" />
+        <StatusBar barStyle={dark ? "light-content" : "dark-content"} />
         <KeyboardAvoidingView
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}
           style={styles.loginKeyboardWrapper}
@@ -1738,7 +1723,7 @@ function NativeAppScreen() {
               {inlineWarning ? (
                 <View style={styles.inlineWarningBox}>
                   <View style={styles.bannerIconBox}>
-                    <AlertTriangleIcon size={16} color="#be123c" strokeWidth={1.6} />
+                    <AlertTriangleIcon size={16} color={palette.danger} strokeWidth={1.6} />
                   </View>
                   <Text style={styles.inlineWarningText}>{inlineWarning}</Text>
                 </View>
@@ -1846,7 +1831,7 @@ function NativeAppScreen() {
                   onPress={openRecoveryModal}
                   activeOpacity={0.7}
                 >
-                  <KeyIcon size={16} color="#64748b" strokeWidth={1.6} />
+                  <KeyIcon size={16} color={palette.muted} strokeWidth={1.6} />
                   <Text style={styles.footerActionText}>Recuperar acceso</Text>
                 </TouchableOpacity>
 
@@ -1855,7 +1840,7 @@ function NativeAppScreen() {
                   onPress={openRegisterModal}
                   activeOpacity={0.7}
                 >
-                  <UserPlusIcon size={16} color="#691c32" strokeWidth={1.6} />
+                  <UserPlusIcon size={16} color={palette.accent} strokeWidth={1.6} />
                   <Text style={styles.registerActionText}>Registrarse</Text>
                 </TouchableOpacity>
               </View>
@@ -1880,9 +1865,9 @@ function NativeAppScreen() {
                 <View style={styles.recoveryHeaderLeft}>
                   <View style={styles.recoveryKeyBadge}>
                     {registerStep === 'sms_verification' ? (
-                      <PhoneIcon size={20} color="#8a1a36" strokeWidth={1.8} />
+                      <PhoneIcon size={20} color={palette.accent} strokeWidth={1.8} />
                     ) : (
-                      <UserPlusIcon size={20} color="#8a1a36" strokeWidth={1.8} />
+                      <UserPlusIcon size={20} color={palette.accent} strokeWidth={1.8} />
                     )}
                   </View>
                   <Text style={styles.recoveryTitle}>
@@ -1898,14 +1883,14 @@ function NativeAppScreen() {
                   style={styles.modalCloseBtn}
                   hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                 >
-                  <XIcon size={18} color="#64748b" strokeWidth={2} />
+                  <XIcon size={18} color={palette.muted} strokeWidth={2} />
                 </TouchableOpacity>
               </View>
 
               {/* Error banner */}
               {regGeneralError ? (
                 <View style={styles.recoveryErrorBanner}>
-                  <AlertTriangleIcon size={15} color="#be123c" strokeWidth={1.6} />
+                  <AlertTriangleIcon size={15} color={palette.danger} strokeWidth={1.6} />
                   <Text style={styles.recoveryErrorText}>{regGeneralError}</Text>
                 </View>
               ) : null}
@@ -2143,7 +2128,7 @@ function NativeAppScreen() {
                       onPress={() => setRegisterStep('form')}
                       activeOpacity={0.7}
                     >
-                      <ArrowLeftIcon size={14} color="#64748b" />
+                      <ArrowLeftIcon size={14} color={palette.muted} />
                       <Text style={styles.recoveryBackText}>Volver</Text>
                     </TouchableOpacity>
 
@@ -2283,7 +2268,7 @@ function NativeAppScreen() {
               <View style={styles.recoveryHeader}>
                 <View style={styles.recoveryHeaderLeft}>
                   <View style={styles.recoveryKeyBadge}>
-                    <KeyIcon size={20} color="#8a1a36" strokeWidth={1.8} />
+                    <KeyIcon size={20} color={palette.accent} strokeWidth={1.8} />
                   </View>
                   <Text style={styles.recoveryTitle}>Recuperar Contraseña</Text>
                 </View>
@@ -2292,14 +2277,14 @@ function NativeAppScreen() {
                   style={styles.modalCloseBtn}
                   hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                 >
-                  <XIcon size={18} color="#64748b" strokeWidth={2} />
+                  <XIcon size={18} color={palette.muted} strokeWidth={2} />
                 </TouchableOpacity>
               </View>
 
               {/* Inline Error Message */}
               {recoverErrorMessage ? (
                 <View style={styles.recoveryErrorBanner}>
-                  <AlertTriangleIcon size={15} color="#be123c" strokeWidth={1.6} />
+                  <AlertTriangleIcon size={15} color={palette.danger} strokeWidth={1.6} />
                   <Text style={styles.recoveryErrorText}>{recoverErrorMessage}</Text>
                 </View>
               ) : null}
@@ -2378,7 +2363,7 @@ function NativeAppScreen() {
                       }}
                       activeOpacity={0.7}
                     >
-                      <ArrowLeftIcon size={13} color="#64748b" />
+                      <ArrowLeftIcon size={13} color={palette.muted} />
                       <Text style={styles.recoveryBackText}>Volver</Text>
                     </TouchableOpacity>
 
@@ -2655,7 +2640,7 @@ function NativeAppScreen() {
 
   return (
     <SafeAreaView style={styles.cleanContainer}>
-      <StatusBar barStyle="dark-content" />
+      <StatusBar barStyle={dark ? "light-content" : "dark-content"} />
       
       {/* SOS Active Banner */}
       {isSosActive && (
@@ -2667,7 +2652,11 @@ function NativeAppScreen() {
       {/* Main Tab Content */}
       <View style={styles.cleanMainContent}>
         {currentTab === 'PTT' && (
-          <PttScreen channel={selectedChannel} radio={radio} notifications={notifications}
+          <PttScreen channel={selectedChannel} radio={radio} pttMode={account.settings.pttMode} notifications={{ ...notifications, enable: async () => {
+            const enabled = await notifications.enable();
+            if (enabled) { try { await account.saveSettings({ backgroundNotifications: true }); } catch { await notifications.disable(); return false; } }
+            return enabled;
+          } }}
             onGroups={() => setCurrentTab('Grupos')} onMembers={() => setIsMembersModalOpen(true)} onSos={handleTriggerSos} />
         )}
 
@@ -2693,7 +2682,7 @@ function NativeAppScreen() {
                     activeOpacity={0.7}
                     hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
                   >
-                    <ArrowLeftIcon size={22} color="#0f172a" strokeWidth={2.4} />
+                    <ArrowLeftIcon size={22} color={palette.text} strokeWidth={2.4} />
                   </TouchableOpacity>
 
                   <View style={styles.chatActiveAvatarBox}>
@@ -2721,7 +2710,7 @@ function NativeAppScreen() {
                     activeOpacity={0.75}
                     accessibilityLabel="Videollamada"
                   >
-                    <VideoIcon size={20} color="#334155" strokeWidth={2} />
+                    <VideoIcon size={20} color={palette.secondary} strokeWidth={2} />
                   </TouchableOpacity>
 
                   {/* Botón de Llamada de Voz */}
@@ -2731,7 +2720,7 @@ function NativeAppScreen() {
                     activeOpacity={0.75}
                     accessibilityLabel="Llamada de voz"
                   >
-                    <PhoneIcon size={19} color="#334155" strokeWidth={2} />
+                    <PhoneIcon size={19} color={palette.secondary} strokeWidth={2} />
                   </TouchableOpacity>
                 </View>
 
@@ -2760,7 +2749,7 @@ function NativeAppScreen() {
                   ) : (
                     <>
                       <View style={styles.chatSecurityBanner}>
-                        <LockIcon size={12} color="#64748b" strokeWidth={2} />
+                        <LockIcon size={12} color={palette.muted} strokeWidth={2} />
                         <Text style={styles.chatSecurityText}>
                           Cifrado de extremo a extremo táctico C5i activo
                         </Text>
@@ -2993,7 +2982,7 @@ function NativeAppScreen() {
                       >
                         <PaperclipIcon
                           size={20}
-                          color={isAttachMenuOpen ? '#8a1a36' : '#64748b'}
+                          color={isAttachMenuOpen ? palette.accent : palette.muted}
                           strokeWidth={2}
                         />
                       </TouchableOpacity>
@@ -3025,7 +3014,7 @@ function NativeAppScreen() {
                           activeOpacity={0.8}
                           accessibilityLabel="Enviar nota de voz"
                         >
-                          <MicIcon size={20} color="#8a1a36" strokeWidth={2.2} />
+                          <MicIcon size={20} color={palette.accent} strokeWidth={2.2} />
                         </TouchableOpacity>
                       )}
                     </View>
@@ -3039,7 +3028,7 @@ function NativeAppScreen() {
                 <View style={styles.chatTopHeader}>
                   <View style={styles.chatTopHeaderLeft}>
                     <View style={styles.chatHeaderIconBadge}>
-                      <MessageSquareIcon size={20} color="#8a1a36" strokeWidth={2.2} />
+                      <MessageSquareIcon size={20} color={palette.accent} strokeWidth={2.2} />
                     </View>
                     <Text style={styles.chatTopHeaderTitle}>Chat</Text>
                   </View>
@@ -3062,7 +3051,7 @@ function NativeAppScreen() {
                       activeOpacity={0.75}
                       accessibilityLabel="Nueva conversación"
                     >
-                      <EditIcon size={18} color="#0f172a" strokeWidth={2} />
+                      <EditIcon size={18} color={palette.text} strokeWidth={2} />
                     </TouchableOpacity>
                   </View>
                 </View>
@@ -3179,11 +3168,11 @@ function NativeAppScreen() {
                           <View
                             style={[
                               styles.chatConvAvatar,
-                              conv.type === 'group' && { backgroundColor: '#f1f5f9' },
+                              conv.type === 'group' && { backgroundColor: palette.input },
                             ]}
                           >
                             {conv.type === 'group' ? (
-                              <UsersIcon size={20} color="#8a1a36" strokeWidth={2} />
+                              <UsersIcon size={20} color={palette.accent} strokeWidth={2} />
                             ) : (
                               <Text style={styles.chatConvAvatarText}>
                                 {(conv.callsign?.slice(0, 2) || conv.name.slice(0, 2)).toUpperCase()}
@@ -3228,73 +3217,11 @@ function NativeAppScreen() {
           directory={contactsDirectory} onSos={handleTriggerSos} onStartChat={contact => { if (handleStartDirectChat(contact)) setCurrentTab('Chat'); }}
           onContactUpdated={handleContactUpdated} onOpenCamera={handleOpenCamera} />
 
-        {currentTab === 'Perfil' && (
-          <ScrollView style={styles.cleanScrollSection}>
-            <Text style={styles.cleanSectionTitle}>PERFIL Y ENLACE ALWAYSDATA</Text>
-
-            <View style={styles.cleanCard}>
-              <Text style={styles.cleanSettingsHeader}>SERVIDOR REMOTO</Text>
-              <Text style={styles.cleanSettingsSub}>
-                Alwaysdata MySQL: walkiet_c5i en mysql-walkiet.alwaysdata.net
-              </Text>
-              <TextInput
-                style={styles.cleanServerInput}
-                value={serverUrl}
-                onChangeText={setServerUrl}
-                placeholder="https://walkiet.alwaysdata.net"
-                placeholderTextColor="#94a3b8"
-                autoCapitalize="none"
-                autoCorrect={false}
-              />
-              <View style={styles.serverPresets}>
-                <TouchableOpacity
-                  style={styles.presetBtn}
-                  onPress={async () => {
-                    setServerUrl('https://walkiet.alwaysdata.net');
-                    await safeStorage.setItem('c5i_native_server_url', 'https://walkiet.alwaysdata.net');
-                  }}
-                >
-                  <Text style={styles.presetBtnText}>ALWAYSDATA (RECOMENDADO)</Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={styles.presetBtn}
-                  onPress={async () => {
-                    setServerUrl('http://localhost:3000');
-                    await safeStorage.setItem('c5i_native_server_url', 'http://localhost:3000');
-                  }}
-                >
-                  <Text style={styles.presetBtnText}>LOCAL (3000)</Text>
-                </TouchableOpacity>
-              </View>
-
-              <TouchableOpacity
-                style={styles.cleanTestBtn}
-                onPress={testServerConnection}
-                disabled={isTestingServer}
-              >
-                {isTestingServer ? (
-                  <ActivityIndicator size="small" color="#ffffff" />
-                ) : (
-                  <Text style={styles.cleanTestBtnText}>
-                    📡 PROBAR CONEXIÓN AL SERVIDOR {serverLatency ? `(${serverLatency}ms)` : ''}
-                  </Text>
-                )}
-              </TouchableOpacity>
-            </View>
-
-            <View style={styles.cleanCard}>
-              <Text style={styles.cleanSettingsHeader}>DATOS DEL OFICIAL</Text>
-              <Text style={styles.cleanSettingRow}>Oficial: {currentUser.name}</Text>
-              <Text style={styles.cleanSettingRow}>Indicativo: {currentUser.badge}</Text>
-              <Text style={styles.cleanSettingRow}>Unidad: {currentUser.unit}</Text>
-              <Text style={styles.cleanSettingRow}>Rol: {currentUser.role}</Text>
-
-              <TouchableOpacity style={styles.cleanLogoutBtn} onPress={handleLogout}>
-                <Text style={styles.cleanLogoutBtnText}>CERRAR SESIÓN</Text>
-              </TouchableOpacity>
-            </View>
-          </ScrollView>
+        {currentTab === 'Perfil' && currentUser && (
+          <ProfileScreen user={currentUser} account={account} notifications={notifications} serverUrl={serverUrl}
+            onLogout={() => handleLogout()}
+            onDeleted={async () => { await handleLogout(true); }}
+            onServerChange={async url => { await handleLogout(); setServerUrl(url); await safeStorage.setItem('c5i_native_server_url', url); }} />
         )}
       </View>
 
@@ -3308,7 +3235,7 @@ function NativeAppScreen() {
           >
             <MicIcon
               size={22}
-              color={currentTab === 'PTT' ? '#8a1a36' : '#64748b'}
+              color={currentTab === 'PTT' ? palette.accent : palette.muted}
               strokeWidth={currentTab === 'PTT' ? 2.4 : 1.8}
             />
             <Text style={[styles.cleanNavLabel, currentTab === 'PTT' && styles.cleanNavLabelActive]}>
@@ -3323,7 +3250,7 @@ function NativeAppScreen() {
           >
             <UsersIcon
               size={22}
-              color={currentTab === 'Grupos' ? '#8a1a36' : '#64748b'}
+              color={currentTab === 'Grupos' ? palette.accent : palette.muted}
               strokeWidth={currentTab === 'Grupos' ? 2.4 : 1.8}
             />
             <Text style={[styles.cleanNavLabel, currentTab === 'Grupos' && styles.cleanNavLabelActive]}>
@@ -3338,7 +3265,7 @@ function NativeAppScreen() {
           >
             <MessageSquareIcon
               size={22}
-              color={currentTab === 'Chat' ? '#8a1a36' : '#64748b'}
+              color={currentTab === 'Chat' ? palette.accent : palette.muted}
               strokeWidth={currentTab === 'Chat' ? 2.4 : 1.8}
             />
             <Text style={[styles.cleanNavLabel, currentTab === 'Chat' && styles.cleanNavLabelActive]}>
@@ -3353,7 +3280,7 @@ function NativeAppScreen() {
           >
             <BookOpenIcon
               size={22}
-              color={currentTab === 'Contactos' ? '#8a1a36' : '#64748b'}
+              color={currentTab === 'Contactos' ? palette.accent : palette.muted}
               strokeWidth={currentTab === 'Contactos' ? 2.4 : 1.8}
             />
             <Text style={[styles.cleanNavLabel, currentTab === 'Contactos' && styles.cleanNavLabelActive]}>
@@ -3368,7 +3295,7 @@ function NativeAppScreen() {
           >
             <UserIcon
               size={22}
-              color={currentTab === 'Perfil' ? '#8a1a36' : '#64748b'}
+              color={currentTab === 'Perfil' ? palette.accent : palette.muted}
               strokeWidth={currentTab === 'Perfil' ? 2.4 : 1.8}
             />
             <Text style={[styles.cleanNavLabel, currentTab === 'Perfil' && styles.cleanNavLabelActive]}>
@@ -3406,7 +3333,7 @@ function NativeAppScreen() {
               <View style={styles.chatModalHeader}>
                 <View style={styles.chatModalHeaderLeft}>
                   <View style={styles.chatModalIconBox}>
-                    <MessageSquareIcon size={18} color="#8a1a36" strokeWidth={2.2} />
+                    <MessageSquareIcon size={18} color={palette.accent} strokeWidth={2.2} />
                   </View>
                   <View>
                     <Text style={styles.chatModalTitle}>Nueva Conversación</Text>
@@ -3423,7 +3350,7 @@ function NativeAppScreen() {
                   }}
                   hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
                 >
-                  <XIcon size={18} color="#64748b" strokeWidth={2} />
+                  <XIcon size={18} color={palette.muted} strokeWidth={2} />
                 </TouchableOpacity>
               </View>
 
@@ -3443,7 +3370,7 @@ function NativeAppScreen() {
                   onPress={() => setIsCreateGroupChatModalOpen(true)}
                   activeOpacity={0.8}
                 >
-                  <UsersIcon size={16} color="#8a1a36" strokeWidth={2.2} />
+                  <UsersIcon size={16} color={palette.accent} strokeWidth={2.2} />
                   <Text style={styles.chatModalCreateGroupBtnText}>+ Crear Grupo de Conversación</Text>
                 </TouchableOpacity>
               </View>
@@ -3573,7 +3500,7 @@ function NativeAppScreen() {
                     setCreateGroupError(null);
                   }}
                 >
-                  <XIcon size={18} color="#64748b" strokeWidth={2} />
+                  <XIcon size={18} color={palette.muted} strokeWidth={2} />
                 </TouchableOpacity>
               </View>
 
@@ -3584,7 +3511,7 @@ function NativeAppScreen() {
               >
                 {createGroupError && (
                   <View style={styles.recoveryErrorBanner}>
-                    <AlertTriangleIcon size={15} color="#be123c" strokeWidth={1.8} />
+                    <AlertTriangleIcon size={15} color={palette.danger} strokeWidth={1.8} />
                     <Text style={styles.recoveryErrorText}>{createGroupError}</Text>
                   </View>
                 )}
@@ -3764,13 +3691,13 @@ function NativeAppScreen() {
 // El proveedor permite que Android/iOS respeten la barra de estado y la navegación inferior.
 export default function NativeApp() {
   return (
-    <SafeAreaProvider style={{ flex: 1, backgroundColor: '#f8fafc' }}>
+    <AppThemeProvider><SafeAreaProvider style={{ flex: 1, backgroundColor: '#f8fafc' }}>
       <NativeAppScreen />
-    </SafeAreaProvider>
+    </SafeAreaProvider></AppThemeProvider>
   );
 }
 
-const styles = StyleSheet.create({
+const baseStyles = StyleSheet.create({
   cleanContainer: {
     flex: 1,
     backgroundColor: '#f8fafc',
@@ -3873,59 +3800,6 @@ const styles = StyleSheet.create({
     borderRadius: 4.5,
     backgroundColor: '#10b981',
     alignSelf: 'center',
-  },
-  cleanSettingsHeader: {
-    fontSize: 12,
-    fontWeight: '800',
-    color: '#334155',
-    marginBottom: 4,
-    letterSpacing: 0.5,
-  },
-  cleanSettingsSub: {
-    fontSize: 11,
-    color: '#64748b',
-    marginBottom: 12,
-  },
-  cleanServerInput: {
-    backgroundColor: '#f8fafc',
-    borderWidth: 1,
-    borderColor: '#cbd5e1',
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    fontSize: 13,
-    color: '#0f172a',
-    marginBottom: 10,
-  },
-  cleanTestBtn: {
-    backgroundColor: '#8a1a36',
-    borderRadius: 12,
-    paddingVertical: 10,
-    alignItems: 'center',
-    marginTop: 8,
-  },
-  cleanTestBtnText: {
-    color: '#ffffff',
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  cleanSettingRow: {
-    fontSize: 13,
-    color: '#334155',
-    marginBottom: 6,
-  },
-  cleanLogoutBtn: {
-    backgroundColor: '#ef4444',
-    borderRadius: 12,
-    paddingVertical: 10,
-    alignItems: 'center',
-    marginTop: 12,
-  },
-  cleanLogoutBtnText: {
-    color: '#ffffff',
-    fontSize: 12,
-    fontWeight: '700',
-    letterSpacing: 0.5,
   },
   container: {
     flex: 1,
@@ -4265,23 +4139,6 @@ const styles = StyleSheet.create({
     color: '#f8fafc',
     fontSize: 13,
     marginBottom: 10,
-  },
-  serverPresets: {
-    flexDirection: 'row',
-    gap: 8,
-    marginBottom: 10,
-  },
-  presetBtn: {
-    flex: 1,
-    backgroundColor: '#1e293b',
-    paddingVertical: 9,
-    borderRadius: 8,
-    alignItems: 'center',
-  },
-  presetBtnText: {
-    color: '#f8fafc',
-    fontSize: 11,
-    fontWeight: '700',
   },
   testBtn: {
     backgroundColor: '#0369a1',

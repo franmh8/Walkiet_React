@@ -80,7 +80,7 @@ try {
   await a.getByText(/Transmitiendo ·/).waitFor({timeout:10000});
   await b.getByText('Hablando: Radio A',{exact:true}).waitFor({timeout:10000}).catch(async error=>{
     console.log('Estado receptor:',await b.locator('body').innerText());
-    console.log('RTC receptor:',await b.evaluate(async()=>Promise.all(window.__pttPeers.map(async peer=>({connection:peer.connectionState,ice:peer.iceConnectionState,reports:[...(await peer.getStats()).values()].filter(report=>['inbound-rtp','outbound-rtp','candidate-pair'].includes(report.type)).map(report=>({type:report.type,state:report.state,packetsReceived:report.packetsReceived,packetsSent:report.packetsSent,energy:report.totalAudioEnergy}))})))));
+    for (const [label,page] of [['emisor',a],['receptor',b]]) console.log(label+' RTC',JSON.stringify(await page.evaluate(async()=>({tracks:window.__pttTracks.map(t=>({state:t.readyState,enabled:t.enabled})),trace:window.__pttTrace,peers:await Promise.all(window.__pttPeers.map(async peer=>({connection:peer.connectionState,ice:peer.iceConnectionState,reports:[...(await peer.getStats()).values()].filter(report=>['inbound-rtp','outbound-rtp','media-source','candidate-pair'].includes(report.type)).map(report=>({type:report.type,state:report.state,packetsReceived:report.packetsReceived,packetsSent:report.packetsSent,energy:report.totalAudioEnergy}))})))}))));
     throw error;
   });
   const received=async()=>b.evaluate(async()=>{
@@ -149,6 +149,21 @@ try {
   assert.equal(await a.evaluate(()=>window.__pttTracks.every(t=>t.readyState==='ended')),true);
   await a.unroute('**/api/ptt');
   await a.screenshot({path:'/tmp/ptt-automatic.png',fullPage:true});
+  if(process.env.PTT_TEST_ACCOUNT_PREFS==='1'){
+    const prefs=async mode=>{const response=await fetch(base+'/account.php',{method:'POST',headers:{Authorization:'Bearer '+aSession.token,'Content-Type':'application/json'},body:JSON.stringify({action:'settings',settings:{pttMode:mode}})});assert.equal(response.status,200);};
+    try {
+      await prefs('toggle');await a.reload();
+      const toggle=a.getByLabel('Alternar transmisión al grupo',{exact:true});await toggle.waitFor();
+      await a.getByText('Radio conectada',{exact:true}).waitFor({timeout:35000});
+      await toggle.click();await a.getByText(/Transmitiendo ·/).waitFor();
+      await a.waitForTimeout(400);assert.equal(await a.getByText(/Transmitiendo ·/).count(),1,'Soltar el clic no debe cortar el modo Alternar.');
+      await toggle.click();await a.getByText('Toca para hablar; vuelve a tocar para terminar',{exact:true}).waitFor();
+      assert.equal(await a.evaluate(()=>window.__pttTracks.every(t=>t.readyState==='ended')),true);
+      await toggle.click();await a.getByText(/Transmitiendo ·/).waitFor();await a.getByText('Grupos',{exact:true}).click();
+      assert.equal(await a.evaluate(()=>window.__pttTracks.every(t=>t.readyState==='ended')),true,'Salir de la pestaña debe cortar también el modo Alternar.');
+    } finally { await prefs('hold'); }
+  }
+
   assert.deepEqual(errors,[]);
   console.log('OK PTT automático sin conectar/desconectar, escucha sin micrófono, liberación durante conexión, misma pulsación tras conectar, conexión única, teclado seguro, PTT real: CORS, autorización por grupo, WebRTC/Opus recibido con energía de audio, turno exclusivo, corte al soltar, respuesta tardía segura y push solo a otro miembro.');
 }finally{await browser.close();}

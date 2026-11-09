@@ -1,3 +1,4 @@
+import { useThemeStyles } from '../profile/AppTheme';
 import React, { useState, useRef, useMemo, useCallback } from 'react';
 import { View, Text, TextInput, TouchableOpacity, ScrollView, Modal, KeyboardAvoidingView,
   TouchableWithoutFeedback, Keyboard, Platform, Clipboard, Image, ActivityIndicator, useWindowDimensions } from 'react-native';
@@ -8,7 +9,7 @@ import { soundEngine } from '../../services/soundEngine';
 import type { Channel } from '../../services/channelsApi';
 import type { ChannelsDirectory } from './useChannelsDirectory';
 import { ChannelQrScanner } from './ChannelQrScanner';
-import { groupStyles as styles } from './groupStyles';
+import { groupStyles as baseStyles } from './groupStyles';
 
 interface Props {
   directory: ChannelsDirectory;
@@ -18,6 +19,7 @@ interface Props {
   onOpenPtt: () => void;
 }
 export function GroupsScreen({ directory, selectedChannel, onTune, onSos, onOpenPtt }: Props) {
+  const styles = useThemeStyles(baseStyles);
   const { channels } = directory;
   const { height: viewportHeight } = useWindowDimensions();
   const [configError, setConfigError] = useState<string | null>(null);

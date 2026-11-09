@@ -137,7 +137,7 @@ function pttDispatchPush(PDO $db, array $config) {
     $db->prepare("UPDATE ptt_push_outbox SET state='pending' WHERE state='sending' AND available_at < ? AND attempts < 3")->execute([$now]);
     $db->beginTransaction();
     try {
-        $stmt = $db->prepare("SELECT o.id, o.payload, d.push_token FROM ptt_push_outbox o INNER JOIN ptt_devices d ON d.token_hash=o.token_hash
+        $stmt = $db->prepare("SELECT o.id, o.payload, d.push_token, d.user_id AS recipient_id FROM ptt_push_outbox o INNER JOIN ptt_devices d ON d.token_hash=o.token_hash
             INNER JOIN auth_sessions s ON s.token_hash=d.session_hash AND s.user_id=d.user_id AND s.expires_at > ?
             WHERE o.state='pending' AND o.available_at<=? AND o.expires_at>? AND o.attempts<3
             AND EXISTS (SELECT 1 FROM channel_members m WHERE m.channel_id=o.channel_id AND m.user_id=d.user_id)
@@ -148,7 +148,25 @@ function pttDispatchPush(PDO $db, array $config) {
         $db->commit();
     } catch (Throwable $error) { if ($db->inTransaction()) $db->rollBack(); throw $error; }
     if (!$rows) return ['accepted'=>0];
-    $payloads = array_map(function($row) { return array_merge(json_decode($row['payload'], true), ['to'=>$row['push_token']]); }, $rows);
+    // Preferencias por destinatario, consultadas al despachar y no al iniciar el emisor.
+    $soundByUser = []; $noticesByUser = [];
+    $exists = $db->query("SELECT 1 FROM information_schema.TABLES WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='user_settings'")->fetchColumn();
+    if ($exists) {
+        $recipients = array_values(array_unique(array_column($rows,'recipient_id')));
+        $stmt = $db->prepare('SELECT user_id, channel_message_sounds, push_notifications FROM user_settings WHERE user_id IN ('.implode(',',array_fill(0,count($recipients),'?')).')');
+        $stmt->execute($recipients);
+        foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $preference) { $soundByUser[(string)$preference['user_id']] = (bool)$preference['channel_message_sounds']; $noticesByUser[(string)$preference['user_id']] = (bool)$preference['push_notifications']; }
+    }
+    $rows = array_values(array_filter($rows, function($row) use ($db, $noticesByUser) {
+        if (isset($noticesByUser[(string)$row['recipient_id']]) && !$noticesByUser[(string)$row['recipient_id']]) { $db->prepare("UPDATE ptt_push_outbox SET state='disabled' WHERE id=?")->execute([$row['id']]); return false; }
+        return true;
+    }));
+    if (!$rows) return ['accepted'=>0];
+    $payloads = array_map(function($row) use ($soundByUser) {
+        $payload = array_merge(json_decode($row['payload'], true), ['to'=>$row['push_token']]);
+        if (isset($soundByUser[(string)$row['recipient_id']]) && !$soundByUser[(string)$row['recipient_id']]) { unset($payload['sound']); $payload['channelId']='ptt-radio-silent'; }
+        return $payload;
+    }, $rows);
     $url = 'https://exp.host/--/api/v2/push/send';
     if (getenv('WALKIET_PTT_TESTING') === '1' && preg_match('#^http://127\.0\.0\.1:\d+$#D', getenv('WALKIET_PTT_PUSH_TEST_URL') ?: '')) $url = getenv('WALKIET_PTT_PUSH_TEST_URL') . '/push';
     $headers = !empty($config['expo_access_token']) ? ['Authorization: Bearer ' . $config['expo_access_token']] : [];

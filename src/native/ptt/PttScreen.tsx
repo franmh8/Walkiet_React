@@ -1,3 +1,4 @@
+import { useThemeStyles, useAppTheme } from '../profile/AppTheme';
 import React, { useEffect, useRef } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Platform, ActivityIndicator } from 'react-native';
 import { AlertTriangleIcon, MicIcon, UsersIcon } from '../icons';
@@ -6,24 +7,27 @@ import type { Channel } from '../../services/channelsApi';
 import type { LiveRadio } from './useLiveRadio';
 import type { RadioNotifications } from './useRadioNotifications';
 
-export function PttScreen({ channel, radio, notifications, onGroups, onMembers, onSos }: {
-  channel: Channel | null; radio: LiveRadio; notifications: RadioNotifications;
+export function PttScreen({ channel, radio, notifications, onGroups, onMembers, onSos, pttMode = 'hold' }: {
+  pttMode?: 'hold'|'toggle'; channel: Channel | null; radio: LiveRadio; notifications: RadioNotifications;
   onGroups: () => void; onMembers: () => void; onSos: () => void;
 }) {
-  const keyboardDown = useRef(false);
+  const styles = useThemeStyles(baseStyles); const { palette } = useAppTheme();
+  const keyboardDown = useRef(false); const transmitting = useRef(false);
+  const pressed = useRef(false); pressed.current = radio.pressed;
+  useEffect(() => { if (transmitting.current && !radio.transmitting) soundEngine.playRogerBeep(); transmitting.current = radio.transmitting; }, [radio.transmitting]);
   useEffect(() => { if (radio.transmitting) soundEngine.playPttStart(); }, [radio.transmitting]);
   useEffect(() => () => { void radio.stop(); }, [radio.stop]);
   useEffect(() => {
     if (Platform.OS !== 'web') return;
     const typing = (target: EventTarget | null) => target instanceof HTMLElement && (target.isContentEditable || !!target.closest('input,textarea,button,[role=button]'));
-    const down = (event: KeyboardEvent) => { if (event.code === 'Space' && !typing(event.target)) { event.preventDefault(); if (!event.repeat) { keyboardDown.current = true; void radio.press(); } } };
-    const up = (event: KeyboardEvent) => { if (event.code === 'Space' && keyboardDown.current) { event.preventDefault(); keyboardDown.current = false; void radio.stop(); } };
+    const down = (event: KeyboardEvent) => { if (event.code === 'Space' && !typing(event.target)) { event.preventDefault(); if (!event.repeat) { keyboardDown.current = true; void (pttMode === 'toggle' && pressed.current ? radio.stop() : radio.press()); } } };
+    const up = (event: KeyboardEvent) => { if (event.code === 'Space' && keyboardDown.current) { event.preventDefault(); keyboardDown.current = false; if (pttMode === 'hold') void radio.stop(); } };
     window.addEventListener('keydown', down); window.addEventListener('keyup', up);
-    return () => { window.removeEventListener('keydown', down); window.removeEventListener('keyup', up); if (keyboardDown.current) { keyboardDown.current = false; void radio.stop(); } };
-  }, [radio.press, radio.stop]);
+    return () => { window.removeEventListener('keydown', down); window.removeEventListener('keyup', up); if (keyboardDown.current) { keyboardDown.current = false; if (pttMode === 'hold') void radio.stop(); } };
+  }, [radio.press, radio.stop, pttMode]);
   const connected = radio.state === 'connected';
   const stateText = radio.state === 'connecting' ? 'Conectando radio...' : radio.state === 'reconnecting' ? 'Recuperando conexión...' : connected ? 'Radio conectada' : 'Radio desconectada';
-  const prompt = radio.starting ? (connected ? 'Preparando micrófono y turno...' : 'Conectando al canal... Mantén presionado') : radio.transmitting ? `Transmitiendo · ${radio.duration}s` : radio.speakers.length ? `Hablando: ${radio.speakers.join(', ')}` : 'Mantén presionado para hablar';
+  const prompt = radio.starting ? (connected ? 'Preparando micrófono y turno...' : (pttMode === 'hold' ? 'Conectando al canal... Mantén presionado' : 'Conectando al canal... Toca para cancelar')) : radio.transmitting ? `Transmitiendo · ${radio.duration}s` : radio.speakers.length ? `Hablando: ${radio.speakers.join(', ')}` : pttMode === 'hold' ? 'Mantén presionado para hablar' : 'Toca para hablar; vuelve a tocar para terminar';
   return <View style={styles.screen}>
     <View style={styles.header}>
       <TouchableOpacity style={styles.titleArea} onPress={onGroups} accessibilityLabel="Seleccionar grupo de radio">
@@ -39,9 +43,9 @@ export function PttScreen({ channel, radio, notifications, onGroups, onMembers, 
       <Text style={[styles.prompt, radio.transmitting && styles.promptOn]} accessibilityLiveRegion="polite">{channel ? prompt : 'Crea un grupo o únete a uno para comunicarte'}</Text>
       <View style={[styles.circle, radio.transmitting && styles.circleOn]}>
         <TouchableOpacity style={[styles.button, radio.transmitting && styles.buttonOn]}
-          disabled={!channel} onPressIn={() => { void radio.press(); }} onPressOut={() => { void radio.stop(); }}
-          accessibilityRole="button" accessibilityLabel="Mantén presionado para transmitir al grupo" accessibilityState={{ disabled: !channel }}>
-          {radio.starting ? <ActivityIndicator size="large" color="#691c32" /> : <MicIcon size={52} color={radio.transmitting ? '#fff' : '#334155'} strokeWidth={2} />}
+          disabled={!channel} onPressIn={() => { if (pttMode === 'hold') void radio.press(); }} onPressOut={() => { if (pttMode === 'hold') void radio.stop(); }} onPress={() => { if (pttMode === 'toggle') void (radio.pressed ? radio.stop() : radio.press()); }}
+          accessibilityRole="button" accessibilityLabel={pttMode === 'hold' ? "Mantén presionado para transmitir al grupo" : "Alternar transmisión al grupo"} accessibilityState={{ disabled: !channel }}>
+          {radio.starting ? <ActivityIndicator size="large" color="#691c32" /> : <MicIcon size={52} color={radio.transmitting ? '#fff' : palette.text} strokeWidth={2} />}
         </TouchableOpacity>
       </View>
       <View style={[styles.status, connected && styles.statusOn]}><View style={[styles.dot, connected && styles.dotOn]} /><Text style={styles.statusText}>{stateText}</Text></View>
@@ -53,7 +57,7 @@ export function PttScreen({ channel, radio, notifications, onGroups, onMembers, 
     </View>
   </View>;
 }
-const styles = StyleSheet.create({
+const baseStyles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: '#f8fafc' },
   header: { flexDirection: 'row', alignItems: 'center', padding: 20, gap: 8 },
   titleArea: { flex: 1 }, eyebrow: { color: '#64748b', fontSize: 11, fontWeight: '800', letterSpacing: 1 },
