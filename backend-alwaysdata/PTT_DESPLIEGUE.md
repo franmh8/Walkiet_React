@@ -76,6 +76,16 @@ Aplicar [`004_live_ptt.sql`](migrations/004_live_ptt.sql) después de `002_priva
 misma BD de `conexion.php`. Es repetible y toma tipo/collation de `users.id` y
 `channels.id`; no cambia cuentas, grupos ni mensajes existentes.
 
+Si una versión anterior dio `1064 ... near 'NULL'` en `PREPARE ptt_stmt`, usar el
+archivo 004 actual completo: crea las tablas con `CREATE TABLE ... AS SELECT ...
+WHERE 1=0`, sin variables de sesión ni SQL dinámico. Conserva tipos/collations de
+los IDs sin importar filas del origen. Normaliza el valor por defecto NULL del
+titular del turno para permitir un canal sin emisor. No borrar las tablas que
+ya existan: `IF NOT EXISTS` conserva sus filas al repetir la importación.
+En phpMyAdmin seleccionar la BD y usar Importar con el archivo completo. Comprobar
+después que existen `ptt_floor`, `ptt_connections`, `ptt_devices`,
+`ptt_push_outbox` y `ptt_runtime`.
+
 Subir juntos, al directorio público que contiene `conexion.php`:
 
 - [`ptt.php`](ptt.php), [`ptt-handler.php`](ptt-handler.php), [`ptt-livekit.php`](ptt-livekit.php), [`ptt-worker.php`](ptt-worker.php).
@@ -91,6 +101,11 @@ Crear un **servicio supervisado** en Alwaysdata con el comando:
 ```sh
 php /home/walkiet/www/ptt-worker.php
 ```
+
+En el panel se configura en **Avanzado → Servicios**. Alwaysdata ofrece esta
+función en sus planes de pago; para una cuenta gratuita hace falta alojar el
+worker en otro servidor con procesos continuos o usar un plan que los incluya.
+Referencia: [Servicios de Alwaysdata](https://help.alwaysdata.com/en/docs/web-hosting/services/).
 
 Usar la versión PHP de tu sitio y el directorio real de instalación. El servicio
 hereda la misma configuración privada y BD. No ejecutarlo desde una URL. Un cron
@@ -226,6 +241,10 @@ Usar exclusivamente MySQL/MariaDB local con la preparación de
 9. `PTT_TEST_BACKEND=http://127.0.0.1:8101 node tests/ptt-auto-errors.mjs` comprueba
    fallos de red/503, ausencia de reintentos en bucle, reintento desde PTT y
    ausencia de captura o éxito ficticio cuando no se consigue conectar.
+10. `CONTACTS_TEST_SOCKET=/ruta/mysql.sock php tests/ptt-migration.php` crea BD
+    sintéticas temporales para comprobar instalación, collations distintas, IDs
+    de texto/número, defaults del turno/outbox, JOIN y repetición con filas
+    existentes. Solo elimina las BD aleatorias que acaba de crear la prueba.
 
 `PLAYWRIGHT_MODULE`, `CHROMIUM_PATH` y `PTT_UI_URL` permiten seleccionar las
 herramientas locales. La captura de micrófono en la prueba es sintética de
