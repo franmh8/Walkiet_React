@@ -29,7 +29,7 @@ JPEG de 320 × 320. El servidor acepta JPEG/PNG/WebP válidos de hasta 512 × 51
 128 KB; rechaza SVG, URLs arbitrarias y cadenas no válidas. Un error conserva
 la imagen y el formulario previos.
 
-La configuración OAuth de Gmail, migración 006, rutas de verificación y recuperación
+La configuración de Gmail (SMTP u OAuth), migración 006, rutas de verificación y recuperación
 están en [CORREO_SEGURIDAD_DESPLIEGUE.md](CORREO_SEGURIDAD_DESPLIEGUE.md).
 
 ## Instalación en Alwaysdata

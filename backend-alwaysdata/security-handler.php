@@ -63,7 +63,7 @@ function handleSecurity(PDO $db,array $data,$session,$ip,array $config,$afterQue
         } catch (Throwable $error) {
             $db->prepare("UPDATE security_challenges SET status='failed' WHERE id=?")->execute([$id]);
             $reason=$error->getMessage();
-            error_log('Security Mail: '.(preg_match('/^mail_(provider_http_\d+|oauth_failed|send_unconfirmed)$/D',$reason)?$reason:'delivery_failed'));
+            error_log('Security Mail: '.(preg_match('/^mail_(provider_http_\d+|oauth_failed|send_unconfirmed|smtp_auth_failed|smtp_tls_failed|smtp_delivery_failed)$/D',$reason)?$reason:'delivery_failed'));
             if ($emailFlow) throw new SecurityRequestError(503,'No se pudo enviar el correo. Tu dirección actual se conserva. Intenta más tarde.');
         }
         return $response;

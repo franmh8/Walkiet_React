@@ -1,13 +1,15 @@
 import assert from 'node:assert/strict';
 import mysql from 'mysql2/promise';
 const base=process.env.SECURITY_TEST_BACKEND;
-if(base!=='http://127.0.0.1:8111'||!process.env.CONTACTS_TEST_SOCKET)throw Error('Usa exclusivamente la fixture contacts_test_security.');
+const smtp=process.env.SECURITY_TEST_MAIL==='smtp';
+if(base!==(smtp?'http://127.0.0.1:8116':'http://127.0.0.1:8111')||!process.env.CONTACTS_TEST_SOCKET)throw Error('Usa exclusivamente la fixture contacts_test_security.');
+const provider=smtp?'http://127.0.0.1:8115':'http://127.0.0.1:8110';
 const db=await mysql.createConnection({socketPath:process.env.CONTACTS_TEST_SOCKET,user:'root',database:'contacts_test_security'});
 const post=async(path,body,token)=>{const r=await fetch(base+path,{method:'POST',headers:{'Content-Type':'text/plain;charset=UTF-8',...(token?{Authorization:'Bearer '+token}:{})},body:JSON.stringify(body)});return{status:r.status,body:await r.json(),cache:r.headers.get('cache-control')};};
 const api=(action,body={},token)=>post('/security.php',{action,...body},token);
 const login=async id=>{const r=await post('/login.php',{identificador:id,password:'security-test-password'});assert.equal(r.status,200);assert.ok(r.body.token);return r.body.token;};
 const clearRate=()=>db.query('DELETE FROM security_rate_limits');
-const latest=async to=>(await(await fetch('http://127.0.0.1:8110/test/events')).json()).filter(e=>e.to===to).at(-1);
+const latest=async to=>(await(await fetch(provider+'/test/events')).json()).filter(e=>e.to===to).at(-1);
 const codeBody=(request,code)=>({challenge_id:request.body.challenge_id,code});
 try{
   const a=await login('7710000401'),b=await login('7710000402');
@@ -61,13 +63,20 @@ try{
   const verified=await api('recovery_verify',codeBody(renewed,(await latest('security-b@example.test')).code));assert.equal(verified.status,200);
   await db.execute('UPDATE security_challenges SET proof_expires_at=DATE_SUB(UTC_TIMESTAMP(),INTERVAL 1 SECOND) WHERE id=?',[renewed.body.challenge_id]);
   assert.equal((await api('recovery_reset',{challenge_id:renewed.body.challenge_id,reset_token:verified.body.reset_token,new_password:'never-written'})).status,400);
-  await clearRate();await fetch('http://127.0.0.1:8110/test/control',{method:'POST',body:JSON.stringify({failure:'send'})});
+  await clearRate();await fetch(provider+'/test/control',{method:'POST',body:JSON.stringify({failure:'send'})});
   try{
     assert.equal((await api('email_request',{email:'failed@example.test',password:'security-test-password'},b)).status,503);
     assert.equal((await post('/account.php',{action:'get'},b)).body.user.correo,'security-b@example.test');
     const failed=await api('recovery_request',{identifier:'security-c@example.test'});assert.equal(failed.status,200);assert.equal(failed.body.message,unknown.body.message);
-  }finally{await fetch('http://127.0.0.1:8110/test/control',{method:'POST',body:'{}'});}
+  }finally{await fetch(provider+'/test/control',{method:'POST',body:'{}'});}
+  if(smtp){
+    await clearRate();await fetch(provider+'/test/control',{method:'POST',body:JSON.stringify({failure:'auth'})});
+    try{assert.equal((await api('email_request',{email:'auth-failed@example.test',password:'security-test-password'},b)).status,503);assert.equal((await post('/account.php',{action:'get'},b)).body.user.correo,'security-b@example.test');}
+    finally{await fetch(provider+'/test/control',{method:'POST',body:'{}'});}
+    const transactions=await(await fetch(provider+'/test/transactions')).json();assert.ok(transactions.some(t=>t.tls));assert.ok(transactions.every(t=>!t.authBeforeTls));
+    const messages=await(await fetch(provider+'/test/events')).json();assert.ok(messages.length>0&&messages.every(m=>m.tls));
+  }
   await clearRate();for(let i=0;i<5;i++){const r=await api('recovery_request',{identifier:'nobody@example.test'});assert.equal(r.status,200);await db.execute('UPDATE security_rate_limits SET expires_at=DATE_SUB(UTC_TIMESTAMP(),INTERVAL 1 SECOND) WHERE expires_at<DATE_ADD(UTC_TIMESTAMP(),INTERVAL 65 SECOND)');}
   assert.equal((await api('recovery_request',{identifier:'nobody@example.test'})).status,429);
-  console.log('OK PHP/MySQL/OAuth controlado: MIME Gmail, cambio solo tras código, contraseña actual, sin bypass correo, sesiones/propósitos aislados, recuperación teléfono/correo con respuesta genérica, intentos/caducidad/reenvío, prueba de acceso de un uso, revocación y errores de proveedor sin cambios ficticios.');
+  console.log(`OK PHP/MySQL/${smtp?'SMTP STARTTLS':'OAuth'} controlado: MIME Gmail, cambio solo tras código, contraseña actual, sin bypass correo, sesiones/propósitos aislados, recuperación teléfono/correo con respuesta genérica, intentos/caducidad/reenvío, prueba de acceso de un uso, revocación y errores de proveedor sin cambios ficticios.`);
 }finally{await db.end();}

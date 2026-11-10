@@ -42,7 +42,7 @@ El endpoint antiguo de cambio de contraseña también exige sesión y actúa sol
 su titular; revoca todas sus sesiones al cambiar la clave. Se retiró el flujo de
 recuperación pública que entregaba códigos al solicitante o permitía cambiar una
 clave con solo el teléfono. La recuperación por correo verificado se instala con
-la migración 006 y OAuth Gmail, según
+la migración 006 y Gmail (SMTP u OAuth), según
 [CORREO_SEGURIDAD_DESPLIEGUE.md](CORREO_SEGURIDAD_DESPLIEGUE.md).
 Sin correo asociado se necesita ayuda del administrador para comprobar identidad.
 

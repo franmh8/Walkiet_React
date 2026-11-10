@@ -3,12 +3,15 @@
 El perfil ya no muestra Rol ni Unidad. Los campos existentes en la BD se
 conservan. Los controles de ajustes usan guinda y sus variantes para modo oscuro.
 
-El envío usa **Gmail API con OAuth**, desde una cuenta remitente del servidor.
+El envío admite **Gmail SMTP con contraseña de aplicación** y **Gmail API con
+OAuth**, desde una cuenta remitente del servidor. Para la pantalla de contraseñas
+de aplicación de Google, seguir [SMTP_GMAIL_DESPLIEGUE.md](SMTP_GMAIL_DESPLIEGUE.md):
+no necesita los pasos OAuth de abajo.
 No usa una API key, no inicia sesión con Google al usuario y no envía SMS.
 La integración está implementada; cada instalación debe autorizar su remitente.
 Sin configuración válida responde 503 y no simula un envío.
 
-## 1. Preparar Google
+## 1. Preparar Google (opción Gmail API/OAuth)
 
 1. Entrar con la cuenta que enviará los correos en
    [Google Cloud Console](https://console.cloud.google.com/), crear o seleccionar
@@ -55,6 +58,7 @@ Completar los valores **entre las comillas**, conservándolas:
 ```php
 <?php
 return [
+    'provider' => 'gmail_api',
     'code_secret' => 'VALOR_ALEATORIO_PROPIO',
     'gmail_client_id' => 'ID_CLIENTE_OAUTH',
     'gmail_client_secret' => 'SECRETO_CLIENTE_OAUTH',
@@ -85,6 +89,8 @@ con OpenSSL y `allow_url_fopen`. No desactivar la validación TLS.
    - [security.php](security.php)
    - [security-handler.php](security-handler.php)
    - [security-mail.php](security-mail.php)
+   - Para SMTP: [security-smtp.php](security-smtp.php) y la carpeta `lib/PHPMailer/`
+     completa, con clases y licencia.
    - [account-handler.php](account-handler.php) actualizado: bloquea cambiar el
      correo con el endpoint antiguo para evitar saltarse la verificación.
    - [.htaccess](.htaccess) actualizado y [api/security.php](api/security.php) si
