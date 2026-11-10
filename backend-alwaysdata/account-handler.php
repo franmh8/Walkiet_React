@@ -63,7 +63,7 @@ function handleAccount(PDO $db, array $data, $owner) {
         }
         if ($action==='update') {
             $patch=$data['fields'] ?? null;
-            if (!is_array($patch) || !$patch || array_diff(array_keys($patch), ['name','unit','correo'])) throw new AccountRequestError(400, 'Solo puedes editar nombre, unidad y correo.');
+            if (!is_array($patch) || !$patch || array_diff(array_keys($patch), ['name','unit'])) throw new AccountRequestError(400, 'El correo requiere verificación. Usa el cambio de correo con código de seguridad.');
             $sets=[]; $args=[];
             foreach ($patch as $field=>$value) {
                 $value=accountText($value, ['name'=>'El nombre','unit'=>'La unidad','correo'=>'El correo'][$field], $field==='unit'?100:120, $field!=='name');

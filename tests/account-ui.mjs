@@ -21,7 +21,8 @@ try{
   const a=await setup('7710000301');
   await a.getByText('Prueba Perfil A',{exact:true}).first().waitFor();
   assert.equal(await a.getByText('PERFIL Y ENLACE ALWAYSDATA',{exact:true}).count(),0);
-  assert.equal(await a.getByLabel('Editar Rol',{exact:true}).count(),0);
+  assert.equal(await a.getByText('Rol',{exact:true}).count(),0);
+  assert.equal(await a.getByText('Unidad / Sector',{exact:true}).count(),0);
   assert.equal(await a.getByLabel('Editar Número de teléfono',{exact:true}).count(),0);
   await a.screenshot({path:'/tmp/account-profile-light.png',fullPage:true});
   await a.getByLabel('Editar Nombre',{exact:true}).click();await a.getByLabel('Nombre',{exact:true}).fill('Nombre conservado en formulario');

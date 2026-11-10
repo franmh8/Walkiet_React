@@ -17,10 +17,10 @@ try {
   assert.equal((await api(a,'update',{fields:{phone_number:'7710000399'}})).status,400);
   assert.equal((await api(a,'update',{fields:{name:'No debe guardarse',correo:'not-an-email'}})).status,400);
   assert.equal((await api(a,'get')).body.user.name,'Prueba Perfil A');
-  const updated=await api(a,'update',{user_id:'account-b',fields:{name:'Perfil A actualizado',unit:'Sector de pruebas actualizado',correo:'updated-a@example.test'}});
+  const updated=await api(a,'update',{user_id:'account-b',fields:{name:'Perfil A actualizado',unit:'Sector de pruebas actualizado'}});
   assert.equal(updated.status,200);assert.equal(updated.body.user.name,'Perfil A actualizado');
   assert.equal((await api(b,'get')).body.user.name,'Prueba Perfil B');
-  assert.equal((await api(b,'update',{fields:{correo:'UPDATED-A@example.test'}})).status,409);
+  assert.equal((await api(b,'update',{fields:{correo:'updated-a@example.test'}})).status,400,'El correo requiere el flujo con código.');
   assert.equal((await api(a,'settings',{settings:{theme:'dark',pttMode:'toggle',messageSounds:false,rogerBeep:false}})).status,200);
   assert.equal((await api(a,'get')).body.settings.theme,'dark');assert.equal((await api(b,'get')).body.settings.theme,'system');
   assert.equal((await api(a,'settings',{settings:{messageSounds:'false'}})).status,400);
@@ -49,5 +49,5 @@ try {
   assert.equal((await api(a,'get')).status,200);assert.equal((await api(c,'get')).status,200);
   await db.execute("UPDATE auth_sessions SET expires_at=DATE_SUB(UTC_TIMESTAMP(),INTERVAL 1 SECOND) WHERE user_id='account-c'");
   assert.equal((await api(c,'get')).status,401);
-  console.log('OK cuenta PHP/MySQL: sesión/CORS, identidad propia, edición atómica, rol/teléfono protegidos, correo duplicado, preferencias aisladas, avatar válido sin SVG/URL, eliminación confirmada y revocación sin borrar grupos ajenos.');
+  console.log('OK cuenta PHP/MySQL: sesión/CORS, identidad propia, edición atómica, rol/teléfono protegidos, correo directo bloqueado, preferencias aisladas, avatar válido sin SVG/URL, eliminación confirmada y revocación sin borrar grupos ajenos.');
 } finally { await db.end(); }

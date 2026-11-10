@@ -33,7 +33,7 @@ export function createAccountApi(baseUrl: string, token: string, fetcher: typeof
     if (!data.user?.id || typeof data.user.name !== 'string' || !['light','dark','system'].includes(data.settings?.theme) || !['hold','toggle'].includes(data.settings?.pttMode)) throw new Error('El servidor devolvió un perfil no válido.');
     return data;
   }
-  return { get: () => snapshot('get'), update: (fields: Partial<Pick<AccountUser, 'name'|'unit'|'correo'>>) => snapshot('update', { fields }),
+  return { get: () => snapshot('get'), update: (fields: Partial<Pick<AccountUser, 'name'|'unit'>>) => snapshot('update', { fields }),
     settings: (settings: Partial<AccountSettings>) => snapshot('settings', { settings }), avatar: (image: string | null) => snapshot('avatar', { image }),
     delete: (password: string) => request('delete', { password, confirmation: 'ELIMINAR' }),
     async health() { const start = Date.now(); const data = await request('health', {}, false); if (data.service !== 'walkiet-account' || data.database !== true) throw new Error('El servidor no confirmó la conexión con la BD.'); return Date.now() - start; },

@@ -16,6 +16,7 @@ web-build/
 # Credenciales privadas de radio
 /private/
 /backend-alwaysdata/ptt-config.php
+/backend-alwaysdata/security-config.php
 
 # Configuración local y archivos de servicios móviles
 .env.local

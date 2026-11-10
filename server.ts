@@ -538,6 +538,19 @@ app.put(['/api/contacts/:id', '/api/contacts', '/contacts.php'], handleContactRe
 app.delete(['/api/contacts/:id', '/api/contacts', '/contacts.php'], handleContactRequest);
 
 // Perfil y preferencias tienen la misma autoridad PHP en desarrollo y Alwaysdata.
+app.post(['/api/security', '/security.php'], async (req: Request, res: Response) => {
+  res.setHeader('Cache-Control', 'no-store');
+  const origin = (process.env.SECURITY_PHP_ORIGIN || process.env.ACCOUNT_PHP_ORIGIN || process.env.PTT_PHP_ORIGIN)?.replace(/\/+$/, '');
+  if (!origin || !/^https:\/\/[a-z0-9.-]+(?::\d+)?$/i.test(origin) && !/^http:\/\/(127\.0\.0\.1|localhost):\d+$/.test(origin)) return res.status(503).json({ success: false, message: 'Configura SECURITY_PHP_ORIGIN con el backend PHP de verificación.' });
+  try {
+    const authenticated = ['email_request','email_verify'].includes(req.body?.action);
+    const result = await fetch(origin+'/security.php', { method: 'POST', redirect: 'error', signal: AbortSignal.timeout(25000),
+      headers: { 'Content-Type': 'application/json', ...(authenticated ? { Authorization: req.get('authorization') || '' } : {}) }, body: JSON.stringify(req.body || {}) });
+    if (result.status === 429) res.setHeader('Retry-After', '60');
+    return res.status(result.status).json(await result.json());
+  } catch { return res.status(502).json({ success: false, message: 'No se pudo contactar al servicio de verificación.' }); }
+});
+
 app.all(['/api/account', '/account.php'], async (req: Request, res: Response) => {
   res.setHeader('Cache-Control', 'no-store');
   if (!['GET','POST'].includes(req.method)) return res.status(405).json({ success: false, message: 'Usa GET o POST para gestionar la cuenta.' });

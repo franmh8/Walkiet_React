@@ -41,8 +41,10 @@ iniciar sesión de nuevo. Los placeholders `hash_demo` no autentican cuentas.
 El endpoint antiguo de cambio de contraseña también exige sesión y actúa solo sobre
 su titular; revoca todas sus sesiones al cambiar la clave. Se retiró el flujo de
 recuperación pública que entregaba códigos al solicitante o permitía cambiar una
-clave con solo el teléfono. Recuperar acceso sin sesión requiere al administrador
-hasta integrar un canal de verificación real.
+clave con solo el teléfono. La recuperación por correo verificado se instala con
+la migración 006 y OAuth Gmail, según
+[CORREO_SEGURIDAD_DESPLIEGUE.md](CORREO_SEGURIDAD_DESPLIEGUE.md).
+Sin correo asociado se necesita ayuda del administrador para comprobar identidad.
 
 ## Actualización de una BD existente
 

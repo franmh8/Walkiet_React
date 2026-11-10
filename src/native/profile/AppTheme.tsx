@@ -1,9 +1,9 @@
 import React, { createContext, useContext, useMemo, useState } from 'react';
 import { useColorScheme } from 'react-native';
 import type { AccountSettings } from '../../services/accountApi';
-export const lightPalette = { background: '#f8fafc', card: '#ffffff', text: '#0f172a', secondary: '#475569', muted: '#64748b', border: '#e2e8f0', accent: '#691c32', soft: '#f8edf0', danger: '#ef254d', dangerSoft: '#fff1f2', input: '#f8fafc', blue: '#00a7e8', blueSoft: '#eef9ff', shadow: '#0f172a' };
+export const lightPalette = { background: '#f8fafc', card: '#ffffff', text: '#0f172a', secondary: '#475569', muted: '#64748b', border: '#e2e8f0', accent: '#691c32', soft: '#f8edf0', danger: '#ef254d', dangerSoft: '#fff1f2', input: '#f8fafc', control: '#691c32', shadow: '#0f172a' };
 export type Palette = typeof lightPalette;
-const darkPalette: Palette = { background: '#0c1422', card: '#172235', text: '#f1f5f9', secondary: '#cbd5e1', muted: '#94a3b8', border: '#2e3d53', accent: '#f1a1b9', soft: '#382334', danger: '#ff718c', dangerSoft: '#3a202d', input: '#111c2d', blue: '#38bdf8', blueSoft: '#153447', shadow: '#000000' };
+const darkPalette: Palette = { background: '#0c1422', card: '#172235', text: '#f1f5f9', secondary: '#cbd5e1', muted: '#94a3b8', border: '#2e3d53', accent: '#f1a1b9', soft: '#382334', danger: '#ff718c', dangerSoft: '#3a202d', input: '#111c2d', control: '#a83c61', shadow: '#000000' };
 const Context = createContext({ palette: lightPalette, dark: false, setMode: (_mode: AccountSettings['theme']) => {} });
 export function AppThemeProvider({ children }: { children: React.ReactNode }) {
   const [mode, setMode] = useState<AccountSettings['theme']>('system');

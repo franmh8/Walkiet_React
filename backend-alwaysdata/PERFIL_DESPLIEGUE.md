@@ -7,9 +7,12 @@
 `useAccountProfile.ts` administra la sesión, las solicitudes y su estado;
 `accountApi.ts` usa una sola ruta y descarta errores sin anunciar éxito local.
 
-Nombre, unidad y correo se guardan en `users` para el titular del token.
-El teléfono y el rol son de consulta: el cliente no puede modificarlos ni editar
-otra cuenta enviando un ID. El nombre/correo guardados se reflejan en la sesión
+El perfil muestra nombre, teléfono y correo. Rol y Unidad se retiraron de esta
+vista, conservando sus datos existentes en la BD. Nombre y foto se editan para
+el titular del token. El cambio de correo exige contraseña actual y un código
+enviado al nuevo destino; la API de edición directa no permite saltarlo.
+El teléfono es de consulta: el cliente no puede modificarlo ni editar otra
+cuenta enviando un ID. El nombre/correo guardados se reflejan en la sesión
 local; volver a iniciar sesión consulta los datos actualizados de la BD.
 
 Se reutiliza **`user_settings`** del esquema original, con `theme_mode`,
@@ -25,6 +28,9 @@ recorte cuadrado y reducción
 JPEG de 320 × 320. El servidor acepta JPEG/PNG/WebP válidos de hasta 512 × 512 y
 128 KB; rechaza SVG, URLs arbitrarias y cadenas no válidas. Un error conserva
 la imagen y el formulario previos.
+
+La configuración OAuth de Gmail, migración 006, rutas de verificación y recuperación
+están en [CORREO_SEGURIDAD_DESPLIEGUE.md](CORREO_SEGURIDAD_DESPLIEGUE.md).
 
 ## Instalación en Alwaysdata
 
