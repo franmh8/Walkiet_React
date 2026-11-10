@@ -1,5 +1,9 @@
 @import "tailwindcss";
 
+/* El contenedor web conserva la misma altura completa que Expo. */
+html, body, #root { width: 100%; height: 100%; margin: 0; }
+#root { display: flex; flex-direction: column; }
+
 @layer base {
   * {
     -webkit-tap-highlight-color: transparent;

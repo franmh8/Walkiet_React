@@ -14,15 +14,16 @@ import {
   Image,
   Modal,
   KeyboardAvoidingView,
-  Animated,
-  Easing,
-  Clipboard,
   Keyboard,
   TouchableWithoutFeedback,
   Linking,
 } from 'react-native';
 import { SafeAreaView, SafeAreaProvider } from 'react-native-safe-area-context';
 import { safeStorage } from './storage';
+import { logoutContactSession, type DirectoryContact as ContactOfficer } from '../services/contactsApi';
+import { ContactsScreen, type ContactsScreenHandle } from './contacts/ContactsScreen';
+import { useContactsDirectory } from './contacts/useContactsDirectory';
+import { useNativeFeedback } from './components/NativeFeedback';
 import c5iLogoImg from '../../assets/c5i-logo.png';
 import {
   UserIcon,
@@ -32,7 +33,6 @@ import {
   UserPlusIcon,
   AlertTriangleIcon,
   CheckCircleIcon,
-  CheckIcon,
   PhoneIcon,
   MailIcon,
   ArrowLeftIcon,
@@ -41,18 +41,10 @@ import {
   UsersIcon,
   MessageSquareIcon,
   BookOpenIcon,
-  WifiIcon,
   XIcon,
   PlusIcon,
-  RadioIcon,
-  LogInIcon,
   SearchIcon,
-  QrCodeIcon,
   CameraIcon,
-  CopyIcon,
-  SettingsIcon,
-  LogOutIcon,
-  TrashIcon,
   EditIcon,
   SendIcon,
   PaperclipIcon,
@@ -61,85 +53,20 @@ import {
   ImageIcon,
   MapPinIcon,
   FileTextIcon,
-  ShieldIcon,
 } from './icons';
-import QRCode from 'qrcode';
+import type { Channel } from '../services/channelsApi';
+import { GroupsScreen } from './groups/GroupsScreen';
+import { useChannelsDirectory } from './groups/useChannelsDirectory';
+import { ChannelMembersModal } from './groups/ChannelMembersModal';
 import { soundEngine } from '../services/soundEngine';
-
-// Cargador web dinámico en runtime (evita que Metro bundler falle en terminal local)
-function ensureWebQrScannerLoaded() {
-  if (typeof window === 'undefined' || typeof document === 'undefined') return;
-  if ((window as any).jsQR || document.getElementById('c5i-qr-decoder-script')) return;
-  try {
-    const s = document.createElement('script');
-    s.id = 'c5i-qr-decoder-script';
-    s.src = 'https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js';
-    s.async = true;
-    document.head.appendChild(s);
-  } catch {}
-}
-
-// Componente de cámara nativa con resolución protegida contra fallos nativos
-let NativeCameraView: any = null;
-let requestNativeCamPerm: any = null;
-let getNativeCamPerm: any = null;
-try {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const ExpoCam = typeof require === 'function' ? require('expo-camera') : null;
-  if (ExpoCam) {
-    NativeCameraView = ExpoCam.CameraView || ExpoCam.Camera || ExpoCam.default;
-    requestNativeCamPerm =
-      ExpoCam.Camera?.requestCameraPermissionsAsync ||
-      ExpoCam.requestCameraPermissionsAsync ||
-      ExpoCam.CameraView?.requestCameraPermissionsAsync;
-    getNativeCamPerm =
-      ExpoCam.Camera?.getCameraPermissionsAsync ||
-      ExpoCam.getCameraPermissionsAsync ||
-      ExpoCam.CameraView?.getCameraPermissionsAsync;
-  }
-} catch {
-  // Graceful fallback
-}
-
-// Helper robusto para consultar permisos usando la Permission API de Expo
-async function queryExpoCameraPermission(): Promise<{ granted: boolean; status: string; canAskAgain: boolean }> {
-  try {
-    if (getNativeCamPerm) {
-      const res = await getNativeCamPerm();
-      if (res) {
-        const isGranted = Boolean(res.granted || res.status === 'granted');
-        return {
-          granted: isGranted,
-          status: res.status || (isGranted ? 'granted' : 'denied'),
-          canAskAgain: res.canAskAgain !== false,
-        };
-      }
-    }
-  } catch (e) {
-    console.warn('Error al consultar permisos de cámara en Expo:', e);
-  }
-  return { granted: false, status: 'undetermined', canAskAgain: true };
-}
-
-// Helper robusto para solicitar autorización usando la Permission API de Expo
-async function requestExpoCameraPermission(): Promise<{ granted: boolean; status: string; canAskAgain: boolean }> {
-  try {
-    if (requestNativeCamPerm) {
-      const res = await requestNativeCamPerm();
-      if (res) {
-        const isGranted = Boolean(res.granted || res.status === 'granted');
-        return {
-          granted: isGranted,
-          status: res.status || (isGranted ? 'granted' : 'denied'),
-          canAskAgain: res.canAskAgain !== false,
-        };
-      }
-    }
-  } catch (e) {
-    console.warn('Error al solicitar permisos de cámara en Expo:', e);
-  }
-  return { granted: false, status: 'denied', canAskAgain: false };
-}
+import { PttScreen } from './ptt/PttScreen';
+import { useLiveRadio } from './ptt/useLiveRadio';
+import { useRadioNotifications } from './ptt/useRadioNotifications';
+import { ProfileScreen } from './profile/ProfileScreen';
+import { SecurityCodeModal } from './profile/SecurityCodeModal';
+import { useAccountProfile } from './profile/useAccountProfile';
+import { AppThemeProvider, useAppTheme, useThemeStyles } from './profile/AppTheme';
+import type { AccountUser } from '../services/accountApi';
 
 // Tipos para React Native
 interface User {
@@ -152,19 +79,7 @@ interface User {
   callsign?: string;
   email?: string;
   loginIdentifier?: string;
-}
-
-interface Channel {
-  id: string;
-  name: string;
-  code: string;
-  frequency: string;
-  category: string;
-  isEncrypted: boolean;
-  activeUsers: number;
-  pin?: string;
-  accessCode?: string;
-  isPrivate?: boolean;
+  authToken?: string;
 }
 
 interface Transmission {
@@ -207,63 +122,6 @@ export interface Conversation {
   isOnline: boolean;
   messages: ChatMessage[];
 }
-
-export interface ContactOfficer {
-  id: string;
-  name: string;
-  callsign: string;
-  unit: string;
-  phone_number?: string;
-  email?: string;
-  status: 'online' | 'offline';
-  role?: string;
-}
-
-const INITIAL_OFFICERS: ContactOfficer[] = [
-  {
-    id: 'usr-c5i-01',
-    name: 'Comandante Roberto Morales',
-    callsign: 'HALCÓN-01',
-    unit: 'Fuerza Especial de Reacción C5i',
-    phone_number: '7711234567',
-    status: 'online',
-    role: 'Mando Operativo',
-  },
-  {
-    id: 'usr-c5i-02',
-    name: 'Oficial Karla Mendoza',
-    callsign: 'PATRULLA-04',
-    unit: 'Sector Operativo Pachuca Sur',
-    phone_number: '7719876543',
-    status: 'online',
-    role: 'Elemento Táctico',
-  },
-  {
-    id: 'usr-c5i-03',
-    name: 'Oficial Diego Navarrete',
-    callsign: 'COBRA-09',
-    unit: 'Vialidad y Tránsito Estatal',
-    phone_number: '7714567890',
-    status: 'online',
-    role: 'Vialidad',
-  },
-  {
-    id: 'usr-c5i-04',
-    name: 'Despacho Central 911',
-    callsign: 'CENTRAL-C5I',
-    unit: 'Centro de Comando C5i Hidalgo',
-    phone_number: '7710009911',
-    status: 'online',
-    role: 'Despachador 911',
-  },
-];
-
-const DEFAULT_CHANNELS: Channel[] = [
-  { id: 'chan-01', name: 'LOLO', code: 'CH-10', frequency: '154.800 MHz', category: 'Táctico', isEncrypted: true, activeUsers: 1, pin: '1090', accessCode: 'C5I-TAC-10' },
-  { id: 'chan-02', name: 'OPERACIONES ESPECIALES TÁCTICAS', code: 'CH-20', frequency: '156.200 MHz', category: 'Táctico', isEncrypted: true, activeUsers: 14, pin: '2040', accessCode: 'C5I-OP-20' },
-  { id: 'chan-03', name: 'DESPACHO EMERGENCIAS 911', code: 'CH-91', frequency: '158.450 MHz', category: 'Emergencia', isEncrypted: true, activeUsers: 22, pin: '9110', accessCode: 'C5I-EM-91' },
-  { id: 'chan-04', name: 'VIALIDAD Y TRÁNSITO PACHUCA', code: 'CH-44', frequency: '153.950 MHz', category: 'Vialidad', isEncrypted: true, activeUsers: 12, pin: '4410', accessCode: 'C5I-VI-44' },
-];
 
 // Preferencia de grupo por cuenta. No guardar un canal en una clave global:
 // una cuenta diferente no debe heredar el grupo de otro usuario.
@@ -375,6 +233,8 @@ async function fetchWithTimeout(url: string, options: any = {}, timeoutMs = 3500
 }
 
 function NativeAppScreen() {
+  const styles = useThemeStyles(baseStyles);
+  const { palette, dark, setMode } = useAppTheme();
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
@@ -412,37 +272,11 @@ function NativeAppScreen() {
     }
   }, [regResendTimer]);
 
-  // Recuperar Contraseña (Flow idéntico a ForgotPasswordModal / Image 1)
-  type RecoveryStep = 'identify' | 'token' | 'new_password' | 'success';
   const [recoverVisible, setRecoverVisible] = useState(false);
-  const [recoverStep, setRecoverStep] = useState<RecoveryStep>('identify');
-  const [recoverIdentifier, setRecoverIdentifier] = useState('');
-  const [recoverMatchedUser, setRecoverMatchedUser] = useState<any>(null);
-  const [recoverGeneratedCode, setRecoverGeneratedCode] = useState<string | null>(null);
-  const [recoverTokenString, setRecoverTokenString] = useState('');
-  const [recoverResendCooldown, setRecoverResendCooldown] = useState(0);
-  const [recoverNewPassword, setRecoverNewPassword] = useState('');
-  const [recoverConfirmPassword, setRecoverConfirmPassword] = useState('');
-  const [recoverShowNewPass, setRecoverShowNewPass] = useState(false);
-  const [recoverShowConfirmPass, setRecoverShowConfirmPass] = useState(false);
-  const [recoverLoading, setRecoverLoading] = useState(false);
-  const [recoverErrorMessage, setRecoverErrorMessage] = useState<string | null>(null);
-  const tokenHiddenInputRef = useRef<any>(null);
-
-  useEffect(() => {
-    if (recoverResendCooldown > 0) {
-      const timer = setTimeout(() => setRecoverResendCooldown((c) => c - 1), 1000);
-      return () => clearTimeout(timer);
-    }
-  }, [recoverResendCooldown]);
 
   const [currentTab, setCurrentTab] = useState<'PTT' | 'Grupos' | 'Chat' | 'Contactos' | 'Perfil'>('PTT');
   
-  // Radio & PTT State
-  const [channels, setChannels] = useState<Channel[]>(DEFAULT_CHANNELS);
-  // Evita restaurar una coincidencia engañosa de los canales de ejemplo:
-  // sus IDs no necesariamente coinciden con los que devuelve la API.
-  const [channelsSyncedFromServer, setChannelsSyncedFromServer] = useState(false);
+  // Radio y selección de grupo por cuenta.
   // Se recupera el canal elegido por este usuario, si sigue disponible.
   const [selectedChannel, setSelectedChannel] = useState<Channel | null>(null);
   const [pendingSavedChannel, setPendingSavedChannel] = useState<{
@@ -451,73 +285,25 @@ function NativeAppScreen() {
     revision: number;
   } | null>(null);
   const channelChoiceRevisionRef = useRef(0);
-  const [isTransmitting, setIsTransmitting] = useState(false);
-  const [txDuration, setTxDuration] = useState(0);
-  const [signalStrength] = useState(98);
-  const [batteryLevel] = useState(91);
   const [serverUrl, setServerUrl] = useState('https://walkiet.alwaysdata.net');
-  const [dbStatus, setDbStatus] = useState<'ONLINE' | 'STANDBY' | 'CONNECTING'>('ONLINE');
+  const updateProfileUser = useCallback((profile: AccountUser) => {
+    setCurrentUser(previous => {
+      if (!previous || previous.id !== profile.id) return previous;
+      const next = { ...previous, name: profile.name, unit: profile.unit, role: profile.role || previous.role,
+        phone_number: profile.phone_number, email: profile.correo || undefined, callsign: profile.callsign, badge: profile.callsign || previous.badge };
+      void safeStorage.setItem('c5i_native_user', JSON.stringify(next));
+      return next;
+    });
+  }, []);
+  const account = useAccountProfile(serverUrl, currentUser?.id || '', currentUser?.authToken || '', updateProfileUser, () => { setInlineWarning('Tu sesión venció. Vuelve a iniciar sesión.'); void handleLogout(); });
+  useEffect(() => { setMode(account.settings.theme); }, [account.settings.theme, setMode]);
+  useEffect(() => { soundEngine.setMessageSounds(account.settings.messageSounds); soundEngine.setRogerBeep(account.settings.rogerBeep); }, [account.settings.messageSounds, account.settings.rogerBeep]);
+
   const [isSosActive, setIsSosActive] = useState(false);
-  const [isTestingServer, setIsTestingServer] = useState(false);
-  const [serverLatency, setServerLatency] = useState<number | null>(null);
   const [isMembersModalOpen, setIsMembersModalOpen] = useState(false);
   
-  // Canales Filters, Search & Modals
-  const [channelSearchText, setChannelSearchText] = useState('');
-  const [selectedCategory, setSelectedCategory] = useState<string>('Todos');
-
-  // Modal: Unirse a Canal
-  const [isJoinModalOpen, setIsJoinModalOpen] = useState(false);
-  const [joinPinDigits, setJoinPinDigits] = useState('');
-  const [joinError, setJoinError] = useState<string | null>(null);
-  const [isJoinScanning, setIsJoinScanning] = useState(false);
-  const joinPinInputRef = useRef<any>(null);
-
-  // Modal: Crear Canal
-  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
-  const [createChannelName, setCreateChannelName] = useState('');
-  const [createChannelCategory, setCreateChannelCategory] = useState('Táctico');
-  const [createChannelFrequency, setCreateChannelFrequency] = useState('');
-  const [createChannelPin, setCreateChannelPin] = useState('');
-  const [createChannelIsPrivate, setCreateChannelIsPrivate] = useState(false);
-  const [createChannelError, setCreateChannelError] = useState<string | null>(null);
-  const createChannelPinInputRef = useRef<any>(null);
-
-  // Modal: Configuración y QR del Canal
-  const [isConfigModalOpen, setIsConfigModalOpen] = useState(false);
-  const [configChannel, setConfigChannel] = useState<Channel | null>(null);
-  const [configQrUrl, setConfigQrUrl] = useState<string | null>(null);
-  const [configQrMatrix, setConfigQrMatrix] = useState<boolean[][]>([]);
-  const [hasCopiedPin, setHasCopiedPin] = useState(false);
-
-  // Modal de éxito táctico personalizado (reemplaza Alert.alert del sistema con colorimetría C5i)
-  const [scanSuccessModal, setScanSuccessModal] = useState<{
-    isOpen: boolean;
-    channel: Channel | null;
-    pin: string;
-    source: 'qr' | 'pin' | 'tune' | 'leave' | 'delete' | 'create';
-    customTitle?: string;
-    customSubtitle?: string;
-  }>({
-    isOpen: false,
-    channel: null,
-    pin: '',
-    source: 'qr',
-  });
-
-  // Estado de la cámara real y animación del láser
-  const [cameraPermissionGranted, setCameraPermissionGranted] = useState<boolean | null>(null);
-  const [isRequestingPermission, setIsRequestingPermission] = useState(false);
-  const [permissionCanAskAgain, setPermissionCanAskAgain] = useState(true);
-  const scanLaserAnim = useRef(new Animated.Value(0)).current;
-  const webVideoRef = useRef<any>(null);
-  
   // History & Messages
-  const [transmissions, setTransmissions] = useState<Transmission[]>([
-    { id: '1', sender: 'Central C5i Hidalgo', badge: 'CTR-01', channel: 'OPERACIONES ESPECIALES TÁCTICAS', timestamp: '10:14', duration: 3, type: 'voice' },
-    { id: '2', sender: 'Patrulla P-204', badge: 'PAT-204', channel: 'OPERACIONES ESPECIALES TÁCTICAS', timestamp: '10:18', duration: 4, type: 'voice' },
-    { id: '3', sender: 'Comandante Morales', badge: 'HALCÓN-01', channel: 'OPERACIONES ESPECIALES TÁCTICAS', timestamp: '10:20', duration: 2, type: 'text', text: '10-4 Unidad en posición de patrullaje preventivo C5i' },
-  ]);
+  const [transmissions, setTransmissions] = useState<Transmission[]>([]);
   const [messageInput, setMessageInput] = useState('');
 
   // Chat & Messaging State (WhatsApp-style C5i)
@@ -574,32 +360,6 @@ function NativeAppScreen() {
 
   // Modals for Chat & Contacts
   const [isNewChatModalOpen, setIsNewChatModalOpen] = useState(false);
-  const [contactSearchQuery, setContactSearchQuery] = useState('');
-  const [officersList, setOfficersList] = useState<ContactOfficer[]>(INITIAL_OFFICERS);
-
-  // Modal: Registrar Nuevo Contacto
-  const [isAddContactModalOpen, setIsAddContactModalOpen] = useState(false);
-  const [newContactName, setNewContactName] = useState('');
-  const [newContactLastName, setNewContactLastName] = useState('');
-  const [newContactPhone, setNewContactPhone] = useState('');
-  const [newContactEmail, setNewContactEmail] = useState('');
-  const [addContactError, setAddContactError] = useState<string | null>(null);
-  const [isSavingContact, setIsSavingContact] = useState(false);
-
-  // Modal: Detalle de Contacto / Perfil (Diseño exacto Imagen Captura 11.27.13)
-  const [selectedContactForDetail, setSelectedContactForDetail] = useState<ContactOfficer | null>(null);
-  const [isContactDetailModalOpen, setIsContactDetailModalOpen] = useState(false);
-  const [copiedDetailField, setCopiedDetailField] = useState<string | null>(null);
-
-  // Modal: Editar Contacto (CRUD)
-  const [isEditContactModalOpen, setIsEditContactModalOpen] = useState(false);
-  const [editContactName, setEditContactName] = useState('');
-  const [editContactLastName, setEditContactLastName] = useState('');
-  const [editContactPhone, setEditContactPhone] = useState('');
-  const [editContactEmail, setEditContactEmail] = useState('');
-  const [editContactCallsign, setEditContactCallsign] = useState('');
-  const [editContactError, setEditContactError] = useState<string | null>(null);
-  const [isSavingEditContact, setIsSavingEditContact] = useState(false);
 
   // Modal: Crear Grupo de Conversación
   const [isCreateGroupChatModalOpen, setIsCreateGroupChatModalOpen] = useState(false);
@@ -607,80 +367,15 @@ function NativeAppScreen() {
   const [selectedGroupMembers, setSelectedGroupMembers] = useState<string[]>([]);
   const [createGroupError, setCreateGroupError] = useState<string | null>(null);
 
-  // Modal de Alerta y Confirmación Táctica C5i (reemplaza window.confirm y Alert.alert)
-  const [tacticalAlertModal, setTacticalAlertModal] = useState<{
-    isOpen: boolean;
-    title: string;
-    message: string;
-    type: 'confirm_delete' | 'warning' | 'info' | 'success';
-    confirmText?: string;
-    cancelText?: string;
-    onConfirm?: () => void;
-    onCancel?: () => void;
-  }>({
-    isOpen: false,
-    title: '',
-    message: '',
-    type: 'info',
-  });
-
-  const showTacticalAlert = useCallback((
-    title: string,
-    message: string,
-    options?: {
-      type?: 'confirm_delete' | 'warning' | 'info' | 'success';
-      confirmText?: string;
-      cancelText?: string;
-      onConfirm?: () => void;
-      onCancel?: () => void;
-    }
-  ) => {
-    setTacticalAlertModal({
-      isOpen: true,
-      title,
-      message,
-      type: options?.type || 'info',
-      confirmText: options?.confirmText || (options?.onConfirm ? 'Confirmar' : 'Entendido'),
-      cancelText: options?.cancelText || (options?.onConfirm ? 'Cancelar' : undefined),
-      onConfirm: options?.onConfirm,
-      onCancel: options?.onCancel,
-    });
-  }, []);
-
-  // Notificación Toast flotante táctica C5i
-  const [tacticalToast, setTacticalToast] = useState<{
-    visible: boolean;
-    message: string;
-    type: 'success' | 'info' | 'warning';
-  }>({
-    visible: false,
-    message: '',
-    type: 'info',
-  });
-  const toastTimerRef = useRef<any>(null);
-
-  const showTacticalToast = useCallback((message: string, type: 'success' | 'info' | 'warning' = 'success') => {
-    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
-    setTacticalToast({ visible: true, message, type });
-    toastTimerRef.current = setTimeout(() => {
-      setTacticalToast((prev) => ({ ...prev, visible: false }));
-    }, 2800);
-  }, []);
-
-  // Lista negra de contactos eliminados para evitar resurrección durante sondeos en segundo plano
-  const deletedContactIdsRef = useRef<Set<string>>(new Set());
-
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  // Referencias de PTT: impiden liberaciones duplicadas y cierres con estado antiguo.
-  const pttPressedRef = useRef(false);
-  const pttStartedAtRef = useRef(0);
-  const pttChannelAtPressRef = useRef<Channel | null>(null);
-  const pttUserAtPressRef = useRef<User | null>(null);
+  const { showTacticalToast, feedback } = useNativeFeedback();
+  const contactsDirectory = useContactsDirectory(serverUrl, currentUser ? { userId: currentUser.id, token: currentUser.authToken || '' } : null);
+  const channelsDirectory = useChannelsDirectory(serverUrl, currentUser?.id || '', currentUser?.authToken || '');
+  const { channels, synced: channelsSyncedFromServer, refresh: refreshChannels } = channelsDirectory;
+  const officersList = contactsDirectory.contacts;
+  const contactsScreenRef = useRef<ContactsScreenHandle>(null);
 
   // Circuit breaker para endpoints PHP en Alwaysdata (evita spam de 404 en consola si aún no se han subido los archivos)
-  const isContactsPhpAvailableRef = useRef<boolean | null>(null);
   const isChatPhpAvailableRef = useRef<boolean | null>(null);
-  const lastContactsProbeTimeRef = useRef<number>(0);
   const lastChatProbeTimeRef = useRef<number>(0);
 
   // Las ondas del PTT se muestran como aros estáticos para evitar fallos
@@ -690,10 +385,9 @@ function NativeAppScreen() {
   useEffect(() => {
     (async () => {
       try {
-        const savedUser = await safeStorage.getItem('c5i_native_user');
-        if (savedUser) setCurrentUser(JSON.parse(savedUser));
-        
-        const savedUrl = await safeStorage.getItem('c5i_native_server_url');
+        const [savedUser, savedUrl] = await Promise.all([
+          safeStorage.getItem('c5i_native_user'), safeStorage.getItem('c5i_native_server_url'),
+        ]);
         if (savedUrl) {
           // Si el usuario tenía guardado el servidor anterior con fallos, migrar automáticamente a Alwaysdata
           if (savedUrl.includes('walkt.gt.tc') || savedUrl.includes('infinityfree')) {
@@ -703,38 +397,17 @@ function NativeAppScreen() {
             setServerUrl(savedUrl);
           }
         }
-
-        // Cargar lista negra de contactos eliminados para evitar resurrección
-        const savedDeleted = await safeStorage.getItem('c5i_deleted_contacts_v2');
-        if (savedDeleted) {
-          try {
-            const parsed = JSON.parse(savedDeleted);
-            if (Array.isArray(parsed)) {
-              parsed.forEach((id: string) => {
-                if (id) deletedContactIdsRef.current.add(id);
-              });
-            }
-          } catch {}
-        }
-
-        // Cargar contactos cacheados para que nunca se borren al recargar la página
-        const cachedContacts = await safeStorage.getItem('c5i_officers_cache_v2');
-        if (cachedContacts) {
-          try {
-            const parsed = JSON.parse(cachedContacts);
-            if (Array.isArray(parsed) && parsed.length > 0) {
-              setOfficersList((prev) => {
-                const combined = [...parsed];
-                return combined;
-              });
-            }
-          } catch {}
-        }
+        if (savedUser) setCurrentUser(JSON.parse(savedUser));
       } catch (e) {
         console.log('Error reading storage', e);
       }
     })();
   }, []);
+
+  useEffect(() => {
+    setSelectedChannel(null);
+    setIsMembersModalOpen(false);
+  }, [channelsDirectory.scope]);
 
   // Restaurar la selección solo del usuario autenticado. Una elección manual más
   // reciente tiene prioridad sobre cualquier lectura asíncrona de la memoria.
@@ -757,16 +430,14 @@ function NativeAppScreen() {
     return () => { active = false; };
   }, [currentUser?.id]);
 
-  // Esperar a que el canal exista en la lista (local o sincronizada).
+  // Restaurar únicamente después de validar la membresía con el servidor.
   // Comprobamos también el nombre para no sintonizar otro grupo si el servidor
   // reutiliza un identificador.
   useEffect(() => {
     if (!currentUser?.id || !pendingSavedChannel) return;
     if (String(currentUser.id) !== pendingSavedChannel.userId ||
         channelChoiceRevisionRef.current !== pendingSavedChannel.revision) return;
-    // Si todavía no sincroniza el servidor, permitir una restauración
-    // provisional por nombre/ID, pero conservar la preferencia pendiente para
-    // volver a validar la selección cuando llegue la lista real de canales.
+    // La preferencia guardada no concede acceso por sí sola.
     const restored = findRestoredChannel(channels, pendingSavedChannel.channel);
     if (restored && channelsSyncedFromServer) {
       setSelectedChannel(restored);
@@ -793,122 +464,15 @@ function NativeAppScreen() {
       });
   }, [currentUser?.id]);
 
-  // Guardar contactos en safeStorage cada vez que cambien para que persistan entre recargas
-  useEffect(() => {
-    if (officersList && officersList.length > 0) {
-      safeStorage.setItem('c5i_officers_cache_v2', JSON.stringify(officersList)).catch(() => {});
-    }
-  }, [officersList]);
-
   // En navegador web, enviar text/plain evita preflights OPTIONS innecesarios
   const getSafePostHeaders = () => ({
     'Content-Type': Platform.OS === 'web' ? 'text/plain;charset=UTF-8' : 'application/json',
   });
 
-  // Intentar sincronizar canales remotos desde el backend si está configurado
-  const refreshChannels = useCallback(async (baseUrl: string) => {
-    if (!baseUrl) return;
-    try {
-      const cleanUrl = baseUrl.replace(/\/+$/, '');
-      const isAlwaysdata = cleanUrl.includes('alwaysdata.net') || cleanUrl.includes('.php');
-
-      let res = await fetchWithTimeout(`${cleanUrl}/channels.php`, {}, 3000).catch(() => null);
-      if (!isAlwaysdata && (!res || !res.ok)) {
-        res = await fetchWithTimeout(`${cleanUrl}/api/channels`, {}, 3000).catch(() => null);
-      }
-      if (res && res.ok) {
-        const data = await res.json().catch(() => null);
-        if (data && Array.isArray(data.channels) && data.channels.length > 0) {
-          const mapped: Channel[] = data.channels.map((ch: any, idx: number) => ({
-            id: ch.id || `chan-${idx}`,
-            name: ch.name,
-            code: ch.code || `CH-${(idx + 1) * 10}`,
-            frequency: ch.frequency || `15${4 + (idx % 5)}.${((idx * 175) % 800) || '800'} MHz`,
-            category: ch.category ? ch.category.toUpperCase() : 'Operativo',
-            isEncrypted: true,
-            activeUsers: ch.member_count || (8 + idx * 3),
-            pin: ch.pin || ch.access_code || '1090',
-            accessCode: ch.access_code || `C5I-TAC-${ch.pin || '1090'}`,
-            isPrivate: Boolean(ch.is_private),
-          }));
-          setChannels(mapped);
-          setChannelsSyncedFromServer(true);
-          // Mantener la selección manual si el canal sigue disponible;
-          // nunca sintonizar el primer canal automáticamente al sincronizar.
-          setSelectedChannel((prev) =>
-            prev ? findRestoredChannel(mapped, {
-              id: String(prev.id), name: prev.name, code: prev.code,
-            }) : null
-          );
-          setDbStatus('ONLINE');
-        }
-      }
-    } catch {
-      // Si el servidor no responde, se mantienen los canales tácticos por defecto
-      setDbStatus('STANDBY');
-    }
-  }, []);
-
-  // Sincronizar directorio de contactos y oficiales desde la base de datos (con Circuit Breaker inteligente)
-  const refreshContacts = useCallback(async (baseUrl: string) => {
-    if (!baseUrl) return;
-
-    // Si ya detectamos que contacts.php no está disponible en este servidor, evitar saturar con 404s
-    if (isContactsPhpAvailableRef.current === false) {
-      if (Date.now() - lastContactsProbeTimeRef.current < 120000) {
-        return;
-      }
-    }
-    lastContactsProbeTimeRef.current = Date.now();
-
-    try {
-      const cleanUrl = baseUrl.replace(/\/+$/, '');
-      const isAlwaysdata = cleanUrl.includes('alwaysdata.net') || cleanUrl.includes('.php');
-
-      let res: any = null;
-      if (isAlwaysdata) {
-        res = await fetchWithTimeout(`${cleanUrl}/contacts.php`, {}, 3000).catch(() => null);
-        if (res && res.status === 404) {
-          // Desactivar sondeos automáticos a contacts.php hasta que se suba el archivo
-          isContactsPhpAvailableRef.current = false;
-          return;
-        }
-      } else {
-        res = await fetchWithTimeout(`${cleanUrl}/api/contacts`, {}, 3000).catch(() => null);
-      }
-
-      if (res && res.ok) {
-        isContactsPhpAvailableRef.current = true;
-        const data = await res.json().catch(() => null);
-        if (data && Array.isArray(data.contacts)) {
-          const mapped: ContactOfficer[] = data.contacts
-            .filter((c: any) => {
-              if (!c) return false;
-              if (c.id && deletedContactIdsRef.current.has(c.id)) return false;
-              if (c.phone_number && deletedContactIdsRef.current.has(c.phone_number)) return false;
-              return true;
-            })
-            .map((c: any) => ({
-              id: c.id,
-              name: c.name,
-              callsign: c.callsign || 'OFICIAL',
-              unit: c.unit || 'Sector Operativo Hidalgo',
-              phone_number: c.phone_number || '',
-              email: c.email || c.correo || '',
-              status: c.status || 'online',
-              role: c.role || 'Oficial Operativo',
-              avatar_url: c.avatar_url || null,
-            }));
-
-          setOfficersList((prev) => {
-            // Preservar contactos locales con ID 'off-' que aún no hayan sido devueltos por el backend
-            const pendingLocal = prev.filter((p) => p.id.startsWith('off-') && !mapped.some((m) => m.phone_number === p.phone_number));
-            return [...pendingLocal, ...mapped];
-          });
-        }
-      }
-    } catch {}
-  }, []);
+  useEffect(() => {
+    if (!channelsSyncedFromServer) return;
+    setSelectedChannel(previous => previous ? channels.find(channel => channel.id === previous.id) || null : null);
+  }, [channels, channelsSyncedFromServer]);
 
   // Sincronizar mensajes del chat activo desde el backend (con Circuit Breaker inteligente)
   const syncConversationMessages = useCallback(async (conv: Conversation) => {
@@ -971,741 +535,39 @@ function NativeAppScreen() {
     } catch {}
   }, [serverUrl, currentUser]);
 
-  // Sincronización continua de canales, contactos y chat activo para paridad Web / Físico
+  // El chat mantiene su sondeo independiente de la agenda y de los grupos.
   useEffect(() => {
     if (serverUrl) {
-      refreshChannels(serverUrl);
-      refreshContacts(serverUrl);
       const timer = setInterval(() => {
-        refreshChannels(serverUrl);
-        // refreshContacts y syncConversationMessages respetan el circuit breaker y no spamean 404s
-        refreshContacts(serverUrl);
+        // El chat respeta el circuit breaker de sus endpoints.
         if (activeConversation) {
           syncConversationMessages(activeConversation);
         }
       }, 4000);
       return () => clearInterval(timer);
     }
-  }, [serverUrl, refreshChannels, refreshContacts, syncConversationMessages, activeConversation]);
+  }, [serverUrl, syncConversationMessages, activeConversation]);
 
-  // Confirmación exitosa con diseño y colorimetría C5i (reemplaza alert gris del sistema)
-  const handleChannelScanSuccess = useCallback((channel: Channel, source: 'qr' | 'pin' = 'qr') => {
-    chooseAndRememberChannel(channel);
-    setIsJoinScanning(false);
-    setIsJoinModalOpen(false);
-    setJoinPinDigits('');
-    setScanSuccessModal({
-      isOpen: true,
-      channel,
-      pin: channel.pin || '1090',
-      source,
-    });
-  }, [chooseAndRememberChannel]);
-
-  // Sintonizar canal con modal táctico C5i (reemplaza alert gris del sistema)
-  const handleTuneChannel = useCallback((channel: Channel) => {
-    chooseAndRememberChannel(channel);
+  const radio = useLiveRadio(serverUrl, currentUser?.id || '', currentUser?.authToken || '', selectedChannel);
+  useEffect(() => { soundEngine.setRadioActive(radio.state !== 'off'); }, [radio.state]);
+  const notificationSession = useRef('');
+  notificationSession.current = JSON.stringify([serverUrl, currentUser?.id, currentUser?.authToken]);
+  const notifications = useRadioNotifications(serverUrl, currentUser?.authToken || '', currentUser?.id || '', async channelId => {
+    const scope = notificationSession.current;
     try {
-      soundEngine.playIncomingChirp();
-    } catch {}
-    setScanSuccessModal({
-      isOpen: true,
-      channel,
-      pin: channel.pin || '1090',
-      source: 'tune',
-      customTitle: 'Canal Sintonizado',
-      customSubtitle: `Radio enlazado a ${channel.name} (${channel.frequency || '154.800 MHz'}).`,
-    });
-  }, [chooseAndRememberChannel]);
-
-  // Salir del canal / grupo
-  const handleLeaveChannel = useCallback((channel: Channel) => {
-    setIsConfigModalOpen(false);
-    if (selectedChannel?.id === channel.id) {
-      chooseAndRememberChannel(null);
-      setIsMembersModalOpen(false);
-    }
-
-    try {
-      soundEngine.playRogerBeep();
-    } catch {}
-
-    setScanSuccessModal({
-      isOpen: true,
-      channel,
-      pin: channel.pin || '1090',
-      source: 'leave',
-      customTitle: 'Has Salido del Grupo',
-      customSubtitle: `Te has desconectado de ${channel.name}. Selecciona otro grupo manualmente para comunicarte.`,
-    });
-  }, [selectedChannel, chooseAndRememberChannel]);
-
-  // Eliminar el canal / grupo
-  const handleDeleteChannel = useCallback((channel: Channel) => {
-    setIsConfigModalOpen(false);
-    const remaining = channels.filter((c) => c.id !== channel.id);
-
-    setChannels(remaining);
-    if (selectedChannel?.id === channel.id) {
-      chooseAndRememberChannel(null);
-      setIsMembersModalOpen(false);
-    }
-
-    if (serverUrl && channel.id) {
-      (async () => {
-        try {
-          const cleanUrl = serverUrl.replace(/\/+$/, '');
-          let res = await fetchWithTimeout(`${cleanUrl}/channels.php?id=${encodeURIComponent(channel.id)}`, {
-            method: 'DELETE',
-          }, 3000).catch(() => null);
-
-          if (!res || !res.ok) {
-            res = await fetchWithTimeout(`${cleanUrl}/api/channels/${encodeURIComponent(channel.id)}`, {
-              method: 'DELETE',
-            }, 3000).catch(() => null);
-          }
-
-          if (!res || !res.ok) {
-            await fetchWithTimeout(`${cleanUrl}/api/channels.php?id=${encodeURIComponent(channel.id)}`, {
-              method: 'DELETE',
-            }, 3000).catch(() => null);
-          }
-        } catch {}
-      })();
-    }
-
-    try {
-      soundEngine.playRogerBeep();
-    } catch {}
-
-    setScanSuccessModal({
-      isOpen: true,
-      channel,
-      pin: channel.pin || '1090',
-      source: 'delete',
-      customTitle: 'Canal Táctico Eliminado',
-      customSubtitle: `El canal ${channel.name} ha sido eliminado de la red táctica C5i.`,
-    });
-  }, [channels, selectedChannel, serverUrl, chooseAndRememberChannel]);
-
-  // Referencia para evitar múltiples lecturas seguidas del mismo QR
-  const isHandlingScanRef = useRef(false);
-
-  // Procesamiento robusto del payload decodificado de código QR (Web y Nativo iPhone)
-  const handleScannedQrPayload = useCallback(
-    (raw: string) => {
-      if (!raw || isHandlingScanRef.current) return;
-      isHandlingScanRef.current = true;
-
-      try {
-        const text = String(raw).trim();
-        // 1. Buscar PIN de 4 dígitos (ej: C5I-CANAL:CH-10:PIN-1090, PIN-2040, o solo 1090)
-        const pinMatch = text.match(/PIN[-:]?(\d{4})/i) || text.match(/\b(\d{4})\b/);
-        const pin = pinMatch ? pinMatch[1] : null;
-
-        // 2. Buscar código de canal (ej: CH-10, CH-20, CH-91)
-        const codeMatch = text.match(/(CH-\d+)/i);
-        const code = codeMatch ? codeMatch[1].toUpperCase() : null;
-
-        // Buscar canal coincidente en la lista actual
-        let found = channels.find(
-          (c) =>
-            (pin && c.pin === pin) ||
-            (code && c.code.toUpperCase() === code) ||
-            (c.accessCode && text.includes(c.accessCode))
-        );
-
-        // Si no existe pero se detectó un PIN de 4 dígitos, sintonizar y enlazar automáticamente
-        if (!found && pin) {
-          found = {
-            id: `chan-pin-${pin}`,
-            name: `CANAL TÁCTICO #${pin}`,
-            code: `CH-${pin}`,
-            frequency: `15${pin.slice(0, 1)}.${pin.slice(1)} MHz`,
-            category: 'Táctico',
-            isEncrypted: true,
-            activeUsers: Math.floor(2 + Math.random() * 8),
-            pin: pin,
-            accessCode: `C5I-TAC-${pin}`,
-          };
-          setChannels((prev) => [found!, ...prev]);
-        }
-
-        if (!found) {
-          showTacticalToast('El código QR no corresponde a ningún canal disponible.', 'warning');
-          return;
-        }
-
-        try {
-          soundEngine.playIncomingChirp();
-        } catch {}
-        handleChannelScanSuccess(found, 'qr');
-      } finally {
-        setTimeout(() => {
-          isHandlingScanRef.current = false;
-        }, 2200);
-      }
-    },
-    [channels, handleChannelScanSuccess, showTacticalToast]
-  );
-
-  // Manejador robusto de permisos de cámara utilizando Expo's Permission API
-  const requestCameraPermission = useCallback(async (): Promise<boolean> => {
-    setIsRequestingPermission(true);
-    try {
-      if (Platform.OS === 'web') {
-        if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
-          setCameraPermissionGranted(false);
-          setPermissionCanAskAgain(false);
-          return false;
-        }
-
-        try {
-          const stream = await navigator.mediaDevices.getUserMedia({
-            video: {
-              facingMode: { ideal: 'environment' },
-              width: { ideal: 1280 },
-              height: { ideal: 720 },
-            },
-          });
-          // Autorización genuina confirmada tras obtener el MediaStream
-          setCameraPermissionGranted(true);
-          setPermissionCanAskAgain(true);
-          if (webVideoRef.current) {
-            webVideoRef.current.srcObject = stream;
-            webVideoRef.current.setAttribute('playsinline', 'true');
-            webVideoRef.current.play?.().catch?.(() => {});
-          }
-          return true;
-        } catch (err: any) {
-          console.warn('Permiso de cámara denegado en navegador:', err);
-          setCameraPermissionGranted(false);
-          setPermissionCanAskAgain(err?.name !== 'NotAllowedError');
-          return false;
-        }
-      }
-
-      // En iOS / Android: Consulta estado previo con Expo's Permission API
-      const current = await queryExpoCameraPermission();
-      if (current.granted) {
-        setCameraPermissionGranted(true);
-        setPermissionCanAskAgain(true);
-        return true;
-      }
-
-      // Si no estaba autorizado, solicita autorización interactiva al usuario con Expo Permission API
-      if (current.canAskAgain || current.status === 'undetermined') {
-        const promptRes = await requestExpoCameraPermission();
-        setCameraPermissionGranted(promptRes.granted);
-        setPermissionCanAskAgain(promptRes.canAskAgain);
-        return promptRes.granted;
-      } else {
-        setCameraPermissionGranted(false);
-        setPermissionCanAskAgain(false);
-        return false;
-      }
-    } catch (e) {
-      console.warn('Error en requestCameraPermission:', e);
-      setCameraPermissionGranted(false);
-      return false;
-    } finally {
-      setIsRequestingPermission(false);
-    }
-  }, []);
-
-  // Iniciar cámara real, decodificador de QR en Web y animación del láser táctico
+      const list = await channelsDirectory.api.list();
+      if (notificationSession.current !== scope) return;
+      const matching = list.find(channel => channel.id === channelId);
+      if (!matching) { showTacticalToast('Ya no perteneces al grupo de este aviso.', 'info'); return; }
+      chooseAndRememberChannel(matching); setCurrentTab('PTT');
+    } catch { showTacticalToast('No se pudo consultar el grupo. Abre Grupos y vuelve a intentar.', 'warning'); }
+  }, account.settings.backgroundNotifications, account.settings.messageSounds);
+  const incomingRadio = useRef(false);
   useEffect(() => {
-    let animLoop: Animated.CompositeAnimation | null = null;
-    let scanInterval: any = null;
-
-    if (isJoinScanning) {
-      animLoop = Animated.loop(
-        Animated.sequence([
-          Animated.timing(scanLaserAnim, {
-            toValue: 1,
-            duration: 1500,
-            easing: Easing.inOut(Easing.quad),
-            useNativeDriver: true,
-          }),
-          Animated.timing(scanLaserAnim, {
-            toValue: 0,
-            duration: 1500,
-            easing: Easing.inOut(Easing.quad),
-            useNativeDriver: true,
-          }),
-        ])
-      );
-      animLoop.start();
-
-      // Solicitar y validar la autorización real antes de activar el escáner y la vista previa
-      requestCameraPermission().then((isAuthorized) => {
-        // Solo si la autorización es confirmada en web se activa el bucle decodificador
-        if (isAuthorized && Platform.OS === 'web') {
-          ensureWebQrScannerLoaded();
-          const offscreenCanvas = typeof document !== 'undefined' ? document.createElement('canvas') : null;
-          const offscreenCtx = offscreenCanvas?.getContext('2d', { willReadFrequently: true });
-
-          scanInterval = setInterval(async () => {
-            const video = webVideoRef.current;
-            if (!video || video.readyState < 2) return;
-            if (isHandlingScanRef.current) return;
-
-            // 1. Detección nativa del navegador BarcodeDetector (Chrome, Edge, Safari 17+)
-            if (typeof window !== 'undefined' && (window as any).BarcodeDetector) {
-              try {
-                const detector = new (window as any).BarcodeDetector({ formats: ['qr_code'] });
-                const barcodes = await detector.detect(video);
-                if (barcodes && barcodes.length > 0 && barcodes[0]?.rawValue) {
-                  handleScannedQrPayload(barcodes[0].rawValue);
-                  return;
-                }
-              } catch {}
-            }
-
-            // 2. Decodificación de fotogramas mediante jsQR cargado dinámicamente en el navegador
-            const webJsQr = typeof window !== 'undefined' ? (window as any).jsQR : null;
-            if (webJsQr && offscreenCtx && offscreenCanvas) {
-              try {
-                const vw = video.videoWidth;
-                const vh = video.videoHeight;
-                if (vw > 0 && vh > 0) {
-                  offscreenCanvas.width = vw;
-                  offscreenCanvas.height = vh;
-                  offscreenCtx.drawImage(video, 0, 0, vw, vh);
-                  const imgData = offscreenCtx.getImageData(0, 0, vw, vh);
-                  const qrCode = webJsQr(imgData.data, imgData.width, imgData.height, {
-                    inversionAttempts: 'dontInvert',
-                  });
-                  if (qrCode && qrCode.data) {
-                    handleScannedQrPayload(qrCode.data);
-                  }
-                }
-              } catch (e) {
-                // Ignorar excepciones de lectura de fotograma individual
-              }
-            }
-          }, 220);
-        }
-      });
-    } else {
-      scanLaserAnim.setValue(0);
-      setCameraPermissionGranted(null);
-    }
-
-    return () => {
-      animLoop?.stop();
-      if (scanInterval) {
-        clearInterval(scanInterval);
-      }
-      if (webVideoRef.current?.srcObject) {
-        try {
-          const stream = webVideoRef.current.srcObject;
-          stream.getTracks?.().forEach((t: any) => t.stop?.());
-        } catch {}
-        webVideoRef.current.srcObject = null;
-      }
-    };
-  }, [isJoinScanning, handleScannedQrPayload, requestCameraPermission]);
-
-  // Probar conectividad con el servidor configurado (Alwaysdata PHP y Node Express)
-  const testServerConnection = async () => {
-    setIsTestingServer(true);
-    setServerLatency(null);
-    const start = Date.now();
-    try {
-      const cleanUrl = serverUrl.replace(/\/+$/, '');
-      let res = await fetchWithTimeout(`${cleanUrl}/status.php`, {}, 4000).catch(() => null);
-      if (!res || !res.ok) {
-        res = await fetchWithTimeout(`${cleanUrl}/api/status.php`, {}, 4000).catch(() => null);
-      }
-      if (!res || !res.ok) {
-        res = await fetchWithTimeout(`${cleanUrl}/api/database/status`, {}, 4000).catch(() => null);
-      }
-
-      const elapsed = Date.now() - start;
-      if (res && res.ok) {
-        const data = await res.json().catch(() => ({}));
-        setServerLatency(elapsed);
-        setDbStatus('ONLINE');
-        const dbName = data.database_name || data.database || 'walkiet_c5i';
-        const motor = data.engine || (data.database ? 'Alwaysdata MySQL' : 'MySQL Server');
-        const usersCount = data.users_count !== undefined ? data.users_count : (data.tables?.users ?? '3');
-        Alert.alert(
-          '✅ Conexión Exitosa',
-          `Enlace con servidor C5i establecido (${elapsed}ms).\nHost: ${cleanUrl.replace('https://', '')}\nBase de datos: ${dbName}\nMotor: ${motor}\nUsuarios registrados: ${usersCount}`
-        );
-        refreshChannels(serverUrl);
-      } else {
-        throw new Error(res ? `Código HTTP: ${res.status}` : 'Sin respuesta del host');
-      }
-    } catch (e: any) {
-      setDbStatus('STANDBY');
-      Alert.alert(
-        '⚠️ Modo Táctico Autónomo',
-        `No fue posible contactar a ${serverUrl} (${e.message || 'Sin respuesta'}). El radio continuará operando en modo táctico local con cifrado de emergencia.`
-      );
-    } finally {
-      setIsTestingServer(false);
-    }
-  };
-
-  // Filtrado de canales por categoría y búsqueda, posicionando el canal activo al principio
-  const filteredChannels = useMemo(() => {
-    const list = channels.filter((ch) => {
-      // Categoría
-      if (selectedCategory !== 'Todos') {
-        if (selectedCategory === 'Privados') {
-          if (!ch.isPrivate && ch.category.toLowerCase() !== 'privado') return false;
-        } else if (ch.category.toLowerCase() !== selectedCategory.toLowerCase()) {
-          return false;
-        }
-      }
-
-      // Búsqueda
-      if (channelSearchText.trim()) {
-        const q = channelSearchText.toLowerCase();
-        const matchesName = ch.name.toLowerCase().includes(q);
-        const matchesCode = ch.code.toLowerCase().includes(q);
-        const matchesFreq = ch.frequency.toLowerCase().includes(q);
-        const matchesPin = ch.pin ? ch.pin.includes(q) : false;
-        return matchesName || matchesCode || matchesFreq || matchesPin;
-      }
-
-      return true;
-    });
-
-    // Posicionar el canal actualmente sintonizado/activo en la parte superior de la lista
-    return list.slice().sort((a, b) => {
-      const aIsActive = a.id === selectedChannel?.id ? 1 : 0;
-      const bIsActive = b.id === selectedChannel?.id ? 1 : 0;
-      return bIsActive - aIsActive;
-    });
-  }, [channels, selectedCategory, channelSearchText, selectedChannel?.id]);
-
-  // Abrir modal de configuración y QR de un canal (Seguro para iPhone y Web sin error de canvas)
-  const openChannelConfig = (ch: Channel) => {
-    setConfigChannel(ch);
-    setHasCopiedPin(false);
-    const pin = ch.pin || '1090';
-    const qrText = `C5I-CANAL:${ch.code || 'CH-10'}:PIN-${pin}`;
-
-    try {
-      // Generación de matriz pura en memoria sin requerir elemento HTML5 <canvas>
-      const qr = QRCode.create(qrText, { errorCorrectionLevel: 'M' });
-      const size = qr.modules.size;
-      const matrix: boolean[][] = [];
-      for (let r = 0; r < size; r++) {
-        const row: boolean[] = [];
-        for (let c = 0; c < size; c++) {
-          row.push(Boolean(qr.modules.get(r, c)));
-        }
-        matrix.push(row);
-      }
-      setConfigQrMatrix(matrix);
-    } catch (e) {
-      console.warn('Error generating QR matrix', e);
-    }
-
-    // En navegador web se puede generar dataURL opcionalmente
-    if (Platform.OS === 'web') {
-      try {
-        QRCode.toDataURL(qrText, {
-          width: 240,
-          margin: 1,
-          color: { dark: '#0f172a', light: '#ffffff' },
-        })
-          .then((url) => setConfigQrUrl(url))
-          .catch(() => {});
-      } catch {}
-    }
-
-    setIsConfigModalOpen(true);
-  };
-
-
-  // Unirse a canal mediante PIN
-  const handleJoinChannelSubmit = () => {
-    Keyboard.dismiss();
-    setJoinError(null);
-    const pin = joinPinDigits.trim();
-    if (pin.length !== 4) {
-      setJoinError('Ingresa los 4 dígitos del PIN o asignación.');
-      return;
-    }
-
-    const found = channels.find(
-      (c) => (c.pin && c.pin === pin) || (c.code && c.code.toLowerCase().includes(pin.toLowerCase()))
-    );
-
-    if (found) {
-      handleChannelScanSuccess(found, 'pin');
-    } else {
-      const newLinked: Channel = {
-        id: `chan-pin-${pin}`,
-        name: `CANAL TÁCTICO #${pin}`,
-        code: `CH-${pin}`,
-        frequency: `15${pin.slice(0, 1)}.${pin.slice(1)} MHz`,
-        category: 'Táctico',
-        isEncrypted: true,
-        activeUsers: Math.floor(2 + Math.random() * 8),
-        pin: pin,
-        accessCode: `C5I-TAC-${pin}`,
-      };
-      setChannels((prev) => [newLinked, ...prev]);
-      handleChannelScanSuccess(newLinked, 'pin');
-    }
-  };
-
-  // Simular o procesar escaneo QR (con modal táctico C5i)
-  const handleScanQrMock = (mockChannel?: Channel) => {
-    Keyboard.dismiss();
-    const target = mockChannel || channels[0];
-    if (!target) {
-      showTacticalToast('No hay canales disponibles para sintonizar.', 'warning');
-      return;
-    }
-    handleChannelScanSuccess(target, 'qr');
-  };
-
-  // Crear nuevo canal táctico (Simplificado: Solo Nombre y PIN de 4 dígitos)
-  const handleCreateChannelSubmit = () => {
-    Keyboard.dismiss();
-    setCreateChannelError(null);
-    if (!createChannelName.trim()) {
-      setCreateChannelError('Ingresa un nombre para el canal táctico.');
-      return;
-    }
-
-    const pin = (createChannelPin.trim() || Math.floor(1000 + Math.random() * 9000).toString()).slice(0, 4);
-    const newCh: Channel = {
-      id: `chan-${Date.now()}`,
-      name: createChannelName.trim().toUpperCase(),
-      code: `CH-${(channels.length + 1) * 10}`,
-      frequency: `15${4 + (channels.length % 5)}.${Math.floor(100 + Math.random() * 800)} MHz`,
-      category: 'Táctico',
-      isEncrypted: true,
-      activeUsers: 1,
-      pin: pin,
-      accessCode: `C5I-TAC-${pin}`,
-      isPrivate: false,
-    };
-
-    setChannels((prev) => [newCh, ...prev]);
-    chooseAndRememberChannel(newCh);
-    setIsCreateModalOpen(false);
-    setCreateChannelName('');
-    try {
-      soundEngine.playIncomingChirp();
-    } catch {}
-    setScanSuccessModal({
-      isOpen: true,
-      channel: newCh,
-      pin: newCh.pin || pin,
-      source: 'create',
-      customTitle: 'Canal Creado y Sintonizado',
-      customSubtitle: `Canal ${newCh.name} creado y enlazado exitosamente con PIN ${newCh.pin}.`,
-    });
-
-    if (serverUrl) {
-      (async () => {
-        try {
-          const cleanUrl = serverUrl.replace(/\/+$/, '');
-          const payload = JSON.stringify({
-            name: newCh.name,
-            category: newCh.category,
-            frequency: newCh.frequency,
-            pin: newCh.pin,
-            access_code: newCh.pin,
-            created_by: currentUser?.id || 'usr-c5i-01',
-            is_private: 0,
-          });
-
-          // 1. Intentar directamente channels.php (Alwaysdata / PHP)
-          const headers = getSafePostHeaders();
-          let res = await fetchWithTimeout(`${cleanUrl}/channels.php`, {
-            method: 'POST',
-            headers,
-            body: payload,
-          }, 4000).catch(() => null);
-
-          // 2. Si falla o no existe, intentar /api/channels
-          if (!res || !res.ok) {
-            res = await fetchWithTimeout(`${cleanUrl}/api/channels`, {
-              method: 'POST',
-              headers,
-              body: payload,
-            }, 4000).catch(() => null);
-          }
-
-          // Refrescar lista de canales para sincronizar en tiempo real
-          setTimeout(() => refreshChannels(serverUrl), 600);
-        } catch (err) {
-          console.warn('Error al sincronizar canal con servidor C5i:', err);
-        }
-      })();
-    }
-  };
-
-  // Copiar ÚNICAMENTE el PIN al portapapeles (compatible nativo con iPhone y Web)
-  const copyToClipboard = async (pinText: string) => {
-    const pinOnly = String(pinText || '1090').trim();
-
-    // 1. Portapapeles Nativo de iOS y Android en React Native
-    try {
-      if (Clipboard && typeof Clipboard.setString === 'function') {
-        Clipboard.setString(pinOnly);
-      }
-    } catch (e) {
-      console.warn('Clipboard setString failed', e);
-    }
-
-    // 2. Portapapeles Web si se ejecuta en navegador
-    if (Platform.OS === 'web' && typeof navigator !== 'undefined' && navigator.clipboard) {
-      try {
-        await navigator.clipboard.writeText(pinOnly);
-      } catch {}
-    }
-
-    setHasCopiedPin(true);
-    setTimeout(() => setHasCopiedPin(false), 2500);
-  };
-
-  // PTT: se puede probar el botón sin grupo, pero solo se transmite metadata
-  // al canal que el usuario haya seleccionado manualmente antes de pulsarlo.
-  const handlePttPressIn = useCallback(() => {
-    if (!currentUser || pttPressedRef.current || currentTab !== 'PTT') return;
-    pttPressedRef.current = true;
-    pttStartedAtRef.current = Date.now();
-    pttChannelAtPressRef.current = selectedChannel;
-    pttUserAtPressRef.current = currentUser;
-    setIsTransmitting(true);
-    setTxDuration(0);
-
-    try { soundEngine.playPttStart(); } catch (error) {
-      console.warn('No se pudo reproducir el aviso de PTT:', error);
-    }
-    if (Platform.OS !== 'web') {
-      try { Vibration.vibrate(60); } catch {}
-    }
-    if (timerRef.current) clearInterval(timerRef.current);
-    timerRef.current = setInterval(() => {
-      if (pttPressedRef.current) {
-        setTxDuration(Math.floor((Date.now() - pttStartedAtRef.current) / 1000));
-      }
-    }, 250);
-  }, [currentUser, currentTab, selectedChannel?.id]);
-
-  const handlePttPressOut = useCallback(() => {
-    // El evento onPressOut puede dispararse tras una liberación por teclado.
-    // La referencia evita procesarlo por segunda vez.
-    if (!pttPressedRef.current) return;
-    pttPressedRef.current = false;
-    if (timerRef.current) {
-      clearInterval(timerRef.current);
-      timerRef.current = null;
-    }
-    setIsTransmitting(false);
-    setTxDuration(0);
-
-    if (Platform.OS !== 'web') {
-      try { Vibration.vibrate([0, 30, 40, 30]); } catch {}
-    }
-
-    const channelAtRelease = pttChannelAtPressRef.current;
-    const userAtRelease = pttUserAtPressRef.current;
-    const elapsedMs = Math.max(0, Date.now() - pttStartedAtRef.current);
-    const durationSeconds = Math.max(1, Math.ceil(elapsedMs / 1000));
-    pttChannelAtPressRef.current = null;
-    pttUserAtPressRef.current = null;
-    pttStartedAtRef.current = 0;
-
-    // En modo prueba, no crear registros ni enviar datos al servidor.
-    // También se cancela el envío si el usuario abandonó/cambió el canal.
-    const channelStillSelected = !!channelAtRelease && selectedChannel?.id === channelAtRelease.id;
-    if (channelStillSelected && userAtRelease && elapsedMs >= 1000) {
-      const channel = channelAtRelease!;
-      const user = userAtRelease;
-      const newTx: Transmission = {
-        id: Date.now().toString(),
-        sender: user.name,
-        badge: user.badge,
-        channel: channel.name,
-        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        duration: durationSeconds,
-        type: 'voice',
-      };
-      setTransmissions((prev) => [newTx, ...prev]);
-
-      // Se conserva el envío de metadata del proyecto; no se captura audio real aquí.
-      if (serverUrl) {
-        (async () => {
-          try {
-            const cleanUrl = serverUrl.replace(/\/+$/, '');
-            const payload = JSON.stringify({
-              sender_id: user.id,
-              channel_id: channel.id,
-              audio_url: `burst-${Date.now()}`,
-              duration_seconds: durationSeconds,
-              text: `Ráfaga PTT de ${user.badge} (${durationSeconds}s)`,
-            });
-            const res = await fetchWithTimeout(`${cleanUrl}/voice-messages.php`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: payload,
-            }, 3000).catch(() => null);
-            if (!res || !res.ok) {
-              await fetchWithTimeout(`${cleanUrl}/api/voice-messages`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: payload,
-              }, 3000).catch(() => null);
-            }
-          } catch (error) {
-            console.warn('No se pudo guardar el registro PTT:', error);
-          }
-        })();
-      }
-    }
-
-    try { soundEngine.playRogerBeep(); } catch (error) {
-      console.warn('No se pudo reproducir el fin de PTT:', error);
-    }
-  }, [selectedChannel?.id, serverUrl]);
-
-  // Liberar recursos cuando la pantalla se desmonta.
-  useEffect(() => () => {
-    pttPressedRef.current = false;
-    if (timerRef.current) {
-      clearInterval(timerRef.current);
-      timerRef.current = null;
-    }
-  }, []);
-
-  // Atajo de teclado en web: barra espaciadora para PTT solo en pestaña PTT.
-  useEffect(() => {
-    if (Platform.OS !== 'web' || !currentUser || currentTab !== 'PTT') return;
-    const isTyping = (target: EventTarget | null) =>
-      target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement ||
-      (target instanceof HTMLElement && target.isContentEditable);
-    const onDown = (e: KeyboardEvent) => {
-      if (e.code !== 'Space' || isTyping(e.target)) return;
-      e.preventDefault();
-      if (!e.repeat) handlePttPressIn();
-    };
-    const onUp = (e: KeyboardEvent) => {
-      if (e.code !== 'Space' || isTyping(e.target)) return;
-      e.preventDefault();
-      handlePttPressOut();
-    };
-    window.addEventListener('keydown', onDown);
-    window.addEventListener('keyup', onUp);
-    return () => {
-      window.removeEventListener('keydown', onDown);
-      window.removeEventListener('keyup', onUp);
-      // Al abandonar PTT o perder la sesión no debe quedar pulsado.
-      if (pttPressedRef.current) handlePttPressOut();
-    };
-  }, [currentUser, currentTab, handlePttPressIn, handlePttPressOut]);
+    const speaking = radio.speakers.length > 0;
+    if (speaking && !incomingRadio.current && selectedChannel) { soundEngine.playIncomingChirp(); notifications.notify(radio.speakers, selectedChannel.id); }
+    incomingRadio.current = speaking;
+  }, [radio.speakers, selectedChannel?.id, notifications.notify]);
 
   const handleLogin = async () => {
     setIdentifierError(null);
@@ -1784,7 +646,7 @@ function NativeAppScreen() {
             data = JSON.parse(rawText);
           } catch {}
 
-          if (res && res.ok && data && data.success && data.user) {
+          if (res && res.ok && data && data.success && data.user && typeof data.token === 'string') {
             remoteUser = {
               id: String(data.user.id || data.user.phone_number || cleanIdentifier),
               name: data.user.name,
@@ -1795,7 +657,10 @@ function NativeAppScreen() {
               callsign: data.user.callsign,
               email: data.user.correo || (cleanIdentifier.includes('@') ? cleanIdentifier : undefined),
               loginIdentifier: cleanIdentifier,
+              authToken: data.token,
             };
+          } else if (res?.ok && data?.success && data?.user && !data?.token) {
+            loginErrorMsg = 'El servidor necesita actualizarse para iniciar una sesión privada. Contacta al administrador.';
           } else if (data && (data.message || data.code)) {
             const errorCode = data?.code || '';
             const msg = data?.message || '';
@@ -1849,8 +714,7 @@ function NativeAppScreen() {
       setPendingSavedChannel(lastChannel ? {
         userId: String(remoteUser.id), channel: lastChannel, revision: loginRevision,
       } : null);
-      setSelectedChannel(lastChannel && channelsSyncedFromServer
-        ? findRestoredChannel(channels, lastChannel) : null);
+      setSelectedChannel(null);
       setCurrentTab('PTT');
       setCurrentUser(remoteUser);
       try {
@@ -2123,235 +987,22 @@ function NativeAppScreen() {
     }
   };
 
-  // Métodos del flujo de Recuperar Contraseña (Image 1 / ForgotPasswordModal)
-  const openRecoveryModal = () => {
-    setRecoverVisible(true);
-    setRecoverStep('identify');
-    setRecoverIdentifier(identifier || '');
-    setRecoverMatchedUser(null);
-    setRecoverGeneratedCode(null);
-    setRecoverTokenString('');
-    setRecoverNewPassword('');
-    setRecoverConfirmPassword('');
-    setRecoverShowNewPass(false);
-    setRecoverShowConfirmPass(false);
-    setRecoverErrorMessage(null);
-    setRecoverLoading(false);
-  };
+  const openRecoveryModal = () => setRecoverVisible(true);
 
-  const handleIdentifySubmit = async () => {
-    setRecoverErrorMessage(null);
-    const clean = recoverIdentifier.trim();
-    if (!clean) {
-      setRecoverErrorMessage('Ingresa tu teléfono o correo.');
-      return;
-    }
-
-    setRecoverLoading(true);
-
-    try {
-      if (serverUrl) {
-        const cleanUrl = serverUrl.replace(/\/+$/, '');
-        const res = await fetchWithTimeout(`${cleanUrl}/api/auth/forgot-password`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ identifier: clean }),
-        }, 3500);
-
-        if (res.ok) {
-          const data = await res.json();
-          if (data.success && data.token) {
-            setRecoverMatchedUser(data.user || { phone_number: clean, name: 'Oficial C5i' });
-            setRecoverGeneratedCode(data.token);
-            setRecoverResendCooldown(30);
-            setRecoverStep('token');
-            setRecoverLoading(false);
-            return;
-          } else {
-            setRecoverErrorMessage(data.message || 'Usuario no registrado.');
-            setRecoverLoading(false);
-            return;
-          }
-        }
-      }
-    } catch {}
-
-    // Fallback táctico autónomo / local para que el oficial nunca quede varado
-    const cleanPhone = clean.replace(/\D/g, '');
-    const isMockMatch =
-      cleanPhone === '7711234567' ||
-      cleanPhone === '7719876543' ||
-      cleanPhone.length >= 7 ||
-      clean.toUpperCase().includes('HALCON') ||
-      clean.toUpperCase().includes('PATRULLA') ||
-      clean.includes('@');
-
-    if (isMockMatch) {
-      const mockCode = Math.floor(100000 + Math.random() * 900000).toString();
-      setRecoverMatchedUser({ phone_number: cleanPhone || clean, name: 'Oficial C5i' });
-      setRecoverGeneratedCode(mockCode);
-      setRecoverResendCooldown(30);
-      setRecoverStep('token');
-    } else {
-      setRecoverErrorMessage('Usuario no registrado en la base de datos de mandos C5i.');
-    }
-    setRecoverLoading(false);
-  };
-
-  const handleVerifyToken = async () => {
-    setRecoverErrorMessage(null);
-    const fullCode = recoverTokenString.trim();
-    if (fullCode.length !== 6) {
-      setRecoverErrorMessage('Ingresa el código de 6 dígitos.');
-      return;
-    }
-
-    setRecoverLoading(true);
-
-    try {
-      if (serverUrl) {
-        const cleanUrl = serverUrl.replace(/\/+$/, '');
-        const res = await fetchWithTimeout(`${cleanUrl}/api/auth/verify-token`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            identifier: recoverMatchedUser?.phone_number || recoverIdentifier,
-            token: fullCode,
-          }),
-        }, 3500);
-
-        if (res.ok) {
-          const data = await res.json();
-          if (data.valid || data.success) {
-            setRecoverStep('new_password');
-            setRecoverLoading(false);
-            return;
-          } else {
-            setRecoverErrorMessage(data.message || 'Código incorrecto o expirado.');
-            setRecoverLoading(false);
-            return;
-          }
-        }
-      }
-    } catch {}
-
-    if (fullCode === recoverGeneratedCode || fullCode === '123456') {
-      setRecoverStep('new_password');
-    } else {
-      setRecoverErrorMessage('Código de verificación incorrecto.');
-    }
-    setRecoverLoading(false);
-  };
-
-  const handleAutoFillToken = () => {
-    if (recoverGeneratedCode) {
-      setRecoverTokenString(recoverGeneratedCode);
-      setRecoverErrorMessage(null);
-    }
-  };
-
-  const handleResendToken = async () => {
-    if (recoverResendCooldown > 0) return;
-    setRecoverErrorMessage(null);
-
-    try {
-      if (serverUrl) {
-        const cleanUrl = serverUrl.replace(/\/+$/, '');
-        const res = await fetchWithTimeout(`${cleanUrl}/api/auth/forgot-password`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ identifier: recoverMatchedUser?.phone_number || recoverIdentifier }),
-        }, 3500);
-        if (res.ok) {
-          const data = await res.json();
-          if (data.success && data.token) {
-            setRecoverGeneratedCode(data.token);
-            setRecoverResendCooldown(30);
-            return;
-          }
-        }
-      }
-    } catch {}
-
-    const newCode = Math.floor(100000 + Math.random() * 900000).toString();
-    setRecoverGeneratedCode(newCode);
-    setRecoverResendCooldown(30);
-  };
-
-  const handleNewPasswordSubmit = async () => {
-    setRecoverErrorMessage(null);
-    const cleanPass = recoverNewPassword.trim();
-    const cleanConfirm = recoverConfirmPassword.trim();
-
-    if (!cleanPass) {
-      setRecoverErrorMessage('Ingresa la nueva contraseña.');
-      return;
-    }
-
-    if (cleanPass.length < 6) {
-      setRecoverErrorMessage('La contraseña debe tener al menos 6 caracteres.');
-      return;
-    }
-
-    if (cleanPass !== cleanConfirm) {
-      setRecoverErrorMessage('Las contraseñas no coinciden.');
-      return;
-    }
-
-    setRecoverLoading(true);
-
-    try {
-      if (serverUrl) {
-        const cleanUrl = serverUrl.replace(/\/+$/, '');
-        const res = await fetchWithTimeout(`${cleanUrl}/api/auth/reset-password`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            identifier: recoverMatchedUser?.phone_number || recoverIdentifier,
-            new_password: cleanPass,
-          }),
-        }, 3500);
-
-        if (res.ok) {
-          const data = await res.json();
-          if (data.success) {
-            setRecoverStep('success');
-            setRecoverLoading(false);
-            return;
-          } else {
-            setRecoverErrorMessage(data.message || 'Error al actualizar contraseña.');
-            setRecoverLoading(false);
-            return;
-          }
-        }
-      }
-    } catch {}
-
-    setRecoverStep('success');
-    setRecoverLoading(false);
-  };
-
-  const finishRecovery = () => {
-    const finalId = recoverMatchedUser?.phone_number || recoverIdentifier;
-    setIdentifier(finalId);
-    setPassword(recoverNewPassword);
-    setSuccessMessage('Contraseña actualizada con éxito. Puedes iniciar sesión.');
-    setRecoverVisible(false);
-  };
-
-  const handleLogout = async () => {
-    pttPressedRef.current = false;
-    pttChannelAtPressRef.current = null;
-    pttUserAtPressRef.current = null;
-    if (timerRef.current) {
-      clearInterval(timerRef.current);
-      timerRef.current = null;
-    }
-    setIsTransmitting(false);
-    setTxDuration(0);
+  const handleLogout = async (forgetAccount = false) => {
+    void logoutContactSession(serverUrl, currentUser?.authToken).catch(() => {});
+    setConversations([]);
+    setActiveConversation(null);
+    setSelectedGroupMembers([]);
+    setIsNewChatModalOpen(false);
+    setIsCreateGroupChatModalOpen(false);
+    void radio.disconnect();
+    soundEngine.stopAllAudio();
+    setPassword(''); setShowPassword(false);
+    if (forgetAccount && currentUser) { try { await writeSavedChannelSelection(currentUser, null); } catch {} }
     // Refuerzo al cerrar sesión: persistir la selección actual ANTES de limpiar
     // el estado del usuario. Si no había grupo, conservamos la preferencia previa.
-    if (currentUser && selectedChannel) {
+    if (!forgetAccount && currentUser && selectedChannel) {
       try {
         await writeSavedChannelSelection(currentUser, selectedChannel);
       } catch (error) {
@@ -2423,45 +1074,6 @@ function NativeAppScreen() {
     );
   };
 
-  const handleSendMessage = () => {
-    if (!messageInput.trim()) return;
-    if (!selectedChannel) {
-      showTacticalToast('Selecciona un grupo antes de enviar mensajes.', 'warning');
-      setCurrentTab('Grupos');
-      return;
-    }
-    const textToSend = messageInput.trim();
-    const newMsg: Transmission = {
-      id: Date.now().toString(),
-      sender: currentUser?.name || 'Oficial',
-      badge: currentUser?.badge || 'OF-104',
-      channel: selectedChannel.name,
-      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      duration: 1,
-      type: 'text',
-      text: textToSend,
-    };
-    setTransmissions((prev) => [newMsg, ...prev]);
-    setMessageInput('');
-
-    if (serverUrl) {
-      try {
-        const cleanUrl = serverUrl.replace(/\/+$/, '');
-        fetchWithTimeout(`${cleanUrl}/api/voice-messages`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            sender_id: currentUser?.id,
-            channel_id: selectedChannel.id,
-            audio_url: 'text-msg',
-            duration_seconds: 1,
-            text: textToSend,
-          }),
-        }, 3000).catch(() => {});
-      } catch {}
-    }
-  };
-
   // Filtros y contadores para la pestaña Chat (WhatsApp-style C5i)
   const filteredConversations = useMemo(() => {
     return conversations.filter((c) => {
@@ -2478,60 +1090,25 @@ function NativeAppScreen() {
     });
   }, [conversations, selectedChatFilter, chatSearchQuery]);
 
-  const filteredOfficers = useMemo(() => {
-    if (!contactSearchQuery.trim()) return officersList;
-    const q = contactSearchQuery.toLowerCase();
-    return officersList.filter((off) => {
-      return (
-        off.name.toLowerCase().includes(q) ||
-        off.callsign.toLowerCase().includes(q) ||
-        (off.phone_number && off.phone_number.includes(q)) ||
-        (off.unit && off.unit.toLowerCase().includes(q))
-      );
-    });
-  }, [officersList, contactSearchQuery]);
-
-  // Agrupación alfabética de contactos por letra (ej. A -> Alex, V -> Valeria)
-  const groupedOfficers = useMemo(() => {
-    const map = new Map<string, ContactOfficer[]>();
-    const sorted = [...filteredOfficers].sort((a, b) =>
-      a.name.localeCompare(b.name, 'es', { sensitivity: 'base' })
-    );
-
-    for (const officer of sorted) {
-      const trimmed = officer.name.trim();
-      const firstChar = trimmed ? trimmed[0].toUpperCase() : '#';
-      const letter = /^[A-ZÁÉÍÓÚÑ]$/.test(firstChar) ? firstChar : '#';
-      if (!map.has(letter)) {
-        map.set(letter, []);
-      }
-      map.get(letter)!.push(officer);
-    }
-
-    const sortedLetters = Array.from(map.keys()).sort((a, b) => {
-      if (a === '#') return 1;
-      if (b === '#') return -1;
-      return a.localeCompare(b, 'es');
-    });
-
-    return sortedLetters.map((letter) => ({
-      letter,
-      contacts: map.get(letter)!,
-    }));
-  }, [filteredOfficers]);
+  const filteredOfficers = officersList;
 
   const totalChatCount = conversations.length;
   const groupsChatCount = conversations.filter((c) => c.type === 'group').length;
   const directChatCount = conversations.filter((c) => c.type === 'direct').length;
 
   const handleStartDirectChat = (officer: ContactOfficer) => {
+    if (!officer.registered_user_id) {
+      showTacticalToast('Este contacto aún no tiene cuenta en la app. Puedes llamarle por teléfono.', 'info');
+      return false;
+    }
+    const recipient = officer.registered_user_id;
     const existing = conversations.find(
-      (c) => c.type === 'direct' && (c.targetUserId === officer.id || c.name === officer.name)
+      (c) => c.type === 'direct' && (c.targetUserId === recipient || c.name === officer.name)
     );
     if (existing) {
       setActiveConversation(existing);
       setIsNewChatModalOpen(false);
-      return;
+      return true;
     }
 
     const newConv: Conversation = {
@@ -2540,7 +1117,7 @@ function NativeAppScreen() {
       name: officer.name,
       callsign: officer.callsign,
       unit: officer.unit,
-      targetUserId: officer.id,
+      targetUserId: recipient,
       lastMessage: '',
       lastMessageTime: '',
       unreadCount: 0,
@@ -2554,6 +1131,7 @@ function NativeAppScreen() {
     try {
       soundEngine.playIncomingChirp();
     } catch {}
+    return true;
   };
 
   const handleCreateGroupChatSubmit = () => {
@@ -2587,325 +1165,15 @@ function NativeAppScreen() {
     } catch {}
   };
 
-  const handleSaveContactSubmit = () => {
-    const cleanFirstName = newContactName.trim();
-    const cleanLastName = newContactLastName.trim();
-    const cleanPhone = newContactPhone.trim();
-    const cleanEmail = newContactEmail.trim();
-
-    if (!cleanFirstName) {
-      setAddContactError('Ingresa el nombre del oficial o contacto.');
-      return;
-    }
-
-    const fullName = cleanLastName ? `${cleanFirstName} ${cleanLastName}` : cleanFirstName;
-    // Generar indicativo táctico con los últimos 4 dígitos del número celular registrado (ej. termina en 8448 -> RADIO-8448)
-    const phoneDigits = cleanPhone.replace(/\D/g, '');
-    const last4 = phoneDigits.length >= 4
-      ? phoneDigits.slice(-4)
-      : (phoneDigits ? phoneDigits.padStart(4, '0') : `${Math.floor(1000 + Math.random() * 9000)}`);
-    const autoCallsign = `RADIO-${last4}`;
-
-    const tempId = `off-${Date.now()}`;
-    const newOfficer: ContactOfficer = {
-      id: tempId,
-      name: fullName,
-      callsign: autoCallsign,
-      unit: 'Sector Operativo Hidalgo C5i',
-      phone_number: cleanPhone,
-      email: cleanEmail,
-      status: 'online',
-      role: 'Oficial Operativo',
-    };
-
-    setOfficersList((prev) => [newOfficer, ...prev]);
-    setIsAddContactModalOpen(false);
-    setNewContactName('');
-    setNewContactLastName('');
-    setNewContactPhone('');
-    setNewContactEmail('');
-    setAddContactError(null);
-    showTacticalToast(`Contacto "${fullName}" guardado y sincronizado`, 'success');
-
-    try {
-      soundEngine.playIncomingChirp();
-    } catch {}
-
-    if (serverUrl) {
-      (async () => {
-        try {
-          const cleanUrl = serverUrl.replace(/\/+$/, '');
-          const isAlwaysdata = cleanUrl.includes('alwaysdata.net') || cleanUrl.includes('.php');
-          const headers = getSafePostHeaders();
-          const payload = JSON.stringify({
-            action: 'create',
-            name: fullName,
-            first_name: cleanFirstName,
-            last_name: cleanLastName,
-            callsign: newOfficer.callsign,
-            unit: newOfficer.unit,
-            phone_number: cleanPhone,
-            email: cleanEmail,
-            correo: cleanEmail,
-            user_id: currentUser?.id || 'usr-c5i-01',
-            role: newOfficer.role,
-          });
-
-          let res: any = null;
-          if (isAlwaysdata) {
-            res = await fetchWithTimeout(`${cleanUrl}/contacts.php`, {
-              method: 'POST',
-              headers,
-              body: payload,
-            }, 5000).catch(() => null);
-            if (res && res.status >= 400) {
-              isContactsPhpAvailableRef.current = false;
-            } else if (res && res.ok) {
-              isContactsPhpAvailableRef.current = true;
-            }
-          } else {
-            res = await fetchWithTimeout(`${cleanUrl}/api/contacts`, {
-              method: 'POST',
-              headers,
-              body: payload,
-            }, 5000).catch(() => null);
-          }
-
-          if (res && res.ok) {
-            const data = await res.json().catch(() => null);
-            if (data?.contact?.id) {
-              const realId = data.contact.id;
-              setOfficersList((prev) =>
-                prev.map((off) => (off.id === tempId ? { ...off, id: realId, callsign: data.contact.callsign || off.callsign } : off))
-              );
-            }
-          }
-        } catch (e) {
-          console.warn('Error syncing contact to backend:', e);
-        }
-      })();
-    }
+  const handleContactUpdated = (contact: ContactOfficer) => {
+    setConversations(prev => prev.map(c => c.type === 'direct' && c.targetUserId === contact.registered_user_id
+      ? { ...c, name: contact.name, callsign: contact.callsign } : c));
+    setActiveConversation(prev => prev?.type === 'direct' && prev.targetUserId === contact.registered_user_id
+      ? { ...prev, name: contact.name, callsign: contact.callsign } : prev);
   };
-
-  const handleOpenContactDetail = (contact: ContactOfficer) => {
-    setSelectedContactForDetail(contact);
-    setCopiedDetailField(null);
-    setIsContactDetailModalOpen(true);
-  };
-
-  const handleOpenEditContact = (contact: ContactOfficer) => {
-    const parts = contact.name.trim().split(' ');
-    const first = parts[0] || '';
-    const last = parts.slice(1).join(' ');
-    setEditContactName(first);
-    setEditContactLastName(last);
-    setEditContactPhone(contact.phone_number || '');
-    setEditContactEmail(contact.email || '');
-    setEditContactCallsign(contact.callsign || '');
-    setEditContactError(null);
-    setIsEditContactModalOpen(true);
-  };
-
-  const handleSaveEditContactSubmit = () => {
-    if (!selectedContactForDetail) return;
-    const cleanFirstName = editContactName.trim();
-    const cleanLastName = editContactLastName.trim();
-    const cleanPhone = editContactPhone.trim();
-    const cleanEmail = editContactEmail.trim();
-
-    // Si cambió el número de teléfono o la terminación, actualizar automáticamente el indicativo de radio
-    const editPhoneDigits = cleanPhone.replace(/\D/g, '');
-    const editLast4 = editPhoneDigits.length >= 4
-      ? editPhoneDigits.slice(-4)
-      : (editPhoneDigits ? editPhoneDigits.padStart(4, '0') : '0000');
-    const autoPhoneCallsign = `RADIO-${editLast4}`;
-
-    const oldDigits = (selectedContactForDetail.phone_number || '').replace(/\D/g, '');
-    const oldLast4 = oldDigits.slice(-4);
-    const phoneEndingChanged = Boolean(oldDigits && editPhoneDigits && editLast4 !== oldLast4);
-    const cleanCallsign = (phoneEndingChanged || !editContactCallsign.trim())
-      ? autoPhoneCallsign
-      : editContactCallsign.trim().toUpperCase();
-
-    if (!cleanFirstName) {
-      setEditContactError('Ingresa el nombre del oficial o contacto.');
-      return;
-    }
-
-    const fullName = cleanLastName ? `${cleanFirstName} ${cleanLastName}` : cleanFirstName;
-
-    const updatedOfficer: ContactOfficer = {
-      ...selectedContactForDetail,
-      name: fullName,
-      callsign: cleanCallsign,
-      phone_number: cleanPhone,
-      email: cleanEmail,
-    };
-
-    // Actualizar en lista local sin duplicar
-    setOfficersList((prev) =>
-      prev.map((off) => (off.id === updatedOfficer.id || (selectedContactForDetail.phone_number && off.phone_number === selectedContactForDetail.phone_number) ? updatedOfficer : off))
-    );
-    setSelectedContactForDetail(updatedOfficer);
-
-    // Actualizar conversación si está abierta
-    setConversations((prev) =>
-      prev.map((c) =>
-        c.type === 'direct' && (c.targetUserId === updatedOfficer.id || c.name === selectedContactForDetail.name)
-          ? { ...c, name: fullName, callsign: cleanCallsign }
-          : c
-      )
-    );
-
-    setIsEditContactModalOpen(false);
-    setEditContactError(null);
-    showTacticalToast(`Contacto "${fullName}" actualizado`, 'success');
-
-    try {
-      soundEngine.playIncomingChirp();
-    } catch {}
-
-    // Sincronizar en base de datos Alwaysdata y backend
-    if (serverUrl) {
-      (async () => {
-        try {
-          const cleanUrl = serverUrl.replace(/\/+$/, '');
-          const isAlwaysdata = cleanUrl.includes('alwaysdata.net') || cleanUrl.includes('.php');
-          const headers = getSafePostHeaders();
-          const payload = JSON.stringify({
-            action: 'update',
-            is_edit: true,
-            id: updatedOfficer.id,
-            old_id: selectedContactForDetail.id,
-            old_phone: selectedContactForDetail.phone_number,
-            name: fullName,
-            first_name: cleanFirstName,
-            last_name: cleanLastName,
-            callsign: cleanCallsign,
-            unit: updatedOfficer.unit,
-            phone_number: cleanPhone,
-            email: cleanEmail,
-            correo: cleanEmail,
-          });
-
-          if (isAlwaysdata) {
-            const res = await fetchWithTimeout(`${cleanUrl}/contacts.php`, {
-              method: 'POST',
-              headers,
-              body: payload,
-            }, 5000).catch(() => null);
-            if (res && res.ok) {
-              const data = await res.json().catch(() => null);
-              if (data?.contact?.id) {
-                const realId = data.contact.id;
-                setOfficersList((prev) =>
-                  prev.map((off) => (off.id === updatedOfficer.id ? { ...off, id: realId, callsign: data.contact.callsign || off.callsign } : off))
-                );
-                setSelectedContactForDetail((prev) => prev ? { ...prev, id: realId } : null);
-              }
-            }
-          } else {
-            await fetchWithTimeout(`${cleanUrl}/api/contacts/${encodeURIComponent(updatedOfficer.id)}`, {
-              method: 'PUT',
-              headers,
-              body: payload,
-            }, 5000).catch(() => null);
-          }
-        } catch (e) {
-          console.warn('Error syncing contact update:', e);
-        }
-      })();
-    }
-  };
-
-  const handleDeleteContact = (contact: ContactOfficer) => {
-    if (!contact) return;
-
-    const executeDelete = () => {
-      // 1. Agregar a lista negra en memoria y almacenamiento local
-      if (contact.id) deletedContactIdsRef.current.add(contact.id);
-      if (contact.phone_number) deletedContactIdsRef.current.add(contact.phone_number);
-
-      try {
-        const deletedArr = Array.from(deletedContactIdsRef.current);
-        safeStorage.setItem('c5i_deleted_contacts_v2', JSON.stringify(deletedArr));
-      } catch {}
-
-      // 2. Remover de lista local inmediatamente
-      setOfficersList((prev) =>
-        prev.filter((o) => o.id !== contact.id && (!contact.phone_number || o.phone_number !== contact.phone_number))
-      );
-      setIsContactDetailModalOpen(false);
-      setIsEditContactModalOpen(false);
-      setSelectedContactForDetail(null);
-      setTacticalAlertModal((prev) => ({ ...prev, isOpen: false }));
-
-      showTacticalToast(`Contacto "${contact.name}" eliminado de la BD`, 'warning');
-
-      try {
-        soundEngine.playIncomingChirp();
-      } catch {}
-
-      // 3. Sincronizar eliminación en servidor Alwaysdata y API local
-      if (serverUrl) {
-        (async () => {
-          try {
-            const cleanUrl = serverUrl.replace(/\/+$/, '');
-            const isAlwaysdata = cleanUrl.includes('alwaysdata.net') || cleanUrl.includes('.php');
-            const headers = getSafePostHeaders();
-            const deleteBody = JSON.stringify({
-              action: 'delete',
-              id: contact.id,
-              phone_number: contact.phone_number,
-              phone: contact.phone_number,
-            });
-
-            if (isAlwaysdata) {
-              // Enviar DELETE y también POST con action: 'delete' para garantizar compatibilidad con Apache Alwaysdata
-              await Promise.allSettled([
-                fetchWithTimeout(`${cleanUrl}/contacts.php?id=${encodeURIComponent(contact.id)}&phone=${encodeURIComponent(contact.phone_number || '')}&action=delete`, {
-                  method: 'DELETE',
-                  headers,
-                  body: deleteBody,
-                }, 4000),
-                fetchWithTimeout(`${cleanUrl}/contacts.php`, {
-                  method: 'POST',
-                  headers,
-                  body: deleteBody,
-                }, 4000),
-              ]);
-            } else {
-              await Promise.allSettled([
-                fetchWithTimeout(`${cleanUrl}/api/contacts/${encodeURIComponent(contact.id)}`, {
-                  method: 'DELETE',
-                  headers,
-                  body: deleteBody,
-                }, 4000),
-                fetchWithTimeout(`${cleanUrl}/api/contacts`, {
-                  method: 'POST',
-                  headers,
-                  body: deleteBody,
-                }, 4000),
-              ]);
-            }
-          } catch (e) {
-            console.warn('Error deleting contact on backend:', e);
-          }
-        })();
-      }
-    };
-
-    // Modal de Confirmación Táctico C5i (reemplaza window.confirm y Alert.alert del sistema)
-    showTacticalAlert(
-      '¿Eliminar Contacto C5i?',
-      `Estás a punto de dar de baja a "${contact.name}" (${contact.callsign || contact.phone_number || 'Oficial'}). Esta acción se sincronizará permanentemente con la base de datos C5i.`,
-      {
-        type: 'confirm_delete',
-        confirmText: 'Eliminar Contacto',
-        cancelText: 'Cancelar',
-        onConfirm: executeDelete,
-      }
-    );
+  const openContactRegistration = () => {
+    setIsNewChatModalOpen(false);
+    contactsScreenRef.current?.openCreate();
   };
 
   // Envío genérico de mensajes multimedia y tácticos
@@ -3195,7 +1463,7 @@ function NativeAppScreen() {
   if (!currentUser) {
     return (
       <SafeAreaView style={styles.loginContainer}>
-        <StatusBar barStyle="dark-content" />
+        <StatusBar barStyle={dark ? "light-content" : "dark-content"} />
         <KeyboardAvoidingView
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}
           style={styles.loginKeyboardWrapper}
@@ -3231,7 +1499,7 @@ function NativeAppScreen() {
               {inlineWarning ? (
                 <View style={styles.inlineWarningBox}>
                   <View style={styles.bannerIconBox}>
-                    <AlertTriangleIcon size={16} color="#be123c" strokeWidth={1.6} />
+                    <AlertTriangleIcon size={16} color={palette.danger} strokeWidth={1.6} />
                   </View>
                   <Text style={styles.inlineWarningText}>{inlineWarning}</Text>
                 </View>
@@ -3339,7 +1607,7 @@ function NativeAppScreen() {
                   onPress={openRecoveryModal}
                   activeOpacity={0.7}
                 >
-                  <KeyIcon size={16} color="#64748b" strokeWidth={1.6} />
+                  <KeyIcon size={16} color={palette.muted} strokeWidth={1.6} />
                   <Text style={styles.footerActionText}>Recuperar acceso</Text>
                 </TouchableOpacity>
 
@@ -3348,7 +1616,7 @@ function NativeAppScreen() {
                   onPress={openRegisterModal}
                   activeOpacity={0.7}
                 >
-                  <UserPlusIcon size={16} color="#691c32" strokeWidth={1.6} />
+                  <UserPlusIcon size={16} color={palette.accent} strokeWidth={1.6} />
                   <Text style={styles.registerActionText}>Registrarse</Text>
                 </TouchableOpacity>
               </View>
@@ -3373,9 +1641,9 @@ function NativeAppScreen() {
                 <View style={styles.recoveryHeaderLeft}>
                   <View style={styles.recoveryKeyBadge}>
                     {registerStep === 'sms_verification' ? (
-                      <PhoneIcon size={20} color="#8a1a36" strokeWidth={1.8} />
+                      <PhoneIcon size={20} color={palette.accent} strokeWidth={1.8} />
                     ) : (
-                      <UserPlusIcon size={20} color="#8a1a36" strokeWidth={1.8} />
+                      <UserPlusIcon size={20} color={palette.accent} strokeWidth={1.8} />
                     )}
                   </View>
                   <Text style={styles.recoveryTitle}>
@@ -3391,14 +1659,14 @@ function NativeAppScreen() {
                   style={styles.modalCloseBtn}
                   hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                 >
-                  <XIcon size={18} color="#64748b" strokeWidth={2} />
+                  <XIcon size={18} color={palette.muted} strokeWidth={2} />
                 </TouchableOpacity>
               </View>
 
               {/* Error banner */}
               {regGeneralError ? (
                 <View style={styles.recoveryErrorBanner}>
-                  <AlertTriangleIcon size={15} color="#be123c" strokeWidth={1.6} />
+                  <AlertTriangleIcon size={15} color={palette.danger} strokeWidth={1.6} />
                   <Text style={styles.recoveryErrorText}>{regGeneralError}</Text>
                 </View>
               ) : null}
@@ -3636,7 +1904,7 @@ function NativeAppScreen() {
                       onPress={() => setRegisterStep('form')}
                       activeOpacity={0.7}
                     >
-                      <ArrowLeftIcon size={14} color="#64748b" />
+                      <ArrowLeftIcon size={14} color={palette.muted} />
                       <Text style={styles.recoveryBackText}>Volver</Text>
                     </TouchableOpacity>
 
@@ -3760,400 +2028,16 @@ function NativeAppScreen() {
           </KeyboardAvoidingView>
         </Modal>
 
-        {/* Modal: Recuperar Contraseña (Diseño idéntico a Image 1 y ForgotPasswordModal) */}
-        <Modal
-          visible={recoverVisible}
-          animationType="fade"
-          transparent
-          onRequestClose={() => setRecoverVisible(false)}
-        >
-          <KeyboardAvoidingView
-            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-            style={styles.modalOverlay}
-          >
-            <View style={styles.recoveryCard}>
-              {/* Header with key badge and title */}
-              <View style={styles.recoveryHeader}>
-                <View style={styles.recoveryHeaderLeft}>
-                  <View style={styles.recoveryKeyBadge}>
-                    <KeyIcon size={20} color="#8a1a36" strokeWidth={1.8} />
-                  </View>
-                  <Text style={styles.recoveryTitle}>Recuperar Contraseña</Text>
-                </View>
-                <TouchableOpacity
-                  onPress={() => setRecoverVisible(false)}
-                  style={styles.modalCloseBtn}
-                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                >
-                  <XIcon size={18} color="#64748b" strokeWidth={2} />
-                </TouchableOpacity>
-              </View>
-
-              {/* Inline Error Message */}
-              {recoverErrorMessage ? (
-                <View style={styles.recoveryErrorBanner}>
-                  <AlertTriangleIcon size={15} color="#be123c" strokeWidth={1.6} />
-                  <Text style={styles.recoveryErrorText}>{recoverErrorMessage}</Text>
-                </View>
-              ) : null}
-
-              {/* STEP 1: IDENTIFY USER (Teléfono o Correo) */}
-              {recoverStep === 'identify' && (
-                <View>
-                  <View style={styles.recoveryInputGroup}>
-                    <Text style={styles.recoveryInputLabel}>Teléfono o Correo</Text>
-                    <View
-                      style={[
-                        styles.recoveryInputBox,
-                        recoverIdentifier.trim().length > 0 && styles.recoveryInputBoxActive,
-                      ]}
-                    >
-                      <View style={styles.recoveryInputIconBox}>
-                        {recoverIdentifier.includes('@') ? (
-                          <MailIcon size={16} color="#94a3b8" />
-                        ) : (
-                          <PhoneIcon size={16} color="#94a3b8" />
-                        )}
-                      </View>
-                      <TextInput
-                        style={styles.recoveryInput}
-                        value={recoverIdentifier}
-                        onChangeText={(val) => {
-                          setRecoverIdentifier(val);
-                          if (recoverErrorMessage) setRecoverErrorMessage(null);
-                        }}
-                        placeholder="Ingresa tu teléfono o correo"
-                        placeholderTextColor="#94a3b8"
-                        autoCapitalize="none"
-                        autoCorrect={false}
-                        autoFocus
-                      />
-                    </View>
-                  </View>
-
-                  <View style={styles.recoveryButtonsRow}>
-                    <TouchableOpacity
-                      style={styles.recoveryCancelBtn}
-                      onPress={() => setRecoverVisible(false)}
-                      activeOpacity={0.7}
-                    >
-                      <Text style={styles.recoveryCancelText}>Cancelar</Text>
-                    </TouchableOpacity>
-
-                    <TouchableOpacity
-                      style={[
-                        styles.recoverySubmitBtn,
-                        (!recoverIdentifier.trim() || recoverLoading) && styles.recoverySubmitBtnDisabled,
-                      ]}
-                      onPress={handleIdentifySubmit}
-                      disabled={!recoverIdentifier.trim() || recoverLoading}
-                      activeOpacity={0.88}
-                    >
-                      {recoverLoading ? (
-                        <ActivityIndicator color="#ffffff" size="small" />
-                      ) : (
-                        <Text style={styles.recoverySubmitText}>Continuar</Text>
-                      )}
-                    </TouchableOpacity>
-                  </View>
-                </View>
-              )}
-
-              {/* STEP 2: VERIFY 6-DIGIT TOKEN */}
-              {recoverStep === 'token' && (
-                <View>
-                  <View style={styles.recoveryStepNavRow}>
-                    <TouchableOpacity
-                      style={styles.recoveryBackBtn}
-                      onPress={() => {
-                        setRecoverStep('identify');
-                        setRecoverErrorMessage(null);
-                      }}
-                      activeOpacity={0.7}
-                    >
-                      <ArrowLeftIcon size={13} color="#64748b" />
-                      <Text style={styles.recoveryBackText}>Volver</Text>
-                    </TouchableOpacity>
-
-                    {recoverGeneratedCode ? (
-                      <TouchableOpacity onPress={handleAutoFillToken} activeOpacity={0.7}>
-                        <Text style={styles.recoveryCodeBadge}>
-                          Código: {recoverGeneratedCode}
-                        </Text>
-                      </TouchableOpacity>
-                    ) : null}
-                  </View>
-
-                  <Text style={styles.recoveryTokenTitle}>
-                    Código de verificación (6 dígitos)
-                  </Text>
-
-                  {/* 6 Digit Display Boxes */}
-                  <TouchableOpacity
-                    activeOpacity={1}
-                    onPress={() => tokenHiddenInputRef.current?.focus()}
-                    style={styles.tokenBoxesRow}
-                  >
-                    {[0, 1, 2, 3, 4, 5].map((idx) => {
-                      const char = recoverTokenString[idx] || '';
-                      const isFocused =
-                        recoverTokenString.length === idx ||
-                        (idx === 5 && recoverTokenString.length === 6);
-                      return (
-                        <View
-                          key={idx}
-                          style={[
-                            styles.tokenBox,
-                            char.length > 0 && styles.tokenBoxFilled,
-                            isFocused && styles.tokenBoxActive,
-                          ]}
-                        >
-                          <Text style={styles.tokenDigitText}>{char}</Text>
-                        </View>
-                      );
-                    })}
-                  </TouchableOpacity>
-
-                  {/* Hidden input for keyboard / paste / SMS autofill */}
-                  <TextInput
-                    ref={tokenHiddenInputRef}
-                    value={recoverTokenString}
-                    onChangeText={(val) => {
-                      const clean = val.replace(/\D/g, '').slice(0, 6);
-                      setRecoverTokenString(clean);
-                      if (recoverErrorMessage) setRecoverErrorMessage(null);
-                    }}
-                    keyboardType="number-pad"
-                    maxLength={6}
-                    style={styles.hiddenInput}
-                    autoFocus
-                  />
-
-                  {/* Resend Action */}
-                  <View style={styles.resendRow}>
-                    <TouchableOpacity
-                      style={styles.resendBtn}
-                      onPress={handleResendToken}
-                      disabled={recoverResendCooldown > 0}
-                      activeOpacity={0.7}
-                    >
-                      <RotateCwIcon
-                        size={12}
-                        color={recoverResendCooldown > 0 ? '#94a3b8' : '#0284c7'}
-                      />
-                      <Text
-                        style={[
-                          styles.resendText,
-                          recoverResendCooldown > 0 && styles.resendTextDisabled,
-                        ]}
-                      >
-                        {recoverResendCooldown > 0
-                          ? `Reenviar en ${recoverResendCooldown}s`
-                          : 'Reenviar código'}
-                      </Text>
-                    </TouchableOpacity>
-                  </View>
-
-                  <View style={styles.recoveryButtonsRow}>
-                    <TouchableOpacity
-                      style={styles.recoveryCancelBtn}
-                      onPress={() => setRecoverVisible(false)}
-                      activeOpacity={0.7}
-                    >
-                      <Text style={styles.recoveryCancelText}>Cancelar</Text>
-                    </TouchableOpacity>
-
-                    <TouchableOpacity
-                      style={[
-                        styles.recoverySubmitBtn,
-                        (recoverTokenString.length !== 6 || recoverLoading) &&
-                          styles.recoverySubmitBtnDisabled,
-                      ]}
-                      onPress={handleVerifyToken}
-                      disabled={recoverTokenString.length !== 6 || recoverLoading}
-                      activeOpacity={0.88}
-                    >
-                      {recoverLoading ? (
-                        <ActivityIndicator color="#ffffff" size="small" />
-                      ) : (
-                        <Text style={styles.recoverySubmitText}>Validar</Text>
-                      )}
-                    </TouchableOpacity>
-                  </View>
-                </View>
-              )}
-
-              {/* STEP 3: SET NEW PASSWORD */}
-              {recoverStep === 'new_password' && (
-                <View>
-                  <View style={styles.recoveryInputGroup}>
-                    <Text style={styles.recoveryInputLabel}>Nueva Contraseña</Text>
-                    <View style={styles.recoveryInputBox}>
-                      <View style={styles.recoveryInputIconBox}>
-                        <LockIcon size={16} color="#94a3b8" />
-                      </View>
-                      <TextInput
-                        style={styles.recoveryInput}
-                        value={recoverNewPassword}
-                        onChangeText={(val) => {
-                          setRecoverNewPassword(val);
-                          if (recoverErrorMessage) setRecoverErrorMessage(null);
-                        }}
-                        placeholder="Mínimo 6 caracteres"
-                        placeholderTextColor="#94a3b8"
-                        secureTextEntry={!recoverShowNewPass}
-                        autoCapitalize="none"
-                        autoFocus
-                      />
-                      <TouchableOpacity
-                        onPress={() => setRecoverShowNewPass(!recoverShowNewPass)}
-                        style={styles.eyeBtn}
-                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                      >
-                        <EyeIcon size={16} color="#94a3b8" off={recoverShowNewPass} />
-                      </TouchableOpacity>
-                    </View>
-                  </View>
-
-                  <View style={styles.recoveryInputGroup}>
-                    <Text style={styles.recoveryInputLabel}>Confirmar Contraseña</Text>
-                    <View style={styles.recoveryInputBox}>
-                      <View style={styles.recoveryInputIconBox}>
-                        <LockIcon size={16} color="#94a3b8" />
-                      </View>
-                      <TextInput
-                        style={styles.recoveryInput}
-                        value={recoverConfirmPassword}
-                        onChangeText={(val) => {
-                          setRecoverConfirmPassword(val);
-                          if (recoverErrorMessage) setRecoverErrorMessage(null);
-                        }}
-                        placeholder="Repite la contraseña"
-                        placeholderTextColor="#94a3b8"
-                        secureTextEntry={!recoverShowConfirmPass}
-                        autoCapitalize="none"
-                      />
-                      <TouchableOpacity
-                        onPress={() => setRecoverShowConfirmPass(!recoverShowConfirmPass)}
-                        style={styles.eyeBtn}
-                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                      >
-                        <EyeIcon size={16} color="#94a3b8" off={recoverShowConfirmPass} />
-                      </TouchableOpacity>
-                    </View>
-                  </View>
-
-                  {/* Live Validation Hints */}
-                  <View style={styles.checklistContainer}>
-                    <View style={styles.checkItem}>
-                      <View
-                        style={[
-                          styles.checkDot,
-                          recoverNewPassword.length >= 6 && styles.checkDotValid,
-                        ]}
-                      />
-                      <Text
-                        style={[
-                          styles.checkItemText,
-                          recoverNewPassword.length >= 6 && styles.checkItemTextValid,
-                        ]}
-                      >
-                        Mínimo 6 caracteres
-                      </Text>
-                    </View>
-                    <View style={styles.checkItem}>
-                      <View
-                        style={[
-                          styles.checkDot,
-                          recoverNewPassword.length > 0 &&
-                            recoverNewPassword === recoverConfirmPassword &&
-                            styles.checkDotValid,
-                        ]}
-                      />
-                      <Text
-                        style={[
-                          styles.checkItemText,
-                          recoverNewPassword.length > 0 &&
-                            recoverNewPassword === recoverConfirmPassword &&
-                            styles.checkItemTextValid,
-                        ]}
-                      >
-                        Las contraseñas coinciden
-                      </Text>
-                    </View>
-                  </View>
-
-                  <View style={styles.recoveryButtonsRow}>
-                    <TouchableOpacity
-                      style={styles.recoveryCancelBtn}
-                      onPress={() => setRecoverVisible(false)}
-                      activeOpacity={0.7}
-                    >
-                      <Text style={styles.recoveryCancelText}>Cancelar</Text>
-                    </TouchableOpacity>
-
-                    <TouchableOpacity
-                      style={[
-                        styles.recoverySubmitBtn,
-                        (!recoverNewPassword.trim() ||
-                          !recoverConfirmPassword.trim() ||
-                          recoverLoading) &&
-                          styles.recoverySubmitBtnDisabled,
-                      ]}
-                      onPress={handleNewPasswordSubmit}
-                      disabled={
-                        !recoverNewPassword.trim() ||
-                        !recoverConfirmPassword.trim() ||
-                        recoverLoading
-                      }
-                      activeOpacity={0.88}
-                    >
-                      {recoverLoading ? (
-                        <ActivityIndicator color="#ffffff" size="small" />
-                      ) : (
-                        <Text style={styles.recoverySubmitText}>Guardar</Text>
-                      )}
-                    </TouchableOpacity>
-                  </View>
-                </View>
-              )}
-
-              {/* STEP 4: SUCCESS CONFIRMATION */}
-              {recoverStep === 'success' && (
-                <View style={styles.successContainer}>
-                  <View style={styles.successBadgeLarge}>
-                    <CheckCircleIcon size={28} color="#059669" strokeWidth={2} />
-                  </View>
-
-                  <Text style={styles.successTitleText}>Contraseña actualizada</Text>
-                  <Text style={styles.successSubText}>
-                    Ya puedes iniciar sesión con tu nueva contraseña.
-                  </Text>
-
-                  <TouchableOpacity
-                    style={styles.recoverySubmitBtnFull}
-                    onPress={finishRecovery}
-                    activeOpacity={0.88}
-                  >
-                    <Text style={styles.recoverySubmitText}>Iniciar Sesión</Text>
-                  </TouchableOpacity>
-                </View>
-              )}
-            </View>
-          </KeyboardAvoidingView>
-        </Modal>
+        <SecurityCodeModal visible={recoverVisible} mode="recovery" server={serverUrl}
+          onClose={() => setRecoverVisible(false)}
+          onComplete={() => { setPassword(''); setSuccessMessage('Contraseña actualizada. Inicia sesión con tu nueva contraseña.'); }} />
       </SafeAreaView>
     );
   }
 
-  const memberCount = selectedChannel ? 1 : 0;
-  const channelTitle = selectedChannel?.name || (pendingSavedChannel && currentUser?.id === pendingSavedChannel.userId
-    ? `${pendingSavedChannel.channel.name} (verificando...)`
-    : (channels.length === 0 ? 'Sin canales disponibles' : 'Ningún grupo seleccionado'));
-
   return (
     <SafeAreaView style={styles.cleanContainer}>
-      <StatusBar barStyle="dark-content" />
+      <StatusBar barStyle={dark ? "light-content" : "dark-content"} />
       
       {/* SOS Active Banner */}
       {isSosActive && (
@@ -4165,396 +2049,18 @@ function NativeAppScreen() {
       {/* Main Tab Content */}
       <View style={styles.cleanMainContent}>
         {currentTab === 'PTT' && (
-          <View style={styles.cleanPttContainer}>
-            {/* TOP BAR: CANAL ACTUAL, SOS & MEMBER BADGE (Matching Image 2) */}
-            <View style={styles.cleanTopBar}>
-              <TouchableOpacity
-                onPress={() => setCurrentTab('Grupos')}
-                style={styles.cleanChannelBox}
-                activeOpacity={0.7}
-              >
-                <Text style={styles.cleanChannelLabel}>CANAL ACTUAL</Text>
-                <Text
-                  style={[styles.cleanChannelTitle, Platform.OS === 'android' && styles.cleanChannelTitleAndroid]}
-                  numberOfLines={Platform.OS === 'android' ? 3 : 1}
-                >
-                  {channelTitle}
-                </Text>
-              </TouchableOpacity>
-
-              <View style={styles.cleanHeaderActions}>
-                {/* Emergency Call / SOS Button (ICON-ONLY rounded square matching Image 4) */}
-                <TouchableOpacity
-                  style={styles.cleanSosBtn}
-                  onPress={handleTriggerSos}
-                  activeOpacity={0.85}
-                  accessibilityLabel="Llamada de Emergencia SOS"
-                >
-                  <AlertTriangleIcon size={18} color="#ffffff" strokeWidth={2.2} />
-                </TouchableOpacity>
-
-                {/* Member count pill - Opens Channel Members Modal */}
-                <TouchableOpacity
-                  style={styles.cleanMembersPill}
-                  onPress={() => setIsMembersModalOpen(true)}
-                  disabled={!selectedChannel}
-                  activeOpacity={0.8}
-                  accessibilityLabel={selectedChannel ? 'Ver usuarios dentro del canal' : 'No hay grupo seleccionado'}
-                >
-                  <UsersIcon size={16} color="#64748b" strokeWidth={1.8} />
-                  <Text style={styles.cleanMembersCount}>{memberCount}</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-
-            {/* CENTER AREA: STATUS, CONCENTRIC PTT & WIFI PILL */}
-            <View style={styles.cleanCenterArea}>
-              {/* Status prompt */}
-              <View style={styles.cleanStatusPrompt}>
-                {isTransmitting ? (
-                  <View style={styles.cleanStatusRow}>
-                    <View style={styles.cleanPulseRedDot} />
-                    <Text style={styles.cleanStatusTextRed}>
-                      {pttChannelAtPressRef.current
-                        ? `Transmitiendo (${txDuration.toString().padStart(2, '0')}s)...`
-                        : `Prueba del botón PTT (${txDuration.toString().padStart(2, '0')}s) · Sin envío`}
-                    </Text>
-                  </View>
-                ) : !selectedChannel ? (
-                  <TouchableOpacity
-                    style={styles.cleanStatusRow}
-                    onPress={() => setCurrentTab('Grupos')}
-                    accessibilityLabel="Abrir Grupos para seleccionar un canal"
-                  >
-                    <RadioIcon size={15} color="#64748b" strokeWidth={2} />
-                    <Text style={styles.cleanStatusTextIdle}>
-                      {pendingSavedChannel ? 'Verificando el grupo guardado con el servidor...' : 'Puedes probar el botón; elige grupo para transmitir'}
-                    </Text>
-                  </TouchableOpacity>
-                ) : (
-                  <View style={styles.cleanStatusRow}>
-                    <View style={styles.cleanGreenDot} />
-                    <Text style={styles.cleanStatusTextIdle}>
-                      Mantén presionado para hablar
-                    </Text>
-                  </View>
-                )}
-              </View>
-
-              {/* PTT Concentric Circle Button with Soundwaves */}
-              <View style={styles.pttCircleContainer}>
-                {isTransmitting && (
-                  // Aros sin Animated.loop: no se desmontan animaciones activas al soltar.
-                  <>
-                    <View
-                      pointerEvents="none"
-                      style={[styles.cleanPttExpandingWave, {
-                        width: 310, height: 310, borderRadius: 155, opacity: 0.38,
-                      }]}
-                    />
-                    <View
-                      pointerEvents="none"
-                      style={[styles.cleanPttExpandingWave, {
-                        width: 286, height: 286, borderRadius: 143, opacity: 0.60,
-                      }]}
-                    />
-                  </>
-                )}
-
-                <View
-                  style={[
-                    styles.cleanPttCircleOuter,
-                    isTransmitting && styles.cleanPttCircleOuterActive,
-                  ]}
-                >
-                  <TouchableOpacity
-                    activeOpacity={0.9}
-                    onPressIn={handlePttPressIn}
-                    onPressOut={handlePttPressOut}
-                    accessibilityLabel={selectedChannel
-                      ? 'Mantén presionado para transmitir al grupo'
-                      : 'Mantén presionado para probar el botón, sin transmitir'}
-                    style={[
-                      styles.cleanPttCircleInner,
-                      isTransmitting && styles.cleanPttCircleInnerActive,
-                    ]}
-                  >
-                    <MicIcon
-                      size={48}
-                      color={isTransmitting ? '#ffffff' : '#334155'}
-                      strokeWidth={2}
-                    />
-                  </TouchableOpacity>
-                </View>
-              </View>
-
-              {/* Connected Dynamic Status Pill */}
-              <View style={styles.cleanWifiPill}>
-                <WifiIcon size={14} color="#10b981" strokeWidth={2} />
-                <Text style={styles.cleanWifiPillText}>Conectado (Wi-Fi)</Text>
-              </View>
-            </View>
-          </View>
+          <PttScreen channel={selectedChannel} radio={radio} pttMode={account.settings.pttMode} notifications={{ ...notifications, enable: async () => {
+            const enabled = await notifications.enable();
+            if (enabled) { try { await account.saveSettings({ backgroundNotifications: true }); } catch { await notifications.disable(); return false; } }
+            return enabled;
+          } }}
+            onGroups={() => setCurrentTab('Grupos')} onMembers={() => setIsMembersModalOpen(true)} onSos={handleTriggerSos} />
         )}
 
         {currentTab === 'Grupos' && (
-          <View style={styles.canalesMainWrapper}>
-            {/* ENCABEZADO CANALES EXACTO A LA IMAGEN 1 */}
-            <View style={styles.canalesHeader}>
-              <View style={styles.canalesHeaderLeft}>
-                <View style={styles.canalesHeaderIconBox}>
-                  <RadioIcon size={22} color="#8a1a36" strokeWidth={2.2} />
-                </View>
-                <Text style={styles.canalesHeaderTitle}>Canales</Text>
-              </View>
-
-              <View style={styles.canalesHeaderActions}>
-                {/* 1. Botón SOS */}
-                <TouchableOpacity
-                  style={styles.cleanSosBtn}
-                  onPress={handleTriggerSos}
-                  activeOpacity={0.85}
-                  accessibilityLabel="Llamada de Emergencia SOS"
-                >
-                  <AlertTriangleIcon size={18} color="#ffffff" strokeWidth={2.2} />
-                </TouchableOpacity>
-
-                {/* 2. Botón Unirse a Canal */}
-                <TouchableOpacity
-                  style={styles.canalesHeaderActionBtn}
-                  onPress={() => {
-                    setJoinPinDigits('');
-                    setJoinError(null);
-                    setIsJoinModalOpen(true);
-                  }}
-                  activeOpacity={0.8}
-                  accessibilityLabel="Unirse a un canal con PIN o QR"
-                >
-                  <LogInIcon size={20} color="#334155" strokeWidth={2} />
-                </TouchableOpacity>
-
-                {/* 3. Botón Crear Canal */}
-                <TouchableOpacity
-                  style={styles.canalesHeaderCreateBtn}
-                  onPress={() => {
-                    setCreateChannelName('');
-                    setCreateChannelPin('');
-                    setCreateChannelCategory('Táctico');
-                    setCreateChannelError(null);
-                    setIsCreateModalOpen(true);
-                  }}
-                  activeOpacity={0.85}
-                  accessibilityLabel="Crear un nuevo canal táctico"
-                >
-                  <PlusIcon size={20} color="#ffffff" strokeWidth={2.4} />
-                </TouchableOpacity>
-              </View>
-            </View>
-
-            {/* BARRA DE BÚSQUEDA */}
-            <View style={styles.canalesSearchContainer}>
-              <View style={styles.canalesSearchBox}>
-                <SearchIcon size={18} color="#94a3b8" strokeWidth={2} />
-                <TextInput
-                  style={styles.canalesSearchInput}
-                  value={channelSearchText}
-                  onChangeText={setChannelSearchText}
-                  placeholder="Buscar canal o frecuencia..."
-                  placeholderTextColor="#94a3b8"
-                />
-                {channelSearchText.length > 0 && (
-                  <TouchableOpacity
-                    onPress={() => setChannelSearchText('')}
-                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                  >
-                    <XIcon size={16} color="#94a3b8" />
-                  </TouchableOpacity>
-                )}
-              </View>
-            </View>
-
-            {/* FILTROS POR CATEGORÍA HORIZONTALES */}
-            <View style={styles.canalesCategoriesContainer}>
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={styles.canalesCategoriesScroll}
-              >
-                {['Todos', 'General', 'Emergencia', 'Táctico', 'Vialidad', 'Inteligencia', 'Privados'].map((cat) => {
-                  const isCatActive = selectedCategory === cat;
-                  return (
-                    <TouchableOpacity
-                      key={cat}
-                      style={[
-                        styles.canalesCategoryPill,
-                        isCatActive && styles.canalesCategoryPillActive,
-                      ]}
-                      onPress={() => setSelectedCategory(cat)}
-                      activeOpacity={0.7}
-                    >
-                      <Text
-                        style={[
-                          styles.canalesCategoryText,
-                          isCatActive && styles.canalesCategoryTextActive,
-                        ]}
-                      >
-                        {cat}
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </ScrollView>
-            </View>
-
-            {/* LISTADO DE CANALES O ESTADO VACÍO */}
-            <ScrollView
-              style={styles.canalesListScroll}
-              contentContainerStyle={styles.canalesListContent}
-              showsVerticalScrollIndicator={false}
-            >
-              {filteredChannels.length === 0 ? (
-                /* ESTADO VACÍO EXACTO A LA IMAGEN 1 */
-                <View style={styles.canalesEmptyContainer}>
-                  <View style={styles.canalesEmptyIconBox}>
-                    <RadioIcon size={32} color="#8a1a36" strokeWidth={2} />
-                  </View>
-                  <Text style={styles.canalesEmptyTitle}>No tienes canales creados todavía</Text>
-                  <Text style={styles.canalesEmptySubtext}>
-                    Crea tu propio canal o únete a uno existente en la red táctica C5i.
-                  </Text>
-
-                  <View style={styles.canalesEmptyButtonsRow}>
-                    <TouchableOpacity
-                      style={styles.canalesEmptyCreateBtn}
-                      onPress={() => {
-                        setCreateChannelName('');
-                        setCreateChannelPin('');
-                        setCreateChannelCategory('Táctico');
-                        setCreateChannelError(null);
-                        setIsCreateModalOpen(true);
-                      }}
-                      activeOpacity={0.8}
-                    >
-                      <PlusIcon size={16} color="#ffffff" strokeWidth={2.4} />
-                      <Text style={styles.canalesEmptyCreateBtnText}>Crear Canal</Text>
-                    </TouchableOpacity>
-
-                    <TouchableOpacity
-                      style={styles.canalesEmptyJoinBtn}
-                      onPress={() => {
-                        setJoinPinDigits('');
-                        setJoinError(null);
-                        setIsJoinModalOpen(true);
-                      }}
-                      activeOpacity={0.8}
-                    >
-                      <LogInIcon size={16} color="#8a1a36" strokeWidth={2} />
-                      <Text style={styles.canalesEmptyJoinBtnText}>Unirse a Canal</Text>
-                    </TouchableOpacity>
-                  </View>
-                </View>
-              ) : (
-                /* TARJETAS DE CANALES EXACTAS A LA IMAGEN 2 */
-                filteredChannels.map((ch: Channel) => {
-                  const isSelected = ch.id === selectedChannel?.id;
-                  return (
-                    <View
-                      key={ch.id}
-                      style={[
-                        styles.canalesCard,
-                        isSelected && styles.canalesCardSelected,
-                      ]}
-                    >
-                      <TouchableOpacity
-                        style={styles.canalesCardLeft}
-                        onPress={() => handleTuneChannel(ch)}
-                        activeOpacity={0.7}
-                      >
-                        <View
-                          style={[
-                            styles.canalesCardRadioBadge,
-                            isSelected && styles.canalesCardRadioBadgeActive,
-                          ]}
-                        >
-                          <RadioIcon size={20} color="#ffffff" strokeWidth={2.2} />
-                        </View>
-
-                        <View style={styles.canalesCardInfo}>
-                          <View style={styles.canalesCardTitleRow}>
-                            <Text
-                              style={[
-                                styles.canalesCardName,
-                                isSelected && styles.canalesCardNameActive,
-                              ]}
-                              numberOfLines={1}
-                            >
-                              {ch.name}
-                            </Text>
-                            {isSelected && (
-                              <View style={styles.canalesActivePill}>
-                                <View style={styles.canalesActiveDot} />
-                                <Text style={styles.canalesActivePillText}>ACTIVO</Text>
-                              </View>
-                            )}
-                          </View>
-                          <View style={styles.canalesCardMetaRow}>
-                            <View style={styles.canalesCardMembers}>
-                              <UsersIcon size={13} color="#64748b" strokeWidth={1.8} />
-                              <Text style={styles.canalesCardMembersText}>
-                                {ch.activeUsers || 1} activos
-                              </Text>
-                            </View>
-
-                            <View style={styles.canalesCardCategoryBadge}>
-                              <Text style={styles.canalesCardCategoryText}>
-                                {(ch.category || 'TÁCTICO').toUpperCase()}
-                              </Text>
-                            </View>
-
-                            <Text style={styles.canalesCardPinText}>
-                              PIN: {ch.pin || '1090'}
-                            </Text>
-                          </View>
-                        </View>
-                      </TouchableOpacity>
-
-                      <View style={styles.canalesCardRight}>
-                        {/* Botón QR / Configuración */}
-                        <TouchableOpacity
-                          style={styles.canalesCardQrBtn}
-                          onPress={() => openChannelConfig(ch)}
-                          activeOpacity={0.7}
-                          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                          accessibilityLabel="Ver código QR y configuración del canal"
-                        >
-                          <QrCodeIcon size={20} color="#64748b" strokeWidth={1.8} />
-                        </TouchableOpacity>
-
-                        {/* Botón Sintonizado / Sintonizar */}
-                        <TouchableOpacity
-                          style={[
-                            styles.canalesCardSintonizarBtn,
-                            isSelected && styles.canalesCardSintonizarBtnActive,
-                          ]}
-                          onPress={() => handleTuneChannel(ch)}
-                          activeOpacity={0.8}
-                        >
-                          <Text
-                            style={[
-                              styles.canalesCardSintonizarText,
-                              isSelected && styles.canalesCardSintonizarTextActive,
-                            ]}
-                          >
-                            {isSelected ? 'SINTONIZADO' : 'SINTONIZAR'}
-                          </Text>
-                        </TouchableOpacity>
-                      </View>
-                    </View>
-                  );
-                })
-              )}
-            </ScrollView>
-          </View>
+          <GroupsScreen key={channelsDirectory.scope} directory={channelsDirectory}
+            selectedChannel={selectedChannel} onTune={chooseAndRememberChannel}
+            onSos={handleTriggerSos} onOpenPtt={() => setCurrentTab('PTT')} />
         )}
 
         {currentTab === 'Chat' && (
@@ -4573,7 +2079,7 @@ function NativeAppScreen() {
                     activeOpacity={0.7}
                     hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
                   >
-                    <ArrowLeftIcon size={22} color="#0f172a" strokeWidth={2.4} />
+                    <ArrowLeftIcon size={22} color={palette.text} strokeWidth={2.4} />
                   </TouchableOpacity>
 
                   <View style={styles.chatActiveAvatarBox}>
@@ -4601,7 +2107,7 @@ function NativeAppScreen() {
                     activeOpacity={0.75}
                     accessibilityLabel="Videollamada"
                   >
-                    <VideoIcon size={20} color="#334155" strokeWidth={2} />
+                    <VideoIcon size={20} color={palette.secondary} strokeWidth={2} />
                   </TouchableOpacity>
 
                   {/* Botón de Llamada de Voz */}
@@ -4611,7 +2117,7 @@ function NativeAppScreen() {
                     activeOpacity={0.75}
                     accessibilityLabel="Llamada de voz"
                   >
-                    <PhoneIcon size={19} color="#334155" strokeWidth={2} />
+                    <PhoneIcon size={19} color={palette.secondary} strokeWidth={2} />
                   </TouchableOpacity>
                 </View>
 
@@ -4640,7 +2146,7 @@ function NativeAppScreen() {
                   ) : (
                     <>
                       <View style={styles.chatSecurityBanner}>
-                        <LockIcon size={12} color="#64748b" strokeWidth={2} />
+                        <LockIcon size={12} color={palette.muted} strokeWidth={2} />
                         <Text style={styles.chatSecurityText}>
                           Cifrado de extremo a extremo táctico C5i activo
                         </Text>
@@ -4873,7 +2379,7 @@ function NativeAppScreen() {
                       >
                         <PaperclipIcon
                           size={20}
-                          color={isAttachMenuOpen ? '#8a1a36' : '#64748b'}
+                          color={isAttachMenuOpen ? palette.accent : palette.muted}
                           strokeWidth={2}
                         />
                       </TouchableOpacity>
@@ -4905,7 +2411,7 @@ function NativeAppScreen() {
                           activeOpacity={0.8}
                           accessibilityLabel="Enviar nota de voz"
                         >
-                          <MicIcon size={20} color="#8a1a36" strokeWidth={2.2} />
+                          <MicIcon size={20} color={palette.accent} strokeWidth={2.2} />
                         </TouchableOpacity>
                       )}
                     </View>
@@ -4919,7 +2425,7 @@ function NativeAppScreen() {
                 <View style={styles.chatTopHeader}>
                   <View style={styles.chatTopHeaderLeft}>
                     <View style={styles.chatHeaderIconBadge}>
-                      <MessageSquareIcon size={20} color="#8a1a36" strokeWidth={2.2} />
+                      <MessageSquareIcon size={20} color={palette.accent} strokeWidth={2.2} />
                     </View>
                     <Text style={styles.chatTopHeaderTitle}>Chat</Text>
                   </View>
@@ -4942,7 +2448,7 @@ function NativeAppScreen() {
                       activeOpacity={0.75}
                       accessibilityLabel="Nueva conversación"
                     >
-                      <EditIcon size={18} color="#0f172a" strokeWidth={2} />
+                      <EditIcon size={18} color={palette.text} strokeWidth={2} />
                     </TouchableOpacity>
                   </View>
                 </View>
@@ -5059,11 +2565,11 @@ function NativeAppScreen() {
                           <View
                             style={[
                               styles.chatConvAvatar,
-                              conv.type === 'group' && { backgroundColor: '#f1f5f9' },
+                              conv.type === 'group' && { backgroundColor: palette.input },
                             ]}
                           >
                             {conv.type === 'group' ? (
-                              <UsersIcon size={20} color="#8a1a36" strokeWidth={2} />
+                              <UsersIcon size={20} color={palette.accent} strokeWidth={2} />
                             ) : (
                               <Text style={styles.chatConvAvatarText}>
                                 {(conv.callsign?.slice(0, 2) || conv.name.slice(0, 2)).toUpperCase()}
@@ -5104,300 +2610,15 @@ function NativeAppScreen() {
           </View>
         )}
 
-        {currentTab === 'Contactos' && (
-          <View style={{ flex: 1, backgroundColor: '#f8fafc' }}>
-            {/* Header exacto a Imagen 1 */}
-            <View style={{
-              flexDirection: 'row',
-              alignItems: 'center',
-              paddingHorizontal: 16,
-              paddingVertical: 14,
-              backgroundColor: '#ffffff',
-              borderBottomWidth: 1,
-              borderBottomColor: '#f1f5f9',
-            }}>
-              <View style={{
-                width: 44,
-                height: 44,
-                borderRadius: 14,
-                backgroundColor: '#fdf2f4',
-                borderWidth: 1,
-                borderColor: '#fecdd3',
-                alignItems: 'center',
-                justifyContent: 'center',
-              }}>
-                <UsersIcon size={22} color="#8a1a36" strokeWidth={2.2} />
-              </View>
+        <ContactsScreen ref={contactsScreenRef} visible={currentTab === 'Contactos'} serverUrl={serverUrl}
+          directory={contactsDirectory} onSos={handleTriggerSos} onStartChat={contact => { if (handleStartDirectChat(contact)) setCurrentTab('Chat'); }}
+          onContactUpdated={handleContactUpdated} onOpenCamera={handleOpenCamera} />
 
-              <Text style={{
-                fontSize: 20,
-                fontWeight: '700',
-                color: '#0f172a',
-                marginLeft: 14,
-                flex: 1,
-              }}>
-                Contactos
-              </Text>
-
-              {/* Botón SOS Rojo */}
-              <TouchableOpacity
-                style={{
-                  width: 42,
-                  height: 42,
-                  borderRadius: 12,
-                  backgroundColor: '#dc2626',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  marginRight: 10,
-                  shadowColor: '#dc2626',
-                  shadowOpacity: 0.25,
-                  shadowRadius: 4,
-                  elevation: 2,
-                }}
-                onPress={handleTriggerSos}
-                activeOpacity={0.8}
-              >
-                <AlertTriangleIcon size={20} color="#ffffff" strokeWidth={2.2} />
-              </TouchableOpacity>
-
-              {/* Botón Agregar Contacto Granate */}
-              <TouchableOpacity
-                style={{
-                  width: 42,
-                  height: 42,
-                  borderRadius: 12,
-                  backgroundColor: '#6b1d2f',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  shadowColor: '#6b1d2f',
-                  shadowOpacity: 0.25,
-                  shadowRadius: 4,
-                  elevation: 2,
-                }}
-                onPress={() => {
-                  setAddContactError(null);
-                  setIsAddContactModalOpen(true);
-                }}
-                activeOpacity={0.8}
-              >
-                <UserPlusIcon size={20} color="#ffffff" strokeWidth={2.2} />
-              </TouchableOpacity>
-            </View>
-
-            {/* Barra de Búsqueda de Contactos */}
-            <View style={{
-              paddingHorizontal: 16,
-              paddingVertical: 12,
-              backgroundColor: '#ffffff',
-              borderBottomWidth: 1,
-              borderBottomColor: '#f1f5f9',
-            }}>
-              <View style={{
-                flexDirection: 'row',
-                alignItems: 'center',
-                backgroundColor: '#ffffff',
-                borderWidth: 1,
-                borderColor: '#e2e8f0',
-                borderRadius: 12,
-                paddingHorizontal: 12,
-                height: 44,
-              }}>
-                <SearchIcon size={18} color="#94a3b8" strokeWidth={2} />
-                <TextInput
-                  style={{
-                    flex: 1,
-                    marginLeft: 10,
-                    fontSize: 14,
-                    color: '#0f172a',
-                    paddingVertical: 0,
-                  }}
-                  value={contactSearchQuery}
-                  onChangeText={setContactSearchQuery}
-                  placeholder="Buscar por nombre, indicativo, teléfono o correo..."
-                  placeholderTextColor="#94a3b8"
-                />
-                {contactSearchQuery.length > 0 && (
-                  <TouchableOpacity onPress={() => setContactSearchQuery('')}>
-                    <XIcon size={16} color="#94a3b8" />
-                  </TouchableOpacity>
-                )}
-              </View>
-            </View>
-
-            {/* Lista de Contactos Tácticos C5i: Dividido solo por una línea entre uno y otro, división por letra, solo nombre */}
-            <ScrollView
-              style={{ flex: 1, backgroundColor: '#ffffff' }}
-              contentContainerStyle={{ paddingBottom: 100 }}
-              keyboardShouldPersistTaps="handled"
-            >
-              {filteredOfficers.length === 0 ? (
-                <View style={{
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  paddingVertical: 60,
-                  paddingHorizontal: 20,
-                }}>
-                  <View style={{
-                    width: 72,
-                    height: 72,
-                    borderRadius: 36,
-                    backgroundColor: '#f1f5f9',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    marginBottom: 16,
-                  }}>
-                    <UserIcon size={36} color="#94a3b8" strokeWidth={1.8} />
-                  </View>
-                  <Text style={{ fontSize: 17, fontWeight: '700', color: '#1e293b', marginBottom: 6 }}>
-                    Sin contactos registrados
-                  </Text>
-                  <Text style={{ fontSize: 13, color: '#64748b', textAlign: 'center', marginBottom: 20, maxWidth: 280 }}>
-                    Agrega a tu primer oficial o contacto para iniciar una conversación encriptada.
-                  </Text>
-                  <TouchableOpacity
-                    style={{
-                      flexDirection: 'row',
-                      alignItems: 'center',
-                      backgroundColor: '#6b1d2f',
-                      paddingHorizontal: 20,
-                      paddingVertical: 12,
-                      borderRadius: 12,
-                      gap: 8,
-                    }}
-                    onPress={() => {
-                      setAddContactError(null);
-                      setIsAddContactModalOpen(true);
-                    }}
-                  >
-                    <UserPlusIcon size={18} color="#ffffff" strokeWidth={2.2} />
-                    <Text style={{ color: '#ffffff', fontWeight: '700', fontSize: 14 }}>
-                      + Agregar Contacto
-                    </Text>
-                  </TouchableOpacity>
-                </View>
-              ) : (
-                groupedOfficers.map((group) => (
-                  <View key={group.letter}>
-                    {/* División por letra (ej. A, V) */}
-                    <View style={{
-                      backgroundColor: '#f8fafc',
-                      paddingHorizontal: 20,
-                      paddingVertical: 8,
-                      borderTopWidth: 1,
-                      borderBottomWidth: 1,
-                      borderColor: '#f1f5f9',
-                    }}>
-                      <Text style={{
-                        fontSize: 15,
-                        fontWeight: '800',
-                        color: '#6b1d2f',
-                        letterSpacing: 0.5,
-                      }}>
-                        {group.letter}
-                      </Text>
-                    </View>
-
-                    {/* Contactos bajo esta letra: solo el nombre, divididos por una sola línea */}
-                    {group.contacts.map((cnt, idx) => (
-                      <React.Fragment key={cnt.id}>
-                        <TouchableOpacity
-                          style={{
-                            paddingHorizontal: 20,
-                            paddingVertical: 16,
-                            backgroundColor: '#ffffff',
-                          }}
-                          onPress={() => handleOpenContactDetail(cnt)}
-                          activeOpacity={0.6}
-                        >
-                          <Text style={{
-                            fontSize: 16,
-                            fontWeight: '600',
-                            color: '#0f172a',
-                          }}>
-                            {cnt.name}
-                          </Text>
-                        </TouchableOpacity>
-
-                        {/* Línea divisoria simple entre uno y otro */}
-                        {idx < group.contacts.length - 1 && (
-                          <View style={{ height: 1, backgroundColor: '#f1f5f9', marginHorizontal: 20 }} />
-                        )}
-                      </React.Fragment>
-                    ))}
-                  </View>
-                ))
-              )}
-            </ScrollView>
-          </View>
-        )}
-
-        {currentTab === 'Perfil' && (
-          <ScrollView style={styles.cleanScrollSection}>
-            <Text style={styles.cleanSectionTitle}>PERFIL Y ENLACE ALWAYSDATA</Text>
-
-            <View style={styles.cleanCard}>
-              <Text style={styles.cleanSettingsHeader}>SERVIDOR REMOTO</Text>
-              <Text style={styles.cleanSettingsSub}>
-                Alwaysdata MySQL: walkiet_c5i en mysql-walkiet.alwaysdata.net
-              </Text>
-              <TextInput
-                style={styles.cleanServerInput}
-                value={serverUrl}
-                onChangeText={setServerUrl}
-                placeholder="https://walkiet.alwaysdata.net"
-                placeholderTextColor="#94a3b8"
-                autoCapitalize="none"
-                autoCorrect={false}
-              />
-              <View style={styles.serverPresets}>
-                <TouchableOpacity
-                  style={styles.presetBtn}
-                  onPress={async () => {
-                    setServerUrl('https://walkiet.alwaysdata.net');
-                    await safeStorage.setItem('c5i_native_server_url', 'https://walkiet.alwaysdata.net');
-                  }}
-                >
-                  <Text style={styles.presetBtnText}>ALWAYSDATA (RECOMENDADO)</Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={styles.presetBtn}
-                  onPress={async () => {
-                    setServerUrl('http://localhost:3000');
-                    await safeStorage.setItem('c5i_native_server_url', 'http://localhost:3000');
-                  }}
-                >
-                  <Text style={styles.presetBtnText}>LOCAL (3000)</Text>
-                </TouchableOpacity>
-              </View>
-
-              <TouchableOpacity
-                style={styles.cleanTestBtn}
-                onPress={testServerConnection}
-                disabled={isTestingServer}
-              >
-                {isTestingServer ? (
-                  <ActivityIndicator size="small" color="#ffffff" />
-                ) : (
-                  <Text style={styles.cleanTestBtnText}>
-                    📡 PROBAR CONEXIÓN AL SERVIDOR {serverLatency ? `(${serverLatency}ms)` : ''}
-                  </Text>
-                )}
-              </TouchableOpacity>
-            </View>
-
-            <View style={styles.cleanCard}>
-              <Text style={styles.cleanSettingsHeader}>DATOS DEL OFICIAL</Text>
-              <Text style={styles.cleanSettingRow}>Oficial: {currentUser.name}</Text>
-              <Text style={styles.cleanSettingRow}>Indicativo: {currentUser.badge}</Text>
-              <Text style={styles.cleanSettingRow}>Unidad: {currentUser.unit}</Text>
-              <Text style={styles.cleanSettingRow}>Rol: {currentUser.role}</Text>
-
-              <TouchableOpacity style={styles.cleanLogoutBtn} onPress={handleLogout}>
-                <Text style={styles.cleanLogoutBtnText}>CERRAR SESIÓN</Text>
-              </TouchableOpacity>
-            </View>
-          </ScrollView>
+        {currentTab === 'Perfil' && currentUser && (
+          <ProfileScreen user={currentUser} account={account} notifications={notifications} serverUrl={serverUrl}
+            onLogout={() => handleLogout()}
+            onDeleted={async () => { await handleLogout(true); }}
+            onServerChange={async url => { await handleLogout(); setServerUrl(url); await safeStorage.setItem('c5i_native_server_url', url); }} />
         )}
       </View>
 
@@ -5411,7 +2632,7 @@ function NativeAppScreen() {
           >
             <MicIcon
               size={22}
-              color={currentTab === 'PTT' ? '#8a1a36' : '#64748b'}
+              color={currentTab === 'PTT' ? palette.accent : palette.muted}
               strokeWidth={currentTab === 'PTT' ? 2.4 : 1.8}
             />
             <Text style={[styles.cleanNavLabel, currentTab === 'PTT' && styles.cleanNavLabelActive]}>
@@ -5426,7 +2647,7 @@ function NativeAppScreen() {
           >
             <UsersIcon
               size={22}
-              color={currentTab === 'Grupos' ? '#8a1a36' : '#64748b'}
+              color={currentTab === 'Grupos' ? palette.accent : palette.muted}
               strokeWidth={currentTab === 'Grupos' ? 2.4 : 1.8}
             />
             <Text style={[styles.cleanNavLabel, currentTab === 'Grupos' && styles.cleanNavLabelActive]}>
@@ -5441,7 +2662,7 @@ function NativeAppScreen() {
           >
             <MessageSquareIcon
               size={22}
-              color={currentTab === 'Chat' ? '#8a1a36' : '#64748b'}
+              color={currentTab === 'Chat' ? palette.accent : palette.muted}
               strokeWidth={currentTab === 'Chat' ? 2.4 : 1.8}
             />
             <Text style={[styles.cleanNavLabel, currentTab === 'Chat' && styles.cleanNavLabelActive]}>
@@ -5456,7 +2677,7 @@ function NativeAppScreen() {
           >
             <BookOpenIcon
               size={22}
-              color={currentTab === 'Contactos' ? '#8a1a36' : '#64748b'}
+              color={currentTab === 'Contactos' ? palette.accent : palette.muted}
               strokeWidth={currentTab === 'Contactos' ? 2.4 : 1.8}
             />
             <Text style={[styles.cleanNavLabel, currentTab === 'Contactos' && styles.cleanNavLabelActive]}>
@@ -5471,7 +2692,7 @@ function NativeAppScreen() {
           >
             <UserIcon
               size={22}
-              color={currentTab === 'Perfil' ? '#8a1a36' : '#64748b'}
+              color={currentTab === 'Perfil' ? palette.accent : palette.muted}
               strokeWidth={currentTab === 'Perfil' ? 2.4 : 1.8}
             />
             <Text style={[styles.cleanNavLabel, currentTab === 'Perfil' && styles.cleanNavLabelActive]}>
@@ -5481,807 +2702,9 @@ function NativeAppScreen() {
         </View>
       )}
 
-      {/* Floating Channel Members Modal (Matching Image 3) */}
-      <Modal
-        visible={isMembersModalOpen}
-        animationType="fade"
-        transparent
-        onRequestClose={() => setIsMembersModalOpen(false)}
-      >
-        <View style={styles.channelModalOverlay}>
-          <View style={styles.channelModalCard}>
-            {/* Header */}
-            <View style={styles.channelModalHeader}>
-              <View style={styles.channelModalHeaderLeft}>
-                <View style={styles.channelModalIconBox}>
-                  <UsersIcon size={20} color="#8a1a36" strokeWidth={1.8} />
-                </View>
-                <View>
-                  <Text style={styles.channelModalTitle}>
-                    {selectedChannel?.name || 'Canal Táctico'}
-                  </Text>
-                  <Text style={styles.channelModalSubtitle}>
-                    {memberCount} {memberCount === 1 ? 'usuario activo' : 'usuarios activos'} • General
-                  </Text>
-                </View>
-              </View>
-              <TouchableOpacity
-                onPress={() => setIsMembersModalOpen(false)}
-                style={styles.channelModalCloseBtn}
-                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-              >
-                <XIcon size={18} color="#64748b" strokeWidth={2} />
-              </TouchableOpacity>
-            </View>
-
-            {/* Member List (Active Officers) */}
-            <View style={styles.channelMemberList}>
-              {/* Current User Card */}
-              <View style={styles.channelMemberCard}>
-                <View style={styles.channelMemberCardLeft}>
-                  {/* Avatar with status green dot */}
-                  <View style={styles.channelMemberAvatarWrap}>
-                    <View style={styles.channelMemberAvatar}>
-                      <Text style={styles.channelMemberAvatarText}>
-                        {(currentUser?.name || 'Francisco').charAt(0).toUpperCase()}
-                      </Text>
-                    </View>
-                    <View style={styles.channelMemberOnlineDot} />
-                  </View>
-
-                  {/* Member Name and Callsign */}
-                  <View style={styles.channelMemberInfo}>
-                    <View style={styles.channelMemberNameRow}>
-                      <Text style={styles.channelMemberName} numberOfLines={1}>
-                        {currentUser?.name || 'Francisco'} (Tú)
-                      </Text>
-                      <View style={styles.channelMemberTuBadge}>
-                        <Text style={styles.channelMemberTuBadgeText}>TÚ</Text>
-                      </View>
-                    </View>
-                    <Text style={styles.channelMemberSubtext} numberOfLines={1}>
-                      <Text style={styles.channelMemberCallsign}>
-                        {currentUser?.callsign || currentUser?.badge || 'RADI0-8448'}
-                      </Text>
-                      {' • '}
-                      {currentUser?.unit || 'Sector Operativo Pachuca'}
-                    </Text>
-                  </View>
-                </View>
-
-                {/* Role Pill on right */}
-                <View style={styles.channelMemberRolePill}>
-                  <Text style={styles.channelMemberRoleText}>
-                    {currentUser?.role || 'Operador'}
-                  </Text>
-                </View>
-              </View>
-            </View>
-
-            {/* Footer matching Image 3: "+ Gestionar Contactos" on left, "Cerrar" on right */}
-            <View style={styles.channelModalFooter}>
-              <TouchableOpacity
-                onPress={() => {
-                  setIsMembersModalOpen(false);
-                  setCurrentTab('Contactos');
-                }}
-                style={styles.channelManageContactsBtn}
-                activeOpacity={0.7}
-              >
-                <PlusIcon size={15} color="#8a1a36" strokeWidth={2.4} />
-                <Text style={styles.channelManageContactsText}>Gestionar Contactos</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                onPress={() => setIsMembersModalOpen(false)}
-                style={styles.channelCloseBtn}
-                activeOpacity={0.8}
-              >
-                <Text style={styles.channelCloseBtnText}>Cerrar</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
-
-      {/* 1. MODAL: UNIRSE A CANAL (PIN O ESCÁNER QR INTEGRADO EN UN SOLO MODAL PARA COMPATIBILIDAD CON IOS) */}
-      <Modal
-        visible={isJoinModalOpen}
-        animationType="fade"
-        transparent
-        onRequestClose={() => {
-          Keyboard.dismiss();
-          setIsJoinScanning(false);
-          setIsJoinModalOpen(false);
-        }}
-      >
-        <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
-          <View style={styles.channelModalOverlay}>
-            <KeyboardAvoidingView
-              behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-              keyboardVerticalOffset={Platform.OS === 'ios' ? 30 : 0}
-              style={{ width: '100%', alignItems: 'center' }}
-            >
-              <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
-                <View style={[styles.channelModalCard, isJoinScanning && { maxWidth: 390 }]}>
-                  {/* Header */}
-                  <View style={styles.channelModalHeader}>
-                    <View style={styles.channelModalHeaderLeft}>
-                      <View style={styles.channelModalIconBox}>
-                        {isJoinScanning ? (
-                          <CameraIcon size={20} color="#8a1a36" strokeWidth={2} />
-                        ) : (
-                          <LogInIcon size={20} color="#8a1a36" strokeWidth={2} />
-                        )}
-                      </View>
-                      <View>
-                        <Text style={styles.channelModalTitle}>
-                          {isJoinScanning ? 'Escanear QR de Canal' : 'Unirse a Canal'}
-                        </Text>
-                        <Text style={styles.channelModalSubtitle}>
-                          {isJoinScanning
-                            ? 'Apunta la cámara al código QR táctico'
-                            : 'Ingresa el PIN de 4 dígitos o escanea el QR'}
-                        </Text>
-                      </View>
-                    </View>
-                    <TouchableOpacity
-                      onPress={() => {
-                        Keyboard.dismiss();
-                        if (isJoinScanning) {
-                          setIsJoinScanning(false);
-                        } else {
-                          setIsJoinModalOpen(false);
-                        }
-                      }}
-                      style={styles.channelModalCloseBtn}
-                      hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                    >
-                      <XIcon size={18} color="#64748b" strokeWidth={2} />
-                    </TouchableOpacity>
-                  </View>
-
-                  {isJoinScanning ? (
-                    /* VISTA ESCÁNER QR (DENTRO DEL MISMO MODAL: 100% FUNCIONAL EN IOS) */
-                    <View style={styles.canalesScannerBody}>
-                      {/* Visor de Cámara con Retícula y Transmisión Real */}
-                      <View style={styles.canalesCameraFrame}>
-                        {/* Live Web Camera Video Element - ÚNICAMENTE con autorización confirmada */}
-                        {Platform.OS === 'web' && cameraPermissionGranted === true && (
-                          <video
-                            ref={webVideoRef}
-                            autoPlay
-                            playsInline
-                            muted
-                            style={{
-                              position: 'absolute',
-                              top: 0,
-                              left: 0,
-                              width: '100%',
-                              height: '100%',
-                              objectFit: 'cover',
-                            }}
-                          />
-                        )}
-
-                        {/* Live Native CameraView (iOS / Android) - ÚNICAMENTE con autorización confirmada */}
-                        {Platform.OS !== 'web' && NativeCameraView && cameraPermissionGranted === true && (
-                          <NativeCameraView
-                            style={StyleSheet.absoluteFill}
-                            facing="back"
-                            barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
-                            onBarcodeScanned={(result: any) => {
-                              const data = result?.data || result?.raw || '';
-                              if (data) {
-                                handleScannedQrPayload(data);
-                              }
-                            }}
-                          />
-                        )}
-
-                        {/* Retícula de esquinas táctica */}
-                        <View style={[styles.canalesScannerCorner, styles.cornerTL]} />
-                        <View style={[styles.canalesScannerCorner, styles.cornerTR]} />
-                        <View style={[styles.canalesScannerCorner, styles.cornerBL]} />
-                        <View style={[styles.canalesScannerCorner, styles.cornerBR]} />
-
-                        {/* Rayo láser animado (solo activo con cámara autorizada) */}
-                        {cameraPermissionGranted === true && (
-                          <Animated.View
-                            style={[
-                              styles.canalesScannerLaser,
-                              {
-                                transform: [
-                                  {
-                                    translateY: scanLaserAnim.interpolate({
-                                      inputRange: [0, 1],
-                                      outputRange: [15, 190],
-                                    }),
-                                  },
-                                ],
-                              },
-                            ]}
-                          />
-                        )}
-
-                        {/* Estado: Solicitando o verificando autorización */}
-                        {isRequestingPermission && (
-                          <View style={styles.canalesPermOverlay}>
-                            <ActivityIndicator size="small" color="#e11d48" />
-                            <Text style={styles.canalesPermLoadingText}>
-                              Consultando autorización de cámara...
-                            </Text>
-                          </View>
-                        )}
-
-                        {/* Estado: Permiso de cámara no autorizado / denegado */}
-                        {cameraPermissionGranted === false && !isRequestingPermission && (
-                          <View style={styles.canalesPermOverlay}>
-                            <View style={styles.canalesPermIconWrap}>
-                              <CameraIcon size={24} color="#e11d48" strokeWidth={2} />
-                            </View>
-                            <Text style={styles.canalesPermTitle}>Acceso a Cámara Requerido</Text>
-                            <Text style={styles.canalesPermDesc}>
-                              Para sintonizar canales tácticos por código QR, autoriza el acceso a la cámara.
-                            </Text>
-                            <TouchableOpacity
-                              style={styles.canalesPermRetryBtn}
-                              onPress={requestCameraPermission}
-                              activeOpacity={0.85}
-                            >
-                              <Text style={styles.canalesPermRetryBtnText}>
-                                {permissionCanAskAgain ? 'Autorizar Cámara' : 'Reintentar Permiso'}
-                              </Text>
-                            </TouchableOpacity>
-                          </View>
-                        )}
-
-                        {/* Indicador táctico inferior */}
-                        <View style={styles.canalesScannerPill}>
-                          <View
-                            style={[
-                              styles.canalesScannerDot,
-                              cameraPermissionGranted === true && { backgroundColor: '#10b981' },
-                            ]}
-                          />
-                          <Text style={styles.canalesScannerHint}>
-                            {cameraPermissionGranted === true
-                              ? 'Cámara táctica activa • Escaneando'
-                              : isRequestingPermission
-                              ? 'Solicitando autorización...'
-                              : 'Permiso de cámara requerido'}
-                          </Text>
-                        </View>
-                      </View>
-
-                      {/* Botones de Detección Rápida de Canales */}
-                      <Text style={styles.canalesScanQuickTitle}>CANALES DISPONIBLES EN EL ÁREA:</Text>
-                      <View style={styles.canalesScanQuickList}>
-                        {channels.slice(0, 3).map((ch) => (
-                          <TouchableOpacity
-                            key={ch.id}
-                            style={styles.canalesScanQuickItem}
-                            onPress={() => handleScanQrMock(ch)}
-                            activeOpacity={0.7}
-                          >
-                            <View style={styles.canalesScanQuickRadio}>
-                              <RadioIcon size={14} color="#8a1a36" />
-                            </View>
-                            <View style={{ flex: 1 }}>
-                              <Text style={styles.canalesScanQuickName} numberOfLines={1}>{ch.name}</Text>
-                              <Text style={styles.canalesScanQuickMeta}>PIN: {ch.pin || '1090'} • {ch.frequency}</Text>
-                            </View>
-                            <Text style={styles.canalesScanQuickAction}>Simular Scan</Text>
-                          </TouchableOpacity>
-                        ))}
-                      </View>
-
-                      <TouchableOpacity
-                        style={styles.channelCloseBtn}
-                        onPress={() => setIsJoinScanning(false)}
-                        activeOpacity={0.8}
-                      >
-                        <Text style={styles.channelCloseBtnText}>Volver a ingresar PIN</Text>
-                      </TouchableOpacity>
-                    </View>
-                  ) : (
-                    /* VISTA INGRESO DE PIN */
-                    <ScrollView
-                      style={{ maxHeight: 480 }}
-                      contentContainerStyle={styles.canalesModalBody}
-                      keyboardShouldPersistTaps="handled"
-                    >
-                      {joinError && (
-                        <View style={styles.recoveryErrorBanner}>
-                          <AlertTriangleIcon size={15} color="#be123c" strokeWidth={1.8} />
-                          <Text style={styles.recoveryErrorText}>{joinError}</Text>
-                        </View>
-                      )}
-
-                      <Text style={styles.canalesPinLabel}>PIN O NÚMERO DE ASIGNACIÓN</Text>
-                      <Text style={styles.canalesPinSub}>
-                        Ingresa el código numérico de 4 dígitos proporcionado por el oficial
-                      </Text>
-
-                      {/* Cajas de dígitos PIN sincronizadas (Misma estructura del Registro) */}
-                      <TouchableOpacity
-                        activeOpacity={1}
-                        onPress={() => joinPinInputRef.current?.focus()}
-                        style={styles.canalesTokenRow}
-                      >
-                        {[0, 1, 2, 3].map((idx) => {
-                          const char = joinPinDigits[idx] || '';
-                          const isCurrent = joinPinDigits.length === idx;
-                          return (
-                            <View
-                              key={idx}
-                              style={[
-                                styles.canalesTokenBox,
-                                Boolean(char) && styles.canalesTokenBoxFilled,
-                                isCurrent && styles.canalesTokenBoxActive,
-                              ]}
-                            >
-                              <Text style={styles.canalesTokenDigit}>{char}</Text>
-                            </View>
-                          );
-                        })}
-                      </TouchableOpacity>
-
-                      {/* Input nativo oculto (sin autoFocus para no tapar la pantalla de inmediato) */}
-                      <TextInput
-                        ref={joinPinInputRef}
-                        style={styles.hiddenInput}
-                        value={joinPinDigits}
-                        onChangeText={(val) => {
-                          const cleaned = val.replace(/\D/g, '').slice(0, 4);
-                          setJoinPinDigits(cleaned);
-                          if (joinError) setJoinError(null);
-                          if (cleaned.length === 4) {
-                            Keyboard.dismiss();
-                          }
-                        }}
-                        keyboardType="numeric"
-                        maxLength={4}
-                        autoFocus={false}
-                      />
-
-                      {/* Botón de envío */}
-                      <TouchableOpacity
-                        style={[
-                          styles.canalesModalSubmitBtn,
-                          joinPinDigits.length !== 4 && styles.canalesModalSubmitBtnDisabled,
-                        ]}
-                        onPress={handleJoinChannelSubmit}
-                        disabled={joinPinDigits.length !== 4}
-                        activeOpacity={0.88}
-                      >
-                        <Text style={styles.canalesModalSubmitBtnText}>UNIRME AL CANAL</Text>
-                      </TouchableOpacity>
-
-                      {/* Divisor */}
-                      <View style={styles.canalesDividerRow}>
-                        <View style={styles.canalesDividerLine} />
-                        <Text style={styles.canalesDividerText}>O BIEN</Text>
-                        <View style={styles.canalesDividerLine} />
-                      </View>
-
-                      {/* Botón para Escanear Código QR */}
-                      <TouchableOpacity
-                        style={styles.canalesScanQrBtn}
-                        onPress={() => {
-                          Keyboard.dismiss();
-                          setIsJoinScanning(true);
-                        }}
-                        activeOpacity={0.8}
-                      >
-                        <CameraIcon size={18} color="#8a1a36" strokeWidth={2} />
-                        <Text style={styles.canalesScanQrBtnText}>Escanear Código QR del Canal</Text>
-                      </TouchableOpacity>
-                    </ScrollView>
-                  )}
-                </View>
-              </TouchableWithoutFeedback>
-            </KeyboardAvoidingView>
-          </View>
-        </TouchableWithoutFeedback>
-      </Modal>
-
-      {/* 3. MODAL: CREAR CANAL TÁCTICO (SIMPLIFICADO: SOLO NOMBRE Y PIN) */}
-      <Modal
-        visible={isCreateModalOpen}
-        animationType="fade"
-        transparent
-        onRequestClose={() => {
-          Keyboard.dismiss();
-          setIsCreateModalOpen(false);
-        }}
-      >
-        <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
-          <View style={styles.channelModalOverlay}>
-            <KeyboardAvoidingView
-              behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-              keyboardVerticalOffset={Platform.OS === 'ios' ? 30 : 0}
-              style={{ width: '100%', alignItems: 'center' }}
-            >
-              <TouchableWithoutFeedback onPress={(e) => e.stopPropagation()}>
-                <View style={styles.channelModalCard}>
-                  {/* Header */}
-                  <View style={styles.channelModalHeader}>
-                    <View style={styles.channelModalHeaderLeft}>
-                      <View style={[styles.channelModalIconBox, { backgroundColor: '#8a1a36' }]}>
-                        <PlusIcon size={20} color="#ffffff" strokeWidth={2.4} />
-                      </View>
-                      <View>
-                        <Text style={styles.channelModalTitle}>Crear Canal Táctico</Text>
-                        <Text style={styles.channelModalSubtitle}>
-                          Establece una nueva frecuencia en la red C5i
-                        </Text>
-                      </View>
-                    </View>
-                    <TouchableOpacity
-                      onPress={() => {
-                        Keyboard.dismiss();
-                        setIsCreateModalOpen(false);
-                      }}
-                      style={styles.channelModalCloseBtn}
-                      hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                    >
-                      <XIcon size={18} color="#64748b" strokeWidth={2} />
-                    </TouchableOpacity>
-                  </View>
-
-                  <ScrollView
-                    style={{ maxHeight: 420 }}
-                    contentContainerStyle={styles.canalesModalBody}
-                    keyboardShouldPersistTaps="handled"
-                  >
-                    {createChannelError && (
-                      <View style={styles.recoveryErrorBanner}>
-                        <AlertTriangleIcon size={15} color="#be123c" strokeWidth={1.8} />
-                        <Text style={styles.recoveryErrorText}>{createChannelError}</Text>
-                      </View>
-                    )}
-
-                    {/* Nombre del Canal */}
-                    <View style={styles.recoveryInputGroup}>
-                      <Text style={styles.recoveryInputLabel}>Nombre del Canal</Text>
-                      <View style={styles.recoveryInputBox}>
-                        <View style={styles.recoveryInputIconBox}>
-                          <RadioIcon size={16} color="#94a3b8" />
-                        </View>
-                        <TextInput
-                          style={styles.recoveryInput}
-                          value={createChannelName}
-                          onChangeText={setCreateChannelName}
-                          placeholder="Ej. SECTOR PACHUCA SUR"
-                          placeholderTextColor="#94a3b8"
-                          autoCapitalize="characters"
-                        />
-                      </View>
-                    </View>
-
-                    {/* PIN de Acceso (4 dígitos) */}
-                    <View style={styles.recoveryInputGroup}>
-                      <Text style={styles.recoveryInputLabel}>PIN o Código de Acceso (4 dígitos)</Text>
-                      <Text style={styles.canalesPinSub}>
-                        Los oficiales usarán este PIN para sintonizarse
-                      </Text>
-
-                      <TouchableOpacity
-                        activeOpacity={1}
-                        onPress={() => createChannelPinInputRef.current?.focus()}
-                        style={styles.canalesTokenRow}
-                      >
-                        {[0, 1, 2, 3].map((idx) => {
-                          const char = createChannelPin[idx] || '';
-                          const isCurrent = createChannelPin.length === idx;
-                          return (
-                            <View
-                              key={idx}
-                              style={[
-                                styles.canalesTokenBox,
-                                Boolean(char) && styles.canalesTokenBoxFilled,
-                                isCurrent && styles.canalesTokenBoxActive,
-                              ]}
-                            >
-                              <Text style={styles.canalesTokenDigit}>{char}</Text>
-                            </View>
-                          );
-                        })}
-                      </TouchableOpacity>
-
-                      <TextInput
-                        ref={createChannelPinInputRef}
-                        style={styles.hiddenInput}
-                        value={createChannelPin}
-                        onChangeText={(val) => {
-                          const cleaned = val.replace(/\D/g, '').slice(0, 4);
-                          setCreateChannelPin(cleaned);
-                          if (cleaned.length === 4) {
-                            Keyboard.dismiss();
-                          }
-                        }}
-                        keyboardType="numeric"
-                        maxLength={4}
-                      />
-                    </View>
-
-                    {/* Botón Crear */}
-                    <TouchableOpacity
-                      style={styles.canalesModalSubmitBtn}
-                      onPress={handleCreateChannelSubmit}
-                      activeOpacity={0.88}
-                    >
-                      <Text style={styles.canalesModalSubmitBtnText}>CREAR Y SINTONIZAR CANAL</Text>
-                    </TouchableOpacity>
-                  </ScrollView>
-                </View>
-              </TouchableWithoutFeedback>
-            </KeyboardAvoidingView>
-          </View>
-        </TouchableWithoutFeedback>
-      </Modal>
-
-      {/* 4. MODAL: CONFIGURACIÓN Y QR DEL CANAL (QR COMPATIBLE NATIVO + SOLO PIN) */}
-      <Modal
-        visible={isConfigModalOpen}
-        animationType="fade"
-        transparent
-        onRequestClose={() => setIsConfigModalOpen(false)}
-      >
-        <View style={styles.channelModalOverlay}>
-          <View style={styles.channelModalCard}>
-            {/* Header */}
-            <View style={styles.channelModalHeader}>
-              <View style={styles.channelModalHeaderLeft}>
-                <View style={styles.channelModalIconBox}>
-                  <RadioIcon size={20} color="#8a1a36" strokeWidth={2} />
-                </View>
-                <View>
-                  <Text style={styles.channelModalTitle}>Configuración del Canal</Text>
-                  <Text style={styles.channelModalSubtitle} numberOfLines={1}>
-                    {configChannel?.name || 'Canal Táctico'}
-                  </Text>
-                </View>
-              </View>
-              <TouchableOpacity
-                onPress={() => setIsConfigModalOpen(false)}
-                style={styles.channelModalCloseBtn}
-                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-              >
-                <XIcon size={18} color="#64748b" strokeWidth={2} />
-              </TouchableOpacity>
-            </View>
-
-            <View style={styles.canalesModalBody}>
-              {/* Contenedor del Código QR (Matriz pura en Views para iPhone y Web) */}
-              <View style={styles.canalesQrBox}>
-                {configQrMatrix.length > 0 ? (
-                  <View style={styles.canalesQrMatrixBox}>
-                    {configQrMatrix.map((row, rIdx) => (
-                      <View key={rIdx} style={{ flexDirection: 'row' }}>
-                        {row.map((dark, cIdx) => (
-                          <View
-                            key={cIdx}
-                            style={{
-                              width: Math.max(5, Math.floor(180 / configQrMatrix.length)),
-                              height: Math.max(5, Math.floor(180 / configQrMatrix.length)),
-                              backgroundColor: dark ? '#0f172a' : '#ffffff',
-                            }}
-                          />
-                        ))}
-                      </View>
-                    ))}
-                  </View>
-                ) : configQrUrl ? (
-                  <Image
-                    source={{ uri: configQrUrl }}
-                    style={styles.canalesQrImage}
-                    resizeMode="contain"
-                  />
-                ) : (
-                  <View style={styles.canalesQrPlaceholder}>
-                    <QrCodeIcon size={64} color="#94a3b8" />
-                    <Text style={styles.canalesQrPlaceholderText}>Generando QR...</Text>
-                  </View>
-                )}
-              </View>
-
-              {/* Debajo del QR: PIN de Asignación en Grande (Sin código ni frecuencia) */}
-              <View style={styles.canalesQrCodeInfo}>
-                <Text style={styles.canalesQrCodeLabel}>PIN DE ASIGNACIÓN</Text>
-                <Text style={styles.canalesQrPinBig}>
-                  {configChannel?.pin || '1090'}
-                </Text>
-              </View>
-
-              {/* Botón para Copiar ÚNICAMENTE el PIN del Canal */}
-              <TouchableOpacity
-                style={styles.canalesCopyBtn}
-                onPress={() => copyToClipboard(configChannel?.pin || '1090')}
-                activeOpacity={0.75}
-              >
-                <CopyIcon size={16} color={hasCopiedPin ? '#059669' : '#8a1a36'} />
-                <Text
-                  style={[
-                    styles.canalesCopyBtnText,
-                    hasCopiedPin && { color: '#059669' },
-                  ]}
-                >
-                  {hasCopiedPin ? '¡PIN Copiado al Portapapeles!' : 'Copiar PIN del Canal'}
-                </Text>
-              </TouchableOpacity>
-
-              {/* Acciones del Canal: Sintonizar, Salir del Grupo y Eliminar Grupo */}
-              <View style={styles.canalesModalActionsStack}>
-                <TouchableOpacity
-                  style={styles.canalesModalSubmitBtn}
-                  onPress={() => {
-                    if (configChannel) {
-                      setIsConfigModalOpen(false);
-                      handleTuneChannel(configChannel);
-                    }
-                  }}
-                  activeOpacity={0.88}
-                >
-                  <Text style={styles.canalesModalSubmitBtnText}>SINTONIZAR ESTE CANAL</Text>
-                </TouchableOpacity>
-
-                {/* Fila con los dos botones solicitados: Salir del Grupo y Eliminar Grupo */}
-                <View style={styles.canalesDangerRow}>
-                  <TouchableOpacity
-                    style={styles.canalesLeaveBtn}
-                    onPress={() => {
-                      if (configChannel) {
-                        handleLeaveChannel(configChannel);
-                      }
-                    }}
-                    activeOpacity={0.8}
-                  >
-                    <LogOutIcon size={15} color="#b45309" strokeWidth={2.2} />
-                    <Text style={styles.canalesLeaveBtnText}>Salir del Grupo</Text>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    style={styles.canalesDeleteBtn}
-                    onPress={() => {
-                      if (configChannel) {
-                        handleDeleteChannel(configChannel);
-                      }
-                    }}
-                    activeOpacity={0.8}
-                  >
-                    <TrashIcon size={15} color="#e11d48" strokeWidth={2.2} />
-                    <Text style={styles.canalesDeleteBtnText}>Eliminar Grupo</Text>
-                  </TouchableOpacity>
-                </View>
-
-                <TouchableOpacity
-                  style={styles.channelCloseBtn}
-                  onPress={() => setIsConfigModalOpen(false)}
-                  activeOpacity={0.8}
-                >
-                  <Text style={styles.channelCloseBtnText}>Cerrar</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          </View>
-        </View>
-      </Modal>
-
-      {/* 5. MODAL DE ÉXITO TÁCTICO AL DETECTAR QR O ENLAZAR CANAL (DISEÑO ARMONIOSO C5i) */}
-      <Modal
-        visible={scanSuccessModal.isOpen}
-        animationType="fade"
-        transparent
-        onRequestClose={() => setScanSuccessModal((prev) => ({ ...prev, isOpen: false }))}
-      >
-        <View style={styles.channelModalOverlay}>
-          <View style={styles.scanSuccessCard}>
-            {/* Glow ambient de fondo con tono vino */}
-            <View style={styles.scanSuccessGlow} />
-
-            {/* Ícono de confirmación dinámico según la acción */}
-            <View
-              style={[
-                styles.scanSuccessIconBox,
-                scanSuccessModal.source === 'leave' && {
-                  backgroundColor: '#fffbeb',
-                  borderColor: '#fde68a',
-                  shadowColor: '#d97706',
-                },
-                scanSuccessModal.source === 'delete' && {
-                  backgroundColor: '#fef2f2',
-                  borderColor: '#fecdd3',
-                  shadowColor: '#e11d48',
-                },
-              ]}
-            >
-              {scanSuccessModal.source === 'leave' ? (
-                <LogOutIcon size={30} color="#d97706" strokeWidth={2.2} />
-              ) : scanSuccessModal.source === 'delete' ? (
-                <TrashIcon size={30} color="#e11d48" strokeWidth={2.2} />
-              ) : (
-                <CheckCircleIcon size={34} color="#059669" strokeWidth={2.5} />
-              )}
-            </View>
-
-            <Text style={styles.scanSuccessTitle}>
-              {scanSuccessModal.customTitle ||
-                (scanSuccessModal.source === 'qr'
-                  ? 'Código QR Detectado'
-                  : scanSuccessModal.source === 'pin'
-                  ? 'Canal Enlazado'
-                  : scanSuccessModal.source === 'leave'
-                  ? 'Has Salido del Grupo'
-                  : scanSuccessModal.source === 'delete'
-                  ? 'Canal Eliminado'
-                  : scanSuccessModal.source === 'create'
-                  ? 'Canal Creado'
-                  : 'Canal Sintonizado')}
-            </Text>
-            <Text style={styles.scanSuccessSubtitle}>
-              {scanSuccessModal.customSubtitle ||
-                (scanSuccessModal.source === 'qr'
-                  ? 'Canal reconocido y autenticado con éxito en la red táctica C5i.'
-                  : scanSuccessModal.source === 'pin'
-                  ? 'Te has unido exitosamente al canal táctico en la red C5i.'
-                  : scanSuccessModal.source === 'leave'
-                  ? 'Te has desconectado de este canal táctico.'
-                  : scanSuccessModal.source === 'delete'
-                  ? 'El canal táctico ha sido removido de la red C5i.'
-                  : `Radio enlazado a ${scanSuccessModal.channel?.name || 'Canal'} (${scanSuccessModal.channel?.frequency || '154.800 MHz'}).`)}
-            </Text>
-
-            {/* Tarjeta con los datos del canal y colorimetría C5i */}
-            {scanSuccessModal.channel && (
-              <View style={styles.scanSuccessChannelBox}>
-                <View style={styles.scanSuccessRadioBadge}>
-                  <RadioIcon size={20} color="#ffffff" />
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.scanSuccessChannelName} numberOfLines={1}>
-                    {scanSuccessModal.channel.name}
-                  </Text>
-                  <View style={styles.scanSuccessMetaRow}>
-                    <View style={styles.scanSuccessPinPill}>
-                      <Text style={styles.scanSuccessPinText}>
-                        PIN: {scanSuccessModal.channel.pin || '1090'}
-                      </Text>
-                    </View>
-                    <Text style={styles.scanSuccessFreqText}>
-                      {scanSuccessModal.channel.frequency}
-                    </Text>
-                  </View>
-                </View>
-              </View>
-            )}
-
-            {/* Botón de acción con estilo vino institucional */}
-            <TouchableOpacity
-              style={styles.scanSuccessActionBtn}
-              onPress={() => {
-                setScanSuccessModal((prev) => ({ ...prev, isOpen: false }));
-                if (
-                  scanSuccessModal.source === 'tune' ||
-                  scanSuccessModal.source === 'qr' ||
-                  scanSuccessModal.source === 'pin' ||
-                  scanSuccessModal.source === 'create'
-                ) {
-                  setCurrentTab('PTT');
-                }
-              }}
-              activeOpacity={0.88}
-            >
-              <Text style={styles.scanSuccessActionBtnText}>
-                {scanSuccessModal.source === 'leave' || scanSuccessModal.source === 'delete'
-                  ? 'ENTENDIDO'
-                  : 'COMENZAR A TRANSMITIR'}
-              </Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
+      <ChannelMembersModal key={channelsDirectory.scope} visible={isMembersModalOpen}
+        channel={selectedChannel} userId={currentUser.id} api={channelsDirectory.api}
+        onClose={() => setIsMembersModalOpen(false)} />
 
       {/* 6. MODAL: NUEVA CONVERSACIÓN (IDÉNTICO A CAPTURA 2) */}
       <Modal
@@ -6290,7 +2713,7 @@ function NativeAppScreen() {
         transparent
         onRequestClose={() => {
           setIsNewChatModalOpen(false);
-          setContactSearchQuery('');
+          contactsDirectory.setQuery('');
         }}
       >
         <View style={styles.chatModalBackdrop}>
@@ -6299,7 +2722,7 @@ function NativeAppScreen() {
             activeOpacity={1}
             onPress={() => {
               setIsNewChatModalOpen(false);
-              setContactSearchQuery('');
+              contactsDirectory.setQuery('');
             }}
           />
           <View style={styles.chatModalCard}>
@@ -6307,7 +2730,7 @@ function NativeAppScreen() {
               <View style={styles.chatModalHeader}>
                 <View style={styles.chatModalHeaderLeft}>
                   <View style={styles.chatModalIconBox}>
-                    <MessageSquareIcon size={18} color="#8a1a36" strokeWidth={2.2} />
+                    <MessageSquareIcon size={18} color={palette.accent} strokeWidth={2.2} />
                   </View>
                   <View>
                     <Text style={styles.chatModalTitle}>Nueva Conversación</Text>
@@ -6320,11 +2743,11 @@ function NativeAppScreen() {
                   style={styles.chatModalCloseBtn}
                   onPress={() => {
                     setIsNewChatModalOpen(false);
-                    setContactSearchQuery('');
+                    contactsDirectory.setQuery('');
                   }}
                   hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
                 >
-                  <XIcon size={18} color="#64748b" strokeWidth={2} />
+                  <XIcon size={18} color={palette.muted} strokeWidth={2} />
                 </TouchableOpacity>
               </View>
 
@@ -6332,7 +2755,7 @@ function NativeAppScreen() {
               <View style={styles.chatModalActionsRow}>
                 <TouchableOpacity
                   style={styles.chatModalRegisterBtn}
-                  onPress={() => setIsAddContactModalOpen(true)}
+                  onPress={openContactRegistration}
                   activeOpacity={0.85}
                 >
                   <UserPlusIcon size={18} color="#ffffff" strokeWidth={2.2} />
@@ -6344,7 +2767,7 @@ function NativeAppScreen() {
                   onPress={() => setIsCreateGroupChatModalOpen(true)}
                   activeOpacity={0.8}
                 >
-                  <UsersIcon size={16} color="#8a1a36" strokeWidth={2.2} />
+                  <UsersIcon size={16} color={palette.accent} strokeWidth={2.2} />
                   <Text style={styles.chatModalCreateGroupBtnText}>+ Crear Grupo de Conversación</Text>
                 </TouchableOpacity>
               </View>
@@ -6354,13 +2777,13 @@ function NativeAppScreen() {
                 <SearchIcon size={16} color="#94a3b8" strokeWidth={2} />
                 <TextInput
                   style={styles.chatModalSearchInput}
-                  value={contactSearchQuery}
-                  onChangeText={setContactSearchQuery}
+                  value={contactsDirectory.query}
+                  onChangeText={contactsDirectory.setQuery}
                   placeholder="Buscar por nombre, indicativo o teléfono..."
                   placeholderTextColor="#94a3b8"
                 />
-                {Boolean(contactSearchQuery) && (
-                  <TouchableOpacity onPress={() => setContactSearchQuery('')}>
+                {Boolean(contactsDirectory.query) && (
+                  <TouchableOpacity onPress={() => contactsDirectory.setQuery('')}>
                     <XIcon size={14} color="#94a3b8" />
                   </TouchableOpacity>
                 )}
@@ -6378,7 +2801,7 @@ function NativeAppScreen() {
                   </Text>
                   <TouchableOpacity
                     style={styles.chatModalEmptyAddBtn}
-                    onPress={() => setIsAddContactModalOpen(true)}
+                    onPress={openContactRegistration}
                     activeOpacity={0.85}
                   >
                     <Text style={styles.chatModalEmptyAddBtnText}>+ Agregar Contacto</Text>
@@ -6426,998 +2849,13 @@ function NativeAppScreen() {
                       </View>
                     </TouchableOpacity>
                   ))}
+                  {contactsDirectory.hasMore && <TouchableOpacity onPress={() => contactsDirectory.loadMore()} disabled={contactsDirectory.loading}>
+                    <Text style={{ padding: 16, color: '#6b1d2f' }}>Cargar más contactos</Text>
+                  </TouchableOpacity>}
                 </ScrollView>
               )}
             </View>
           </View>
-      </Modal>
-
-      {/* 7. MODAL: REGISTRAR NUEVO CONTACTO (Diseño exacto a Imagen 2) */}
-      <Modal
-        visible={isAddContactModalOpen}
-        animationType="fade"
-        transparent
-        onRequestClose={() => {
-          setIsAddContactModalOpen(false);
-          setAddContactError(null);
-        }}
-      >
-        <View style={{
-          flex: 1,
-          backgroundColor: 'rgba(15, 23, 42, 0.6)',
-          justifyContent: 'center',
-          alignItems: 'center',
-          padding: 16,
-        }}>
-          {/* Backdrop que cierra al tocar fuera sin interceptar clics dentro de la tarjeta */}
-          <TouchableOpacity
-            style={StyleSheet.absoluteFill}
-            activeOpacity={1}
-            onPress={() => {
-              setIsAddContactModalOpen(false);
-              setAddContactError(null);
-            }}
-          />
-
-          <View style={{
-            backgroundColor: '#ffffff',
-            borderRadius: 28,
-            width: '100%',
-            maxWidth: 420,
-            paddingHorizontal: 20,
-            paddingTop: 18,
-            paddingBottom: 24,
-            shadowColor: '#000000',
-            shadowOpacity: 0.15,
-            shadowRadius: 16,
-            shadowOffset: { width: 0, height: 8 },
-            elevation: 8,
-          }}>
-            {/* Header con dos circulitos para Cancelar y Guardar */}
-            <View style={{
-              flexDirection: 'row',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              paddingBottom: 12,
-              borderBottomWidth: 1,
-              borderBottomColor: '#f1f5f9',
-            }}>
-              {/* Botón Circular Izquierdo: Cancelar */}
-              <TouchableOpacity
-                style={{
-                  width: 38,
-                  height: 38,
-                  borderRadius: 19,
-                  backgroundColor: '#e2e8f0',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                }}
-                onPress={() => {
-                  setIsAddContactModalOpen(false);
-                  setAddContactError(null);
-                }}
-                activeOpacity={0.8}
-              >
-                <XIcon size={18} color="#475569" strokeWidth={2.2} />
-              </TouchableOpacity>
-
-              {/* Título Central */}
-              <Text style={{
-                fontSize: 18,
-                fontWeight: '700',
-                color: '#0f172a',
-                textAlign: 'center',
-              }}>
-                Nuevo Contacto
-              </Text>
-
-              {/* Botón Circular Derecho: Guardar */}
-              <TouchableOpacity
-                style={{
-                  width: 38,
-                  height: 38,
-                  borderRadius: 19,
-                  backgroundColor: '#6b1d2f',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  shadowColor: '#6b1d2f',
-                  shadowOpacity: 0.3,
-                  shadowRadius: 4,
-                  elevation: 2,
-                }}
-                onPress={handleSaveContactSubmit}
-                activeOpacity={0.8}
-              >
-                <CheckIcon size={18} color="#ffffff" strokeWidth={2.6} />
-              </TouchableOpacity>
-            </View>
-
-            <ScrollView
-              style={{ maxHeight: 460 }}
-              contentContainerStyle={{ paddingTop: 16, paddingBottom: 6 }}
-              keyboardShouldPersistTaps="handled"
-            >
-              {/* Círculo con Icono de Persona (sin agregar foto, solo persona) */}
-              <View style={{
-                alignSelf: 'center',
-                width: 86,
-                height: 86,
-                borderRadius: 43,
-                backgroundColor: '#f8fafc',
-                borderWidth: 2,
-                borderColor: '#fbcfe8',
-                alignItems: 'center',
-                justifyContent: 'center',
-                marginBottom: 20,
-              }}>
-                <UserIcon size={42} color="#94a3b8" strokeWidth={1.8} />
-              </View>
-
-              {addContactError && (
-                <View style={{
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  backgroundColor: '#ffe4e6',
-                  paddingHorizontal: 12,
-                  paddingVertical: 8,
-                  borderRadius: 10,
-                  marginBottom: 14,
-                  gap: 8,
-                }}>
-                  <AlertTriangleIcon size={16} color="#be123c" strokeWidth={2} />
-                  <Text style={{ color: '#be123c', fontSize: 13, fontWeight: '600', flex: 1 }}>
-                    {addContactError}
-                  </Text>
-                </View>
-              )}
-
-              {/* Tarjeta 1: Nombre(s) y Apellidos (Opcional) */}
-              <View style={{
-                backgroundColor: '#ffffff',
-                borderRadius: 16,
-                borderWidth: 1,
-                borderColor: '#e2e8f0',
-                paddingHorizontal: 16,
-                paddingVertical: 10,
-                marginBottom: 14,
-              }}>
-                <Text style={{ fontSize: 12, fontWeight: '600', color: '#64748b', marginBottom: 2 }}>
-                  Nombre(s) *
-                </Text>
-                <TextInput
-                  style={{
-                    fontSize: 15,
-                    color: '#0f172a',
-                    paddingVertical: 4,
-                  }}
-                  value={newContactName}
-                  onChangeText={setNewContactName}
-                  placeholder="Ej. Juan Carlos"
-                  placeholderTextColor="#94a3b8"
-                />
-
-                <View style={{ height: 1, backgroundColor: '#f1f5f9', marginVertical: 8 }} />
-
-                <Text style={{ fontSize: 12, fontWeight: '600', color: '#64748b', marginBottom: 2 }}>
-                  Apellidos (Opcional)
-                </Text>
-                <TextInput
-                  style={{
-                    fontSize: 15,
-                    color: '#0f172a',
-                    paddingVertical: 4,
-                  }}
-                  value={newContactLastName}
-                  onChangeText={setNewContactLastName}
-                  placeholder="Ej. Perez Hernandez"
-                  placeholderTextColor="#94a3b8"
-                />
-              </View>
-
-              {/* Tarjeta 2: Número de Teléfono (directo sin selector de país) */}
-              <View style={{
-                backgroundColor: '#ffffff',
-                borderRadius: 16,
-                borderWidth: 1,
-                borderColor: '#e2e8f0',
-                paddingHorizontal: 16,
-                paddingVertical: 10,
-                marginBottom: 14,
-              }}>
-                <Text style={{ fontSize: 12, fontWeight: '600', color: '#64748b', marginBottom: 2 }}>
-                  Número de Teléfono
-                </Text>
-                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                  <TextInput
-                    style={{
-                      flex: 1,
-                      fontSize: 15,
-                      color: '#0f172a',
-                      paddingVertical: 4,
-                    }}
-                    value={newContactPhone}
-                    onChangeText={setNewContactPhone}
-                    placeholder="771 123 4567"
-                    placeholderTextColor="#94a3b8"
-                    keyboardType="phone-pad"
-                  />
-                  <PhoneIcon size={18} color="#94a3b8" strokeWidth={1.8} />
-                </View>
-              </View>
-
-              {/* Tarjeta 3: Correo Electrónico (Opcional) */}
-              <View style={{
-                backgroundColor: '#ffffff',
-                borderRadius: 16,
-                borderWidth: 1,
-                borderColor: '#e2e8f0',
-                paddingHorizontal: 16,
-                paddingVertical: 10,
-                marginBottom: 8,
-              }}>
-                <Text style={{ fontSize: 12, fontWeight: '600', color: '#64748b', marginBottom: 2 }}>
-                  Correo Electrónico (Opcional)
-                </Text>
-                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                  <TextInput
-                    style={{
-                      flex: 1,
-                      fontSize: 15,
-                      color: '#0f172a',
-                      paddingVertical: 4,
-                    }}
-                    value={newContactEmail}
-                    onChangeText={setNewContactEmail}
-                    placeholder="ejemplo@c5i.gob.mx"
-                    placeholderTextColor="#94a3b8"
-                    keyboardType="email-address"
-                    autoCapitalize="none"
-                  />
-                  <MailIcon size={18} color="#94a3b8" strokeWidth={1.8} />
-                </View>
-              </View>
-            </ScrollView>
-          </View>
-        </View>
-      </Modal>
-
-      {/* 7b. MODAL: DETALLE DE CONTACTO / PERFIL (Diseño exacto a Imagen Captura 11.27.13) */}
-      <Modal
-        visible={isContactDetailModalOpen && !!selectedContactForDetail}
-        animationType="slide"
-        transparent={false}
-        onRequestClose={() => setIsContactDetailModalOpen(false)}
-      >
-        <SafeAreaView style={{ flex: 1, backgroundColor: '#ffffff' }}>
-          {/* Barra Superior con botón circular <, SOS y botón Editar */}
-          <View style={{
-            flexDirection: 'row',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            paddingHorizontal: 16,
-            paddingVertical: 12,
-            borderBottomWidth: 1,
-            borderBottomColor: '#f1f5f9',
-          }}>
-            {/* Botón Circular Izquierdo: Volver atrás */}
-            <TouchableOpacity
-              style={{
-                width: 40,
-                height: 40,
-                borderRadius: 20,
-                backgroundColor: '#f1f5f9',
-                alignItems: 'center',
-                justifyContent: 'center',
-              }}
-              onPress={() => setIsContactDetailModalOpen(false)}
-              activeOpacity={0.7}
-            >
-              <ArrowLeftIcon size={20} color="#334155" strokeWidth={2.2} />
-            </TouchableOpacity>
-
-            {/* Botones Derecha: SOS y Editar */}
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-              {/* Botón SOS Pill Rojo */}
-              <TouchableOpacity
-                style={{
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  backgroundColor: '#ef4444',
-                  paddingHorizontal: 12,
-                  paddingVertical: 7,
-                  borderRadius: 20,
-                  gap: 4,
-                  shadowColor: '#ef4444',
-                  shadowOpacity: 0.3,
-                  shadowRadius: 4,
-                  elevation: 2,
-                }}
-                onPress={handleTriggerSos}
-                activeOpacity={0.8}
-              >
-                <AlertTriangleIcon size={16} color="#ffffff" strokeWidth={2.4} />
-                <Text style={{ color: '#ffffff', fontWeight: '800', fontSize: 13, letterSpacing: 0.5 }}>
-                  SOS
-                </Text>
-              </TouchableOpacity>
-
-              {/* Botón Editar Pill Granate */}
-              <TouchableOpacity
-                style={{
-                  backgroundColor: '#6b1d2f',
-                  paddingHorizontal: 18,
-                  paddingVertical: 7,
-                  borderRadius: 20,
-                  shadowColor: '#6b1d2f',
-                  shadowOpacity: 0.3,
-                  shadowRadius: 4,
-                  elevation: 2,
-                }}
-                onPress={() => {
-                  if (selectedContactForDetail) {
-                    handleOpenEditContact(selectedContactForDetail);
-                  }
-                }}
-                activeOpacity={0.8}
-              >
-                <Text style={{ color: '#ffffff', fontWeight: '700', fontSize: 14 }}>
-                  Editar
-                </Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-
-          <ScrollView
-            style={{ flex: 1, backgroundColor: '#ffffff' }}
-            contentContainerStyle={{ paddingHorizontal: 20, paddingTop: 20, paddingBottom: 40 }}
-            showsVerticalScrollIndicator={false}
-          >
-            {/* Avatar Central Grande con Inicial */}
-            <View style={{ alignItems: 'center', marginBottom: 14 }}>
-              <View style={{
-                width: 110,
-                height: 110,
-                borderRadius: 55,
-                backgroundColor: '#e0f2fe',
-                borderWidth: 2.5,
-                borderColor: '#fbcfe8',
-                alignItems: 'center',
-                justifyContent: 'center',
-                shadowColor: '#000000',
-                shadowOpacity: 0.08,
-                shadowRadius: 8,
-                shadowOffset: { width: 0, height: 4 },
-                elevation: 3,
-              }}>
-                <Text style={{
-                  fontSize: 44,
-                  fontWeight: '800',
-                  color: '#6b1d2f',
-                }}>
-                  {(selectedContactForDetail?.name.trim()[0] || 'K').toUpperCase()}
-                </Text>
-              </View>
-
-              {/* Nombre del Contacto */}
-              <Text style={{
-                fontSize: 22,
-                fontWeight: '800',
-                color: '#0f172a',
-                marginTop: 12,
-                textAlign: 'center',
-              }}>
-                {selectedContactForDetail?.name}
-              </Text>
-
-              {/* Indicativo de Radio Pill */}
-              <View style={{
-                backgroundColor: '#f1f5f9',
-                paddingHorizontal: 12,
-                paddingVertical: 4,
-                borderRadius: 12,
-                marginTop: 6,
-              }}>
-                <Text style={{
-                  fontSize: 12,
-                  fontWeight: '700',
-                  color: '#7a1c30',
-                  letterSpacing: 0.5,
-                }}>
-                  {selectedContactForDetail?.callsign || 'RADIO-654'}
-                </Text>
-              </View>
-            </View>
-
-            {/* 4 Botones Circulares de Acción Rápida Granate */}
-            <View style={{
-              flexDirection: 'row',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: 16,
-              marginVertical: 18,
-            }}>
-              {/* 1. Chat */}
-              <TouchableOpacity
-                style={{
-                  width: 50,
-                  height: 50,
-                  borderRadius: 25,
-                  backgroundColor: '#6b1d2f',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  shadowColor: '#6b1d2f',
-                  shadowOpacity: 0.35,
-                  shadowRadius: 6,
-                  elevation: 3,
-                }}
-                onPress={() => {
-                  if (selectedContactForDetail) {
-                    setIsContactDetailModalOpen(false);
-                    handleStartDirectChat(selectedContactForDetail);
-                    setCurrentTab('Chat');
-                  }
-                }}
-                activeOpacity={0.8}
-              >
-                <MessageSquareIcon size={22} color="#ffffff" strokeWidth={2.2} />
-              </TouchableOpacity>
-
-              {/* 2. Llamada */}
-              <TouchableOpacity
-                style={{
-                  width: 50,
-                  height: 50,
-                  borderRadius: 25,
-                  backgroundColor: '#6b1d2f',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  shadowColor: '#6b1d2f',
-                  shadowOpacity: 0.35,
-                  shadowRadius: 6,
-                  elevation: 3,
-                }}
-                onPress={() => {
-                  if (selectedContactForDetail?.phone_number) {
-                    if (Platform.OS === 'web') {
-                      window.open(`tel:${selectedContactForDetail.phone_number}`);
-                    } else {
-                      Linking.openURL(`tel:${selectedContactForDetail.phone_number}`).catch(() => {});
-                    }
-                  } else {
-                    showTacticalAlert('Llamada Telefónica', 'Este oficial o contacto no tiene un número celular registrado en la red C5i.', { type: 'warning' });
-                  }
-                }}
-                activeOpacity={0.8}
-              >
-                <PhoneIcon size={22} color="#ffffff" strokeWidth={2.2} />
-              </TouchableOpacity>
-
-              {/* 3. Video */}
-              <TouchableOpacity
-                style={{
-                  width: 50,
-                  height: 50,
-                  borderRadius: 25,
-                  backgroundColor: '#6b1d2f',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  shadowColor: '#6b1d2f',
-                  shadowOpacity: 0.35,
-                  shadowRadius: 6,
-                  elevation: 3,
-                }}
-                onPress={() => {
-                  setIsContactDetailModalOpen(false);
-                  if (selectedContactForDetail) {
-                    handleStartDirectChat(selectedContactForDetail);
-                    setCurrentTab('Chat');
-                  }
-                  handleOpenCamera();
-                }}
-                activeOpacity={0.8}
-              >
-                <VideoIcon size={22} color="#ffffff" strokeWidth={2.2} />
-              </TouchableOpacity>
-
-              {/* 4. Correo */}
-              <TouchableOpacity
-                style={{
-                  width: 50,
-                  height: 50,
-                  borderRadius: 25,
-                  backgroundColor: '#6b1d2f',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  shadowColor: '#6b1d2f',
-                  shadowOpacity: 0.35,
-                  shadowRadius: 6,
-                  elevation: 3,
-                }}
-                onPress={() => {
-                  if (selectedContactForDetail?.email) {
-                    if (Platform.OS === 'web') {
-                      window.open(`mailto:${selectedContactForDetail.email}`);
-                    } else {
-                      Linking.openURL(`mailto:${selectedContactForDetail.email}`).catch(() => {});
-                    }
-                  } else {
-                    showTacticalAlert('Correo Institucional', 'Este oficial o contacto no tiene un correo institucional registrado.', { type: 'warning' });
-                  }
-                }}
-                activeOpacity={0.8}
-              >
-                <MailIcon size={22} color="#ffffff" strokeWidth={2.2} />
-              </TouchableOpacity>
-            </View>
-
-            {/* 4 Tarjetas de Información */}
-
-            {/* Tarjeta 1: móvil (red celular) */}
-            <View style={{
-              backgroundColor: '#ffffff',
-              borderRadius: 18,
-              borderWidth: 1,
-              borderColor: '#e2e8f0',
-              paddingHorizontal: 16,
-              paddingVertical: 12,
-              marginBottom: 12,
-              shadowColor: '#000000',
-              shadowOpacity: 0.03,
-              shadowRadius: 4,
-              elevation: 1,
-            }}>
-              <Text style={{
-                fontSize: 12,
-                fontWeight: '700',
-                color: '#8a1a36',
-                marginBottom: 4,
-                fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
-              }}>
-                móvil (red celular)
-              </Text>
-              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                <Text style={{ fontSize: 16, fontWeight: '700', color: '#0f172a' }}>
-                  {selectedContactForDetail?.phone_number || 'Sin número registrado'}
-                </Text>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                  {/* Copiar */}
-                  <TouchableOpacity
-                    style={{
-                      width: 36,
-                      height: 36,
-                      borderRadius: 18,
-                      backgroundColor: '#f8fafc',
-                      borderWidth: 1,
-                      borderColor: '#e2e8f0',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                    }}
-                    onPress={() => {
-                      if (selectedContactForDetail?.phone_number) {
-                        Clipboard.setString(selectedContactForDetail.phone_number);
-                        setCopiedDetailField('phone');
-                        setTimeout(() => setCopiedDetailField(null), 2000);
-                      }
-                    }}
-                    activeOpacity={0.7}
-                  >
-                    {copiedDetailField === 'phone' ? (
-                      <CheckIcon size={16} color="#16a34a" strokeWidth={2.4} />
-                    ) : (
-                      <CopyIcon size={16} color="#64748b" strokeWidth={2} />
-                    )}
-                  </TouchableOpacity>
-
-                  {/* Llamar */}
-                  <TouchableOpacity
-                    style={{
-                      width: 36,
-                      height: 36,
-                      borderRadius: 18,
-                      backgroundColor: '#fdf2f4',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                    }}
-                    onPress={() => {
-                      if (selectedContactForDetail?.phone_number) {
-                        if (Platform.OS === 'web') {
-                          window.open(`tel:${selectedContactForDetail.phone_number}`);
-                        } else {
-                          Linking.openURL(`tel:${selectedContactForDetail.phone_number}`).catch(() => {});
-                        }
-                      }
-                    }}
-                    activeOpacity={0.7}
-                  >
-                    <PhoneIcon size={16} color="#8a1a36" strokeWidth={2} />
-                  </TouchableOpacity>
-                </View>
-              </View>
-            </View>
-
-            {/* Tarjeta 2: correo institucional */}
-            <View style={{
-              backgroundColor: '#ffffff',
-              borderRadius: 18,
-              borderWidth: 1,
-              borderColor: '#e2e8f0',
-              paddingHorizontal: 16,
-              paddingVertical: 12,
-              marginBottom: 12,
-              shadowColor: '#000000',
-              shadowOpacity: 0.03,
-              shadowRadius: 4,
-              elevation: 1,
-            }}>
-              <Text style={{
-                fontSize: 12,
-                fontWeight: '700',
-                color: '#8a1a36',
-                marginBottom: 4,
-                fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
-              }}>
-                correo institucional
-              </Text>
-              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                <Text style={{
-                  fontSize: 15,
-                  fontWeight: '700',
-                  color: selectedContactForDetail?.email ? '#0f172a' : '#94a3b8',
-                  flex: 1,
-                  marginRight: 8,
-                }}>
-                  {selectedContactForDetail?.email || 'Sin correo registrado'}
-                </Text>
-                <View style={{
-                  width: 36,
-                  height: 36,
-                  borderRadius: 18,
-                  backgroundColor: '#fdf2f4',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                }}>
-                  <MailIcon size={16} color="#8a1a36" strokeWidth={2} />
-                </View>
-              </View>
-            </View>
-
-            {/* Tarjeta 3: indicativo de radio (callsign) */}
-            <View style={{
-              backgroundColor: '#ffffff',
-              borderRadius: 18,
-              borderWidth: 1,
-              borderColor: '#e2e8f0',
-              paddingHorizontal: 16,
-              paddingVertical: 12,
-              marginBottom: 12,
-              shadowColor: '#000000',
-              shadowOpacity: 0.03,
-              shadowRadius: 4,
-              elevation: 1,
-            }}>
-              <Text style={{
-                fontSize: 12,
-                fontWeight: '700',
-                color: '#8a1a36',
-                marginBottom: 4,
-                fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
-              }}>
-                indicativo de radio (callsign)
-              </Text>
-              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                <Text style={{ fontSize: 16, fontWeight: '700', color: '#0f172a' }}>
-                  {selectedContactForDetail?.callsign || 'RADIO-654'}
-                </Text>
-                <View style={{
-                  width: 36,
-                  height: 36,
-                  borderRadius: 18,
-                  backgroundColor: '#fdf2f4',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                }}>
-                  <ShieldIcon size={16} color="#8a1a36" strokeWidth={2} />
-                </View>
-              </View>
-            </View>
-
-            {/* Botón Eliminar Contacto con estilo C5i */}
-            {selectedContactForDetail && (
-              <TouchableOpacity
-                style={{
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  backgroundColor: '#fef2f2',
-                  borderWidth: 1,
-                  borderColor: '#fecdd3',
-                  paddingVertical: 13,
-                  borderRadius: 16,
-                  gap: 8,
-                  marginTop: 10,
-                }}
-                onPress={() => handleDeleteContact(selectedContactForDetail)}
-                activeOpacity={0.8}
-              >
-                <TrashIcon size={18} color="#dc2626" strokeWidth={2.2} />
-                <Text style={{ color: '#dc2626', fontWeight: '700', fontSize: 14 }}>
-                  Eliminar Contacto
-                </Text>
-              </TouchableOpacity>
-            )}
-          </ScrollView>
-        </SafeAreaView>
-      </Modal>
-
-      {/* 7c. MODAL: EDITAR CONTACTO (CRUD CON BASE DE DATOS C5i) */}
-      <Modal
-        visible={isEditContactModalOpen}
-        animationType="fade"
-        transparent
-        onRequestClose={() => {
-          setIsEditContactModalOpen(false);
-          setEditContactError(null);
-        }}
-      >
-        <View style={{
-          flex: 1,
-          backgroundColor: 'rgba(15, 23, 42, 0.6)',
-          justifyContent: 'center',
-          alignItems: 'center',
-          padding: 16,
-        }}>
-          {/* Backdrop que cierra al tocar fuera */}
-          <TouchableOpacity
-            style={StyleSheet.absoluteFill}
-            activeOpacity={1}
-            onPress={() => {
-              setIsEditContactModalOpen(false);
-              setEditContactError(null);
-            }}
-          />
-
-          <View style={{
-            backgroundColor: '#ffffff',
-            borderRadius: 28,
-            width: '100%',
-            maxWidth: 420,
-            paddingHorizontal: 20,
-            paddingTop: 18,
-            paddingBottom: 24,
-            shadowColor: '#000000',
-            shadowOpacity: 0.15,
-            shadowRadius: 16,
-            shadowOffset: { width: 0, height: 8 },
-            elevation: 8,
-          }}>
-            {/* Header con botón Cancelar y Guardar */}
-            <View style={{
-              flexDirection: 'row',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              paddingBottom: 12,
-              borderBottomWidth: 1,
-              borderBottomColor: '#f1f5f9',
-            }}>
-              <TouchableOpacity
-                style={{
-                  width: 38,
-                  height: 38,
-                  borderRadius: 19,
-                  backgroundColor: '#e2e8f0',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                }}
-                onPress={() => {
-                  setIsEditContactModalOpen(false);
-                  setEditContactError(null);
-                }}
-                activeOpacity={0.8}
-              >
-                <XIcon size={18} color="#475569" strokeWidth={2.2} />
-              </TouchableOpacity>
-
-              <Text style={{
-                fontSize: 18,
-                fontWeight: '700',
-                color: '#0f172a',
-                textAlign: 'center',
-              }}>
-                Editar Contacto
-              </Text>
-
-              <TouchableOpacity
-                style={{
-                  width: 38,
-                  height: 38,
-                  borderRadius: 19,
-                  backgroundColor: '#6b1d2f',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  shadowColor: '#6b1d2f',
-                  shadowOpacity: 0.3,
-                  shadowRadius: 4,
-                  elevation: 2,
-                }}
-                onPress={handleSaveEditContactSubmit}
-                activeOpacity={0.8}
-              >
-                <CheckIcon size={18} color="#ffffff" strokeWidth={2.6} />
-              </TouchableOpacity>
-            </View>
-
-            <ScrollView
-              style={{ maxHeight: 460 }}
-              contentContainerStyle={{ paddingTop: 16, paddingBottom: 6 }}
-              keyboardShouldPersistTaps="handled"
-            >
-              {editContactError && (
-                <View style={{
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  backgroundColor: '#ffe4e6',
-                  paddingHorizontal: 12,
-                  paddingVertical: 8,
-                  borderRadius: 10,
-                  marginBottom: 14,
-                  gap: 8,
-                }}>
-                  <AlertTriangleIcon size={16} color="#be123c" strokeWidth={2} />
-                  <Text style={{ color: '#be123c', fontSize: 13, fontWeight: '600', flex: 1 }}>
-                    {editContactError}
-                  </Text>
-                </View>
-              )}
-
-              {/* Nombre y Apellidos */}
-              <View style={{
-                backgroundColor: '#ffffff',
-                borderRadius: 16,
-                borderWidth: 1,
-                borderColor: '#e2e8f0',
-                paddingHorizontal: 16,
-                paddingVertical: 10,
-                marginBottom: 14,
-              }}>
-                <Text style={{ fontSize: 12, fontWeight: '600', color: '#64748b', marginBottom: 2 }}>
-                  Nombre(s) *
-                </Text>
-                <TextInput
-                  style={{ fontSize: 15, color: '#0f172a', paddingVertical: 4 }}
-                  value={editContactName}
-                  onChangeText={setEditContactName}
-                  placeholder="Ej. Juan Carlos"
-                  placeholderTextColor="#94a3b8"
-                />
-
-                <View style={{ height: 1, backgroundColor: '#f1f5f9', marginVertical: 8 }} />
-
-                <Text style={{ fontSize: 12, fontWeight: '600', color: '#64748b', marginBottom: 2 }}>
-                  Apellidos (Opcional)
-                </Text>
-                <TextInput
-                  style={{ fontSize: 15, color: '#0f172a', paddingVertical: 4 }}
-                  value={editContactLastName}
-                  onChangeText={setEditContactLastName}
-                  placeholder="Ej. Perez Hernandez"
-                  placeholderTextColor="#94a3b8"
-                />
-              </View>
-
-              {/* Teléfono */}
-              <View style={{
-                backgroundColor: '#ffffff',
-                borderRadius: 16,
-                borderWidth: 1,
-                borderColor: '#e2e8f0',
-                paddingHorizontal: 16,
-                paddingVertical: 10,
-                marginBottom: 14,
-              }}>
-                <Text style={{ fontSize: 12, fontWeight: '600', color: '#64748b', marginBottom: 2 }}>
-                  Número de Teléfono
-                </Text>
-                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                  <TextInput
-                    style={{ flex: 1, fontSize: 15, color: '#0f172a', paddingVertical: 4 }}
-                    value={editContactPhone}
-                    onChangeText={(text) => {
-                      setEditContactPhone(text);
-                      const digits = text.replace(/\D/g, '');
-                      if (digits.length >= 4) {
-                        setEditContactCallsign(`RADIO-${digits.slice(-4)}`);
-                      } else if (digits.length > 0) {
-                        setEditContactCallsign(`RADIO-${digits.padStart(4, '0')}`);
-                      }
-                    }}
-                    placeholder="771 123 4567"
-                    placeholderTextColor="#94a3b8"
-                    keyboardType="phone-pad"
-                  />
-                  <PhoneIcon size={18} color="#94a3b8" strokeWidth={1.8} />
-                </View>
-              </View>
-
-              {/* Correo */}
-              <View style={{
-                backgroundColor: '#ffffff',
-                borderRadius: 16,
-                borderWidth: 1,
-                borderColor: '#e2e8f0',
-                paddingHorizontal: 16,
-                paddingVertical: 10,
-                marginBottom: 14,
-              }}>
-                <Text style={{ fontSize: 12, fontWeight: '600', color: '#64748b', marginBottom: 2 }}>
-                  Correo Electrónico (Opcional)
-                </Text>
-                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                  <TextInput
-                    style={{ flex: 1, fontSize: 15, color: '#0f172a', paddingVertical: 4 }}
-                    value={editContactEmail}
-                    onChangeText={setEditContactEmail}
-                    placeholder="ejemplo@c5i.gob.mx"
-                    placeholderTextColor="#94a3b8"
-                    keyboardType="email-address"
-                    autoCapitalize="none"
-                  />
-                  <MailIcon size={18} color="#94a3b8" strokeWidth={1.8} />
-                </View>
-              </View>
-
-              {/* Indicativo de Radio */}
-              <View style={{
-                backgroundColor: '#ffffff',
-                borderRadius: 16,
-                borderWidth: 1,
-                borderColor: '#e2e8f0',
-                paddingHorizontal: 16,
-                paddingVertical: 10,
-                marginBottom: 18,
-              }}>
-                <Text style={{ fontSize: 12, fontWeight: '600', color: '#64748b', marginBottom: 2 }}>
-                  Indicativo de Radio (Callsign)
-                </Text>
-                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                  <TextInput
-                    style={{ flex: 1, fontSize: 15, color: '#0f172a', paddingVertical: 4 }}
-                    value={editContactCallsign}
-                    onChangeText={setEditContactCallsign}
-                    placeholder="RADIO-654"
-                    placeholderTextColor="#94a3b8"
-                    autoCapitalize="characters"
-                  />
-                  <ShieldIcon size={18} color="#94a3b8" strokeWidth={1.8} />
-                </View>
-              </View>
-
-              {/* Botón Eliminar Contacto (CRUD Delete) */}
-              {selectedContactForDetail && (
-                <TouchableOpacity
-                  style={{
-                    flexDirection: 'row',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    backgroundColor: '#fef2f2',
-                    borderWidth: 1,
-                    borderColor: '#fecdd3',
-                    paddingVertical: 12,
-                    borderRadius: 14,
-                    gap: 8,
-                    marginTop: 6,
-                  }}
-                  onPress={() => handleDeleteContact(selectedContactForDetail)}
-                  activeOpacity={0.8}
-                >
-                  <TrashIcon size={18} color="#dc2626" strokeWidth={2} />
-                  <Text style={{ color: '#dc2626', fontWeight: '700', fontSize: 14 }}>
-                    Eliminar Contacto
-                  </Text>
-                </TouchableOpacity>
-              )}
-            </ScrollView>
-          </View>
-        </View>
       </Modal>
 
       {/* 8. MODAL: CREAR GRUPO DE CONVERSACIÓN */}
@@ -7459,7 +2897,7 @@ function NativeAppScreen() {
                     setCreateGroupError(null);
                   }}
                 >
-                  <XIcon size={18} color="#64748b" strokeWidth={2} />
+                  <XIcon size={18} color={palette.muted} strokeWidth={2} />
                 </TouchableOpacity>
               </View>
 
@@ -7470,7 +2908,7 @@ function NativeAppScreen() {
               >
                 {createGroupError && (
                   <View style={styles.recoveryErrorBanner}>
-                    <AlertTriangleIcon size={15} color="#be123c" strokeWidth={1.8} />
+                    <AlertTriangleIcon size={15} color={palette.danger} strokeWidth={1.8} />
                     <Text style={styles.recoveryErrorText}>{createGroupError}</Text>
                   </View>
                 )}
@@ -7497,9 +2935,11 @@ function NativeAppScreen() {
                     Marca los oficiales que participarán en el grupo cifrado
                   </Text>
 
+                  <TextInput value={contactsDirectory.query} onChangeText={contactsDirectory.setQuery}
+                    placeholder="Buscar miembros por nombre o teléfono..." style={styles.recoveryInput} />
                   <View style={{ gap: 8, marginTop: 8 }}>
-                    {officersList.map((off) => {
-                      const isChecked = selectedGroupMembers.includes(off.id);
+                    {officersList.filter(off => off.registered_user_id).map((off) => {
+                      const isChecked = selectedGroupMembers.includes(off.registered_user_id!);
                       return (
                         <TouchableOpacity
                           key={off.id}
@@ -7507,7 +2947,7 @@ function NativeAppScreen() {
                             styles.chatGroupMemberItem,
                             isChecked && styles.chatGroupMemberItemChecked,
                           ]}
-                          onPress={() => toggleGroupMemberSelection(off.id)}
+                          onPress={() => toggleGroupMemberSelection(off.registered_user_id!)}
                           activeOpacity={0.7}
                         >
                           <View
@@ -7528,6 +2968,9 @@ function NativeAppScreen() {
                       );
                     })}
                   </View>
+                  {contactsDirectory.hasMore && <TouchableOpacity onPress={() => contactsDirectory.loadMore()} disabled={contactsDirectory.loading}>
+                    <Text style={{ padding: 16, color: '#6b1d2f' }}>Cargar más contactos</Text>
+                  </TouchableOpacity>}
                 </View>
               </ScrollView>
 
@@ -7554,196 +2997,7 @@ function NativeAppScreen() {
           </View>
       </Modal>
 
-      {/* 8b. MODAL DE ALERTA Y CONFIRMACIÓN TÁCTICA C5I (REEMPLAZA ALERT.ALERT Y WINDOW.CONFIRM) */}
-      <Modal
-        visible={tacticalAlertModal.isOpen}
-        animationType="fade"
-        transparent
-        onRequestClose={() => {
-          tacticalAlertModal.onCancel?.();
-          setTacticalAlertModal((prev) => ({ ...prev, isOpen: false }));
-        }}
-      >
-        <View style={{
-          flex: 1,
-          backgroundColor: 'rgba(15, 23, 42, 0.75)',
-          alignItems: 'center',
-          justifyContent: 'center',
-          padding: 24,
-        }}>
-          <View style={{
-            width: '100%',
-            maxWidth: 380,
-            backgroundColor: '#ffffff',
-            borderRadius: 24,
-            padding: 24,
-            alignItems: 'center',
-            shadowColor: '#000000',
-            shadowOffset: { width: 0, height: 10 },
-            shadowOpacity: 0.25,
-            shadowRadius: 20,
-            elevation: 10,
-            borderWidth: 1,
-            borderColor: tacticalAlertModal.type === 'confirm_delete' ? '#fecdd3' : '#e2e8f0',
-          }}>
-            {/* Tactical Badge Icon */}
-            <View style={{
-              width: 64,
-              height: 64,
-              borderRadius: 32,
-              backgroundColor: tacticalAlertModal.type === 'confirm_delete' ? '#fee2e2' : '#fdf2f4',
-              borderWidth: 2,
-              borderColor: tacticalAlertModal.type === 'confirm_delete' ? '#fca5a5' : '#fbcfe8',
-              alignItems: 'center',
-              justifyContent: 'center',
-              marginBottom: 16,
-            }}>
-              {tacticalAlertModal.type === 'confirm_delete' ? (
-                <TrashIcon size={30} color="#dc2626" strokeWidth={2.2} />
-              ) : tacticalAlertModal.type === 'warning' ? (
-                <AlertTriangleIcon size={30} color="#d97706" strokeWidth={2.2} />
-              ) : tacticalAlertModal.type === 'success' ? (
-                <CheckCircleIcon size={30} color="#059669" strokeWidth={2.2} />
-              ) : (
-                <ShieldIcon size={30} color="#6b1d2f" strokeWidth={2.2} />
-              )}
-            </View>
-
-            {/* Title */}
-            <Text style={{
-              fontSize: 18,
-              fontWeight: '800',
-              color: '#0f172a',
-              textAlign: 'center',
-              marginBottom: 8,
-              letterSpacing: -0.3,
-            }}>
-              {tacticalAlertModal.title}
-            </Text>
-
-            {/* Message */}
-            <Text style={{
-              fontSize: 14,
-              lineHeight: 20,
-              color: '#475569',
-              textAlign: 'center',
-              marginBottom: 22,
-            }}>
-              {tacticalAlertModal.message}
-            </Text>
-
-            {/* Buttons */}
-            <View style={{ width: '100%', gap: 10 }}>
-              {tacticalAlertModal.onConfirm ? (
-                <>
-                  <TouchableOpacity
-                    style={{
-                      width: '100%',
-                      backgroundColor: tacticalAlertModal.type === 'confirm_delete' ? '#dc2626' : '#6b1d2f',
-                      paddingVertical: 13,
-                      borderRadius: 14,
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      shadowColor: tacticalAlertModal.type === 'confirm_delete' ? '#dc2626' : '#6b1d2f',
-                      shadowOpacity: 0.3,
-                      shadowRadius: 6,
-                      elevation: 3,
-                    }}
-                    onPress={() => {
-                      tacticalAlertModal.onConfirm?.();
-                    }}
-                    activeOpacity={0.85}
-                  >
-                    <Text style={{ color: '#ffffff', fontWeight: '800', fontSize: 14 }}>
-                      {tacticalAlertModal.confirmText || 'Confirmar'}
-                    </Text>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    style={{
-                      width: '100%',
-                      backgroundColor: '#f8fafc',
-                      borderWidth: 1,
-                      borderColor: '#e2e8f0',
-                      paddingVertical: 12,
-                      borderRadius: 14,
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                    }}
-                    onPress={() => {
-                      tacticalAlertModal.onCancel?.();
-                      setTacticalAlertModal((prev) => ({ ...prev, isOpen: false }));
-                    }}
-                    activeOpacity={0.7}
-                  >
-                    <Text style={{ color: '#64748b', fontWeight: '700', fontSize: 14 }}>
-                      {tacticalAlertModal.cancelText || 'Cancelar'}
-                    </Text>
-                  </TouchableOpacity>
-                </>
-              ) : (
-                <TouchableOpacity
-                  style={{
-                    width: '100%',
-                    backgroundColor: '#6b1d2f',
-                    paddingVertical: 13,
-                    borderRadius: 14,
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                  }}
-                  onPress={() => {
-                    setTacticalAlertModal((prev) => ({ ...prev, isOpen: false }));
-                  }}
-                  activeOpacity={0.85}
-                >
-                  <Text style={{ color: '#ffffff', fontWeight: '800', fontSize: 14 }}>
-                    {tacticalAlertModal.confirmText || 'Entendido'}
-                  </Text>
-                </TouchableOpacity>
-              )}
-            </View>
-          </View>
-        </View>
-      </Modal>
-
-      {/* 8c. TOAST TÁCTICO FLOTANTE C5I */}
-      {tacticalToast.visible && (
-        <View style={{
-          position: 'absolute',
-          top: Platform.OS === 'web' ? 24 : 50,
-          left: 20,
-          right: 20,
-          zIndex: 999999,
-          alignItems: 'center',
-          pointerEvents: 'none',
-        }}>
-          <View style={{
-            flexDirection: 'row',
-            alignItems: 'center',
-            backgroundColor: tacticalToast.type === 'warning' ? '#991b1b' : '#0f172a',
-            paddingHorizontal: 18,
-            paddingVertical: 11,
-            borderRadius: 30,
-            gap: 10,
-            shadowColor: '#000000',
-            shadowOffset: { width: 0, height: 4 },
-            shadowOpacity: 0.35,
-            shadowRadius: 10,
-            elevation: 8,
-            borderWidth: 1,
-            borderColor: tacticalToast.type === 'warning' ? '#f87171' : '#334155',
-          }}>
-            {tacticalToast.type === 'warning' ? (
-              <TrashIcon size={16} color="#fca5a5" strokeWidth={2.4} />
-            ) : (
-              <CheckCircleIcon size={16} color="#34d399" strokeWidth={2.4} />
-            )}
-            <Text style={{ color: '#ffffff', fontSize: 13, fontWeight: '700' }}>
-              {tacticalToast.message}
-            </Text>
-          </View>
-        </View>
-      )}
+      {feedback}
 
       {/* 9. MODAL: CÁMARA TÁCTICA EN VIVO C5I (CAPTURA REAL SIN SIMULACIÓN) */}
       <Modal
@@ -7834,13 +3088,13 @@ function NativeAppScreen() {
 // El proveedor permite que Android/iOS respeten la barra de estado y la navegación inferior.
 export default function NativeApp() {
   return (
-    <SafeAreaProvider style={{ flex: 1, backgroundColor: '#f8fafc' }}>
+    <AppThemeProvider><SafeAreaProvider style={{ flex: 1, backgroundColor: '#f8fafc' }}>
       <NativeAppScreen />
-    </SafeAreaProvider>
+    </SafeAreaProvider></AppThemeProvider>
   );
 }
 
-const styles = StyleSheet.create({
+const baseStyles = StyleSheet.create({
   cleanContainer: {
     flex: 1,
     backgroundColor: '#f8fafc',
@@ -7848,377 +3102,6 @@ const styles = StyleSheet.create({
   cleanMainContent: {
     flex: 1,
     backgroundColor: '#f8fafc',
-  },
-  cleanPttContainer: {
-    flex: 1,
-    justifyContent: 'space-between',
-    paddingHorizontal: 20,
-    paddingTop: 16,
-    paddingBottom: Platform.OS === 'android' ? 16 : 24,
-  },
-  cleanTopBar: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    width: '100%',
-  },
-  cleanChannelBox: {
-    flex: 1,
-    marginRight: 12,
-  },
-  cleanChannelLabel: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#64748b',
-    letterSpacing: 0.8,
-    textTransform: 'uppercase',
-  },
-  cleanChannelTitle: {
-    fontSize: 22,
-    fontWeight: '800',
-    color: '#0f172a',
-    letterSpacing: -0.5,
-    marginTop: 2,
-  },
-  // Solo Android: los nombres largos de canales no se cortan tan pronto.
-  cleanChannelTitleAndroid: {
-    fontSize: 18,
-    lineHeight: 22,
-  },
-  cleanHeaderActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  cleanSosBtn: {
-    width: 42,
-    height: 42,
-    borderRadius: 15,
-    backgroundColor: '#e11d48',
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#e11d48',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.35,
-    shadowRadius: 8,
-    elevation: 4,
-  },
-  cleanMembersPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#ffffff',
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
-    paddingHorizontal: 12,
-    height: 42,
-    borderRadius: 15,
-    gap: 6,
-    shadowColor: '#64748b',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.08,
-    shadowRadius: 2,
-    elevation: 1,
-  },
-  cleanMembersCount: {
-    color: '#334155',
-    fontSize: 13,
-    fontWeight: '700',
-  },
-  pttCircleContainer: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    position: 'relative',
-  },
-  cleanPttExpandingWave: {
-    position: 'absolute',
-    width: 270,
-    height: 270,
-    borderRadius: 135,
-    borderWidth: 2,
-    borderColor: 'rgba(225, 29, 72, 0.45)',
-    backgroundColor: 'rgba(225, 29, 72, 0.12)',
-  },
-  // Floating Channel Members Modal Styles (Matching Image 3)
-  channelModalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.6)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 16,
-  },
-  channelModalCard: {
-    backgroundColor: '#ffffff',
-    borderRadius: 24,
-    width: '100%',
-    maxWidth: 360,
-    overflow: 'hidden',
-    shadowColor: '#000000',
-    shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 0.2,
-    shadowRadius: 25,
-    elevation: 12,
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
-  },
-  channelModalHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 18,
-    paddingVertical: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#f1f5f9',
-  },
-  channelModalHeaderLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    flex: 1,
-  },
-  channelModalIconBox: {
-    width: 40,
-    height: 40,
-    borderRadius: 14,
-    backgroundColor: 'rgba(138, 26, 54, 0.08)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  channelModalTitle: {
-    fontSize: 16,
-    fontWeight: '800',
-    color: '#0f172a',
-  },
-  channelModalSubtitle: {
-    fontSize: 12,
-    color: '#64748b',
-    marginTop: 1,
-  },
-  channelModalCloseBtn: {
-    padding: 6,
-  },
-  channelModalCloseIcon: {
-    fontSize: 16,
-    color: '#94a3b8',
-    fontWeight: '700',
-  },
-  channelMemberList: {
-    padding: 16,
-  },
-  channelMemberCard: {
-    backgroundColor: 'rgba(225, 29, 72, 0.03)',
-    borderRadius: 18,
-    borderWidth: 1.5,
-    borderColor: '#fecdd3',
-    padding: 12,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  channelMemberCardLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    flex: 1,
-  },
-  channelMemberAvatarWrap: {
-    position: 'relative',
-  },
-  channelMemberAvatar: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: '#e2e8f0',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  channelMemberAvatarText: {
-    fontSize: 15,
-    fontWeight: '800',
-    color: '#334155',
-  },
-  channelMemberOnlineDot: {
-    position: 'absolute',
-    bottom: -1,
-    right: -1,
-    width: 11,
-    height: 11,
-    borderRadius: 6,
-    backgroundColor: '#10b981',
-    borderWidth: 2,
-    borderColor: '#ffffff',
-  },
-  channelMemberInfo: {
-    flex: 1,
-  },
-  channelMemberNameRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  channelMemberName: {
-    fontSize: 14,
-    fontWeight: '800',
-    color: '#0f172a',
-  },
-  channelMemberTuBadge: {
-    backgroundColor: '#8a1a36',
-    paddingHorizontal: 6,
-    paddingVertical: 1,
-    borderRadius: 5,
-  },
-  channelMemberTuBadgeText: {
-    color: '#ffffff',
-    fontSize: 10,
-    fontWeight: '900',
-  },
-  channelMemberSubtext: {
-    fontSize: 11,
-    color: '#64748b',
-    marginTop: 2,
-  },
-  channelMemberCallsign: {
-    color: '#be123c',
-    fontWeight: '700',
-  },
-  channelMemberRolePill: {
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
-    backgroundColor: '#ffffff',
-  },
-  channelMemberRoleText: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: '#475569',
-  },
-  channelModalFooter: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 18,
-    paddingVertical: 14,
-    borderTopWidth: 1,
-    borderTopColor: '#f1f5f9',
-    backgroundColor: '#fafbfc',
-  },
-  channelManageContactsBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingVertical: 6,
-  },
-  channelManageContactsText: {
-    color: '#8a1a36',
-    fontSize: 13,
-    fontWeight: '700',
-  },
-  channelCloseBtn: {
-    backgroundColor: '#f1f5f9',
-    paddingHorizontal: 18,
-    paddingVertical: 8,
-    borderRadius: 14,
-  },
-  channelCloseBtnText: {
-    color: '#334155',
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  cleanCenterArea: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginVertical: 16,
-  },
-  cleanStatusPrompt: {
-    marginBottom: 28,
-  },
-  cleanStatusRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  cleanGreenDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: '#10b981',
-  },
-  cleanPulseRedDot: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-    backgroundColor: '#e11d48',
-  },
-  cleanStatusTextIdle: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: '#334155',
-  },
-  cleanStatusTextRed: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#e11d48',
-  },
-  cleanPttCircleOuter: {
-    width: 270,
-    height: 270,
-    borderRadius: 135,
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
-    backgroundColor: 'rgba(255, 255, 255, 0.95)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#64748b',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.12,
-    shadowRadius: 18,
-    elevation: 6,
-  },
-  cleanPttCircleOuterActive: {
-    borderColor: 'rgba(225, 29, 72, 0.35)',
-    backgroundColor: '#fff1f2',
-    shadowColor: '#e11d48',
-    shadowOpacity: 0.3,
-    shadowRadius: 24,
-    elevation: 8,
-  },
-  cleanPttCircleInner: {
-    width: 185,
-    height: 185,
-    borderRadius: 92.5,
-    borderWidth: 1,
-    borderColor: '#cbd5e1',
-    backgroundColor: '#f1f5f9',
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#000000',
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.06,
-    shadowRadius: 6,
-    elevation: 3,
-  },
-  cleanPttCircleInnerActive: {
-    backgroundColor: '#be123c',
-    borderColor: '#9f1239',
-  },
-  cleanWifiPill: {
-    marginTop: 32,
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#ecfdf5',
-    borderWidth: 1,
-    borderColor: '#a7f3d0',
-    paddingHorizontal: 16,
-    paddingVertical: 7,
-    borderRadius: 20,
-    gap: 8,
-  },
-  cleanWifiPillText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#059669',
   },
   cleanNavBar: {
     flexDirection: 'row',
@@ -8315,59 +3198,6 @@ const styles = StyleSheet.create({
     backgroundColor: '#10b981',
     alignSelf: 'center',
   },
-  cleanSettingsHeader: {
-    fontSize: 12,
-    fontWeight: '800',
-    color: '#334155',
-    marginBottom: 4,
-    letterSpacing: 0.5,
-  },
-  cleanSettingsSub: {
-    fontSize: 11,
-    color: '#64748b',
-    marginBottom: 12,
-  },
-  cleanServerInput: {
-    backgroundColor: '#f8fafc',
-    borderWidth: 1,
-    borderColor: '#cbd5e1',
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    fontSize: 13,
-    color: '#0f172a',
-    marginBottom: 10,
-  },
-  cleanTestBtn: {
-    backgroundColor: '#8a1a36',
-    borderRadius: 12,
-    paddingVertical: 10,
-    alignItems: 'center',
-    marginTop: 8,
-  },
-  cleanTestBtnText: {
-    color: '#ffffff',
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  cleanSettingRow: {
-    fontSize: 13,
-    color: '#334155',
-    marginBottom: 6,
-  },
-  cleanLogoutBtn: {
-    backgroundColor: '#ef4444',
-    borderRadius: 12,
-    paddingVertical: 10,
-    alignItems: 'center',
-    marginTop: 12,
-  },
-  cleanLogoutBtnText: {
-    color: '#ffffff',
-    fontSize: 12,
-    fontWeight: '700',
-    letterSpacing: 0.5,
-  },
   container: {
     flex: 1,
     backgroundColor: '#070b13',
@@ -8449,23 +3279,11 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     marginBottom: 4,
   },
-  channelLabel: {
-    color: '#64748b',
-    fontSize: 11,
-    fontWeight: '700',
-    letterSpacing: 0.5,
-  },
   freqLabel: {
     color: '#38bdf8',
     fontSize: 12,
     fontWeight: '700',
     fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
-  },
-  channelName: {
-    color: '#f8fafc',
-    fontSize: 20,
-    fontWeight: '800',
-    marginVertical: 4,
   },
   metricsRow: {
     flexDirection: 'row',
@@ -8614,46 +3432,6 @@ const styles = StyleSheet.create({
     fontSize: 12,
     marginBottom: 16,
   },
-  channelCard: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    backgroundColor: '#0f172a',
-    borderRadius: 12,
-    padding: 14,
-    marginBottom: 10,
-    borderWidth: 1,
-    borderColor: '#1e293b',
-  },
-  channelCardSelected: {
-    borderColor: '#38bdf8',
-    backgroundColor: '#082f49',
-  },
-  channelInfo: {
-    flex: 1,
-  },
-  channelTitleText: {
-    color: '#f8fafc',
-    fontSize: 14,
-    fontWeight: '700',
-  },
-  channelTitleSelected: {
-    color: '#38bdf8',
-  },
-  channelMetaText: {
-    color: '#64748b',
-    fontSize: 11,
-    marginTop: 4,
-  },
-  channelSelectBadge: {
-    color: '#38bdf8',
-    fontSize: 11,
-    fontWeight: '800',
-    backgroundColor: '#0c1b2f',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 6,
-  },
   messagesContainer: {
     flex: 1,
     padding: 16,
@@ -8758,23 +3536,6 @@ const styles = StyleSheet.create({
     color: '#f8fafc',
     fontSize: 13,
     marginBottom: 10,
-  },
-  serverPresets: {
-    flexDirection: 'row',
-    gap: 8,
-    marginBottom: 10,
-  },
-  presetBtn: {
-    flex: 1,
-    backgroundColor: '#1e293b',
-    paddingVertical: 9,
-    borderRadius: 8,
-    alignItems: 'center',
-  },
-  presetBtnText: {
-    color: '#f8fafc',
-    fontSize: 11,
-    fontWeight: '700',
   },
   testBtn: {
     backgroundColor: '#0369a1',
@@ -9428,479 +4189,12 @@ const styles = StyleSheet.create({
   colHalf: {
     flex: 1,
   },
-
-  /* ================================================================ */
-  /* CANALES & GRUPOS (MATCHING USER SCREENSHOTS)                      */
-  /* ================================================================ */
-  canalesMainWrapper: {
-    flex: 1,
-    backgroundColor: '#ffffff',
-  },
-  canalesHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingTop: 16,
-    paddingBottom: 14,
-  },
-  canalesHeaderLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-  },
-  canalesHeaderIconBox: {
-    width: 44,
-    height: 44,
-    borderRadius: 14,
-    backgroundColor: '#faeaed',
-    borderWidth: 1,
-    borderColor: '#f9d2d8',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  canalesHeaderTitle: {
-    fontSize: 22,
-    fontWeight: '800',
-    color: '#0f172a',
-    letterSpacing: -0.5,
-  },
-  canalesHeaderActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  canalesHeaderActionBtn: {
-    width: 42,
-    height: 42,
-    borderRadius: 14,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
-    backgroundColor: '#ffffff',
-    shadowColor: '#64748b',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.08,
-    shadowRadius: 2,
-    elevation: 1,
-  },
-  canalesHeaderCreateBtn: {
-    width: 42,
-    height: 42,
-    borderRadius: 14,
-    backgroundColor: '#691c32',
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#691c32',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.25,
-    shadowRadius: 4,
-    elevation: 3,
-  },
-  canalesSearchContainer: {
-    paddingHorizontal: 20,
-    marginBottom: 12,
-  },
-  canalesSearchBox: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#ffffff',
-    borderWidth: 1,
-    borderColor: '#cbd5e1',
-    borderRadius: 14,
-    paddingHorizontal: 14,
-    height: 46,
-    gap: 10,
-  },
-  canalesSearchInput: {
-    flex: 1,
-    fontSize: 14,
-    color: '#0f172a',
-    padding: 0,
-  },
-  canalesCategoriesContainer: {
-    marginBottom: 16,
-  },
-  canalesCategoriesScroll: {
-    paddingHorizontal: 20,
-    gap: 8,
-  },
-  canalesCategoryPill: {
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 12,
-    backgroundColor: '#ffffff',
-    borderWidth: 1,
-    borderColor: '#cbd5e1',
-  },
-  canalesCategoryPillActive: {
-    backgroundColor: '#691c32',
-    borderColor: '#691c32',
-  },
-  canalesCategoryText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#475569',
-  },
-  canalesCategoryTextActive: {
-    color: '#ffffff',
-    fontWeight: '700',
-  },
-  canalesListScroll: {
-    flex: 1,
-  },
-  canalesListContent: {
-    paddingHorizontal: 20,
-    paddingBottom: 40,
-    gap: 12,
-  },
-
-  /* Empty State */
-  canalesEmptyContainer: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 60,
-    paddingHorizontal: 24,
-  },
-  canalesEmptyIconBox: {
-    width: 72,
-    height: 72,
-    borderRadius: 22,
-    backgroundColor: '#f6e4e7',
-    borderWidth: 1,
-    borderColor: '#f2c8d0',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 18,
-  },
-  canalesEmptyTitle: {
-    fontSize: 17,
-    fontWeight: '800',
-    color: '#0f172a',
-    textAlign: 'center',
-    marginBottom: 6,
-  },
-  canalesEmptySubtext: {
-    fontSize: 13,
-    color: '#64748b',
-    textAlign: 'center',
-    lineHeight: 18,
-    maxWidth: 290,
-    marginBottom: 20,
-  },
-  canalesEmptyButtonsRow: {
-    flexDirection: 'row',
-    gap: 10,
-  },
-  canalesEmptyCreateBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    backgroundColor: '#691c32',
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 12,
-  },
-  canalesEmptyCreateBtnText: {
-    color: '#ffffff',
-    fontSize: 13,
-    fontWeight: '700',
-  },
-  canalesEmptyJoinBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    backgroundColor: '#ffffff',
-    borderWidth: 1,
-    borderColor: '#cbd5e1',
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 12,
-  },
-  canalesEmptyJoinBtnText: {
-    color: '#334155',
-    fontSize: 13,
-    fontWeight: '700',
-  },
-
-  /* Channel Card (Matching Image 2) */
-  canalesCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: '#f1e6e9',
-    borderWidth: 1,
-    borderColor: '#e8cbcf',
-    borderRadius: 18,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    shadowColor: '#691c32',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 3,
-    elevation: 1,
-  },
-  canalesCardSelected: {
-    borderColor: '#be123c',
-    borderWidth: 1.5,
-    backgroundColor: '#f3e1e5',
-  },
-  canalesCardLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    flex: 1,
-    marginRight: 10,
-  },
-  canalesCardRadioBadge: {
-    width: 44,
-    height: 44,
-    borderRadius: 14,
-    backgroundColor: '#e11d48',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  canalesCardRadioBadgeActive: {
-    backgroundColor: '#8a1a36',
-    borderWidth: 1.5,
-    borderColor: '#e11d48',
-    shadowColor: '#8a1a36',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.3,
-    shadowRadius: 4,
-    elevation: 3,
-  },
-  canalesCardInfo: {
-    flex: 1,
-  },
-  canalesCardTitleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginBottom: 4,
-  },
-  canalesCardName: {
-    fontSize: 15,
-    fontWeight: '800',
-    color: '#0f172a',
-    letterSpacing: 0.2,
-    flexShrink: 1,
-  },
-  canalesCardNameActive: {
-    color: '#691c32',
-  },
-  canalesActivePill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    backgroundColor: '#ecfdf5',
-    borderWidth: 1,
-    borderColor: '#a7f3d0',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 6,
-  },
-  canalesActiveDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: '#10b981',
-  },
-  canalesActivePillText: {
-    fontSize: 9,
-    fontWeight: '800',
-    color: '#059669',
-    letterSpacing: 0.5,
-  },
-  canalesCardMetaRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    flexWrap: 'wrap',
-  },
-  canalesCardMembers: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-  },
-  canalesCardMembersText: {
-    fontSize: 12,
-    color: '#64748b',
-    fontWeight: '600',
-  },
-  canalesCardCategoryBadge: {
-    backgroundColor: '#64748b',
-    paddingHorizontal: 7,
-    paddingVertical: 2,
-    borderRadius: 6,
-  },
-  canalesCardCategoryText: {
-    fontSize: 10,
-    fontWeight: '800',
-    color: '#ffffff',
-    letterSpacing: 0.4,
-  },
-  canalesCardPinText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#e11d48',
-    letterSpacing: 0.3,
-  },
-  canalesCardRight: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  canalesCardQrBtn: {
-    width: 38,
-    height: 38,
-    borderRadius: 12,
-    backgroundColor: 'rgba(255, 255, 255, 0.7)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
-  },
-  canalesCardSintonizarBtn: {
-    backgroundColor: '#ffffff',
-    borderWidth: 1,
-    borderColor: '#cbd5e1',
-    paddingHorizontal: 14,
-    paddingVertical: 9,
-    borderRadius: 12,
-  },
-  canalesCardSintonizarBtnActive: {
-    backgroundColor: '#8a1a36',
-    borderColor: '#8a1a36',
-  },
-  canalesCardSintonizarText: {
-    fontSize: 11,
-    fontWeight: '800',
-    color: '#475569',
-    letterSpacing: 0.6,
-  },
-  canalesCardSintonizarTextActive: {
-    color: '#ffffff',
-    fontSize: 11,
-    fontWeight: '800',
-    letterSpacing: 0.6,
-  },
-
-  /* Modals: PIN & Inputs */
-  canalesModalBody: {
-    padding: 20,
-    gap: 14,
-  },
-  canalesPinLabel: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#0f172a',
-    textAlign: 'center',
-  },
   canalesPinSub: {
     fontSize: 12,
     color: '#64748b',
     textAlign: 'center',
     marginTop: -8,
     marginBottom: 4,
-  },
-  canalesTokenRow: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-    gap: 10,
-    marginVertical: 4,
-  },
-  canalesTokenBox: {
-    width: 52,
-    height: 58,
-    borderRadius: 14,
-    borderWidth: 1.5,
-    borderColor: '#e2e8f0',
-    backgroundColor: '#f8fafc',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  canalesTokenBoxFilled: {
-    borderColor: '#691c32',
-    backgroundColor: '#ffffff',
-  },
-  canalesTokenBoxActive: {
-    borderColor: '#691c32',
-    borderWidth: 2,
-    backgroundColor: '#ffffff',
-  },
-  canalesTokenDigit: {
-    fontSize: 22,
-    fontWeight: '800',
-    color: '#0f172a',
-  },
-  canalesModalSubmitBtn: {
-    backgroundColor: '#691c32',
-    borderRadius: 14,
-    height: 48,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: 4,
-  },
-  canalesModalSubmitBtnDisabled: {
-    backgroundColor: '#cbd5e1',
-  },
-  canalesModalSubmitBtnText: {
-    color: '#ffffff',
-    fontSize: 13,
-    fontWeight: '800',
-    letterSpacing: 0.5,
-  },
-  canalesDividerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    marginVertical: 4,
-  },
-  canalesDividerLine: {
-    flex: 1,
-    height: 1,
-    backgroundColor: '#e2e8f0',
-  },
-  canalesDividerText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#94a3b8',
-    textTransform: 'uppercase',
-  },
-  canalesScanQrBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    backgroundColor: '#f8fafc',
-    borderWidth: 1,
-    borderColor: '#cbd5e1',
-    borderRadius: 14,
-    height: 48,
-  },
-  canalesScanQrBtnText: {
-    color: '#334155',
-    fontSize: 13,
-    fontWeight: '700',
-  },
-
-  /* Scanner Mockup */
-  canalesScannerBody: {
-    padding: 20,
-    alignItems: 'center',
-  },
-  canalesCameraFrame: {
-    width: 220,
-    height: 220,
-    borderRadius: 20,
-    backgroundColor: '#0f172a',
-    position: 'relative',
-    alignItems: 'center',
-    justifyContent: 'center',
-    overflow: 'hidden',
-    marginBottom: 16,
   },
   canalesScannerCorner: {
     position: 'absolute',
@@ -9931,482 +4225,6 @@ const styles = StyleSheet.create({
     right: 14,
     borderBottomWidth: 3,
     borderRightWidth: 3,
-  },
-  canalesScannerLaser: {
-    position: 'absolute',
-    left: 20,
-    right: 20,
-    height: 2,
-    backgroundColor: '#e11d48',
-    shadowColor: '#e11d48',
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 1,
-    shadowRadius: 6,
-  },
-  canalesScannerHint: {
-    fontSize: 12,
-    color: '#64748b',
-    textAlign: 'center',
-    marginBottom: 16,
-  },
-  canalesScanQuickTitle: {
-    fontSize: 11,
-    fontWeight: '800',
-    color: '#64748b',
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-    alignSelf: 'flex-start',
-    marginBottom: 8,
-  },
-  canalesScanQuickList: {
-    width: '100%',
-    gap: 8,
-    marginBottom: 16,
-  },
-  canalesScanQuickItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#f8fafc',
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
-    borderRadius: 12,
-    padding: 10,
-    gap: 10,
-  },
-  canalesScanQuickRadio: {
-    width: 28,
-    height: 28,
-    borderRadius: 8,
-    backgroundColor: '#faeaed',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  canalesScanQuickName: {
-    fontSize: 12,
-    fontWeight: '800',
-    color: '#0f172a',
-  },
-  canalesScanQuickMeta: {
-    fontSize: 10,
-    color: '#64748b',
-    fontWeight: '600',
-  },
-  canalesScanQuickAction: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#8a1a36',
-  },
-
-  /* Create Channel Modal Elements */
-  canalesCreateCatRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-  },
-  canalesCreateCatPill: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 10,
-    backgroundColor: '#f8fafc',
-    borderWidth: 1,
-    borderColor: '#cbd5e1',
-  },
-  canalesCreateCatPillActive: {
-    backgroundColor: '#691c32',
-    borderColor: '#691c32',
-  },
-  canalesCreateCatText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#475569',
-  },
-  canalesCreateCatTextActive: {
-    color: '#ffffff',
-    fontWeight: '700',
-  },
-  canalesPrivateRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: '#f8fafc',
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
-    borderRadius: 14,
-    padding: 12,
-    gap: 12,
-  },
-  canalesPrivateTitle: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#0f172a',
-  },
-  canalesPrivateSub: {
-    fontSize: 11,
-    color: '#64748b',
-    marginTop: 2,
-  },
-  canalesPrivateToggle: {
-    width: 48,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: '#cbd5e1',
-    padding: 2,
-    justifyContent: 'center',
-  },
-  canalesPrivateToggleActive: {
-    backgroundColor: '#691c32',
-  },
-  canalesPrivateKnob: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    backgroundColor: '#ffffff',
-  },
-  canalesPrivateKnobActive: {
-    alignSelf: 'flex-end',
-  },
-
-  /* Config & QR Modal Elements */
-  canalesQrBox: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 16,
-    backgroundColor: '#ffffff',
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
-    alignSelf: 'center',
-    shadowColor: '#000000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 6,
-    elevation: 2,
-  },
-  canalesQrImage: {
-    width: 190,
-    height: 190,
-  },
-  canalesQrPlaceholder: {
-    width: 190,
-    height: 190,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#f8fafc',
-    borderRadius: 16,
-    gap: 8,
-  },
-  canalesQrPlaceholderText: {
-    fontSize: 12,
-    color: '#64748b',
-    fontWeight: '600',
-  },
-  canalesQrCodeInfo: {
-    alignItems: 'center',
-    paddingVertical: 4,
-  },
-  canalesQrCodeLabel: {
-    fontSize: 11,
-    fontWeight: '800',
-    color: '#64748b',
-    letterSpacing: 0.8,
-  },
-  canalesQrPinBig: {
-    fontSize: 34,
-    fontWeight: '900',
-    color: '#691c32',
-    letterSpacing: 4,
-    marginVertical: 4,
-  },
-  canalesQrCodeSub: {
-    fontSize: 12,
-    color: '#64748b',
-    fontWeight: '500',
-  },
-  canalesHideKeyboardBtn: {
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 8,
-    backgroundColor: '#f1f5f9',
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
-  },
-  canalesHideKeyboardText: {
-    fontSize: 11,
-    color: '#64748b',
-    fontWeight: '700',
-  },
-  canalesQrMatrixBox: {
-    padding: 6,
-    backgroundColor: '#ffffff',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  canalesCopyBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    backgroundColor: '#faeaed',
-    borderWidth: 1,
-    borderColor: '#f9d2d8',
-    borderRadius: 12,
-    paddingVertical: 10,
-    paddingHorizontal: 14,
-  },
-  canalesCopyBtnText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#691c32',
-  },
-  canalesScannerPill: {
-    position: 'absolute',
-    bottom: 12,
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(15, 23, 42, 0.78)',
-    paddingHorizontal: 12,
-    paddingVertical: 5,
-    borderRadius: 20,
-    gap: 6,
-  },
-  canalesScannerDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: '#e11d48',
-  },
-  scanSuccessCard: {
-    backgroundColor: '#ffffff',
-    borderRadius: 24,
-    width: '100%',
-    maxWidth: 340,
-    padding: 24,
-    alignItems: 'center',
-    shadowColor: '#691c32',
-    shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 0.22,
-    shadowRadius: 25,
-    elevation: 12,
-    borderWidth: 1.5,
-    borderColor: '#f2c8d0',
-    overflow: 'hidden',
-    position: 'relative',
-  },
-  scanSuccessGlow: {
-    position: 'absolute',
-    top: -40,
-    width: 200,
-    height: 100,
-    borderRadius: 50,
-    backgroundColor: 'rgba(105, 28, 50, 0.08)',
-  },
-  scanSuccessIconBox: {
-    width: 64,
-    height: 64,
-    borderRadius: 22,
-    backgroundColor: '#ecfdf5',
-    borderWidth: 1.5,
-    borderColor: '#a7f3d0',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 16,
-    shadowColor: '#059669',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.15,
-    shadowRadius: 8,
-    elevation: 2,
-  },
-  scanSuccessTitle: {
-    fontSize: 18,
-    fontWeight: '800',
-    color: '#0f172a',
-    textAlign: 'center',
-    marginBottom: 6,
-    letterSpacing: -0.3,
-  },
-  scanSuccessSubtitle: {
-    fontSize: 13,
-    color: '#64748b',
-    textAlign: 'center',
-    lineHeight: 18,
-    marginBottom: 18,
-    paddingHorizontal: 8,
-  },
-  scanSuccessChannelBox: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#fbf2f4',
-    borderWidth: 1,
-    borderColor: '#f5d5db',
-    borderRadius: 16,
-    padding: 12,
-    width: '100%',
-    gap: 12,
-    marginBottom: 20,
-  },
-  scanSuccessRadioBadge: {
-    width: 42,
-    height: 42,
-    borderRadius: 13,
-    backgroundColor: '#e11d48',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  scanSuccessChannelName: {
-    fontSize: 15,
-    fontWeight: '800',
-    color: '#0f172a',
-    marginBottom: 4,
-  },
-  scanSuccessMetaRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  scanSuccessPinPill: {
-    backgroundColor: '#691c32',
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 6,
-  },
-  scanSuccessPinText: {
-    fontSize: 10,
-    fontWeight: '800',
-    color: '#ffffff',
-    letterSpacing: 0.5,
-  },
-  scanSuccessFreqText: {
-    fontSize: 11,
-    color: '#64748b',
-    fontWeight: '600',
-  },
-  scanSuccessActionBtn: {
-    width: '100%',
-    backgroundColor: '#691c32',
-    height: 48,
-    borderRadius: 14,
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#691c32',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.28,
-    shadowRadius: 8,
-    elevation: 3,
-  },
-  scanSuccessActionBtnText: {
-    color: '#ffffff',
-    fontSize: 13,
-    fontWeight: '800',
-    letterSpacing: 0.6,
-  },
-  canalesPermOverlay: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: 'rgba(15, 23, 42, 0.94)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 20,
-    zIndex: 10,
-    borderRadius: 20,
-  },
-  canalesPermIconWrap: {
-    width: 50,
-    height: 50,
-    borderRadius: 18,
-    backgroundColor: 'rgba(225, 29, 72, 0.15)',
-    borderWidth: 1,
-    borderColor: 'rgba(225, 29, 72, 0.4)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 10,
-  },
-  canalesPermTitle: {
-    fontSize: 14,
-    fontWeight: '800',
-    color: '#ffffff',
-    textAlign: 'center',
-    marginBottom: 4,
-    letterSpacing: -0.2,
-  },
-  canalesPermDesc: {
-    fontSize: 11,
-    color: '#94a3b8',
-    textAlign: 'center',
-    lineHeight: 16,
-    marginBottom: 14,
-    paddingHorizontal: 8,
-  },
-  canalesPermRetryBtn: {
-    backgroundColor: '#691c32',
-    paddingHorizontal: 16,
-    paddingVertical: 9,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#e11d48',
-    shadowColor: '#e11d48',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.25,
-    shadowRadius: 5,
-    elevation: 3,
-  },
-  canalesPermRetryBtnText: {
-    color: '#ffffff',
-    fontSize: 12,
-    fontWeight: '700',
-    letterSpacing: 0.4,
-  },
-  canalesPermLoadingText: {
-    color: '#e2e8f0',
-    fontSize: 12,
-    marginTop: 10,
-    fontWeight: '600',
-  },
-  canalesModalActionsStack: {
-    width: '100%',
-    gap: 10,
-    marginTop: 12,
-  },
-  canalesDangerRow: {
-    flexDirection: 'row',
-    gap: 10,
-    width: '100%',
-  },
-  canalesLeaveBtn: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    backgroundColor: '#fffbeb',
-    borderWidth: 1.2,
-    borderColor: '#fde68a',
-    borderRadius: 12,
-    height: 44,
-  },
-  canalesLeaveBtnText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#b45309',
-  },
-  canalesDeleteBtn: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    backgroundColor: '#fef2f2',
-    borderWidth: 1.2,
-    borderColor: '#fecdd3',
-    borderRadius: 12,
-    height: 44,
-  },
-  canalesDeleteBtnText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#e11d48',
   },
 
   // ----------------------------------------------------

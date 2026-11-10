@@ -1,0 +1,7 @@
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+group = 'com.c5i.hidalgo.walkiet'
+version = '1.0.0'
+android { namespace 'expo.modules.walkietradio' }
