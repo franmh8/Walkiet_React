@@ -3323,13 +3323,32 @@ const position =
 
     try {
       const { File } = await import('expo-file-system');
-      // File.pickFileAsync abre el selector del sistema y conserva el acceso
-      // al archivo elegido sin hacer una segunda copia manual de su URI.
-      const result = await File.pickFileAsync({ mimeTypes: '*/*', multipleFiles: false });
-      if (result.canceled || !result.result) return;
-      const file = result.result;
-      const pickedName = file.name || `documento_${Date.now()}`;
-      const reportedSize = file.size || 0;
+      let file: InstanceType<typeof File>;
+      let pickedName: string;
+      let reportedSize: number;
+
+      if (Platform.OS === 'ios') {
+        // iOS: el selector estable de documentos copia el archivo al caché
+        // privado de Expo Go y entrega una ruta legible para File.base64().
+        const DocumentPicker = await import('expo-document-picker');
+        const result = await DocumentPicker.getDocumentAsync({
+          type: '*/*',
+          multiple: false,
+          copyToCacheDirectory: true,
+        });
+        if (result.canceled || !result.assets?.length) return;
+        const asset = result.assets[0];
+        file = new File(asset.uri);
+        pickedName = asset.name || `documento_${Date.now()}`;
+        reportedSize = asset.size ?? file.size ?? 0;
+      } else {
+        // Android: conservar el selector que ya funciona sin permisos extra.
+        const result = await File.pickFileAsync({ mimeTypes: '*/*', multipleFiles: false });
+        if (result.canceled || !result.result) return;
+        file = result.result;
+        pickedName = file.name || `documento_${Date.now()}`;
+        reportedSize = file.size || 0;
+      }
       if (reportedSize > MAX_CHAT_ATTACHMENT_BYTES) {
         Alert.alert('Documento demasiado grande', 'Elige un documento de hasta 3 MB.');
         return;
@@ -3447,6 +3466,107 @@ const position =
       [{ text: 'Aceptar' }]
     );
   };
+
+  // En iOS los selectores de la galería, cámara y documentos se presentan
+  // después de cerrar COMPLETAMENTE la hoja de adjuntos. Abrir otro
+  // controlador nativo durante el cierre del menú puede fallar silenciosamente.
+  const pendingIOSAttachmentAction = useRef<null | (() => void | Promise<void>)>(null);
+
+  const startAttachmentAction = (action: () => void | Promise<void>) => {
+    if (Platform.OS === 'ios') {
+      pendingIOSAttachmentAction.current = action;
+      Keyboard.dismiss();
+      setIsAttachMenuOpen(false);
+      return;
+    }
+    // Ejecutar directamente para preservar el gesto del usuario en web
+    // (el selector HTML necesita abrirse durante el mismo clic).
+    try {
+      const result = action();
+      if (result && typeof (result as Promise<void>).catch === 'function') {
+        void (result as Promise<void>).catch((error) => {
+          console.warn('[Walkiet] Error al abrir adjunto:', error);
+          Alert.alert('No se pudo abrir el adjunto', String(error?.message || error));
+        });
+      }
+    } catch (error: any) {
+      console.warn('[Walkiet] Error al abrir adjunto:', error);
+      Alert.alert('No se pudo abrir el adjunto', String(error?.message || error));
+    }
+  };
+
+  const onIOSAttachmentMenuDismiss = () => {
+    const action = pendingIOSAttachmentAction.current;
+    pendingIOSAttachmentAction.current = null;
+    if (!action) return;
+    // El onDismiss del Modal indica que iOS ya terminó la presentación/cierre.
+    setTimeout(() => {
+      console.log('[Walkiet] Abriendo selector nativo de adjuntos en iOS');
+      void Promise.resolve().then(action).catch((error) => {
+        console.warn('[Walkiet] Error en selector iOS:', error);
+        Alert.alert('No se pudo abrir el adjunto', String(error?.message || error));
+      });
+    }, 120);
+  };
+
+  const renderChatAttachMenu = () => (
+    <View style={[styles.chatAttachMenuOverlay, Platform.OS === 'ios' && styles.chatAttachMenuOverlayIos]}>
+      <TouchableOpacity
+        style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 }}
+        activeOpacity={1}
+        onPress={() => setIsAttachMenuOpen(false)}
+        accessibilityLabel="Cerrar menú de adjuntos"
+      />
+      <View style={[styles.chatAttachMenuCard, { zIndex: 1, width: '100%' }]}>
+        <View style={styles.chatAttachMenuRow}>
+          <TouchableOpacity
+            style={styles.chatAttachMenuItem}
+            onPress={() => startAttachmentAction(handlePickPhoto)}
+            activeOpacity={0.75}
+            accessibilityLabel="Seleccionar fotos"
+          >
+            <View style={[styles.chatAttachIconCircle, { backgroundColor: '#2563eb' }]}>
+              <ImageIcon size={26} color="#ffffff" strokeWidth={2} />
+            </View>
+            <Text style={styles.chatAttachMenuLabel}>Fotos</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.chatAttachMenuItem}
+            onPress={() => startAttachmentAction(handleOpenCamera)}
+            activeOpacity={0.75}
+            accessibilityLabel="Abrir cámara"
+          >
+            <View style={[styles.chatAttachIconCircle, { backgroundColor: '#475569' }]}>
+              <CameraIcon size={26} color="#ffffff" strokeWidth={2} />
+            </View>
+            <Text style={styles.chatAttachMenuLabel}>Cámara</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.chatAttachMenuItem}
+            onPress={() => startAttachmentAction(handleShareLocation)}
+            activeOpacity={0.75}
+            accessibilityLabel="Compartir ubicación"
+          >
+            <View style={[styles.chatAttachIconCircle, { backgroundColor: '#059669' }]}>
+              <MapPinIcon size={26} color="#ffffff" strokeWidth={2} />
+            </View>
+            <Text style={styles.chatAttachMenuLabel}>Ubicación</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.chatAttachMenuItem}
+            onPress={() => startAttachmentAction(handlePickDocument)}
+            activeOpacity={0.75}
+            accessibilityLabel="Seleccionar documento"
+          >
+            <View style={[styles.chatAttachIconCircle, { backgroundColor: '#0284c7' }]}>
+              <FileTextIcon size={26} color="#ffffff" strokeWidth={2} />
+            </View>
+            <Text style={styles.chatAttachMenuLabel}>Documento</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    </View>
+  );
 
   const toggleGroupMemberSelection = (officerId: string) => {
     setSelectedGroupMembers((prev) =>
@@ -5042,68 +5162,19 @@ const position =
                   )}
                 </ScrollView>
 
-                {/* Menú de Adjuntos tipo WhatsApp (Fotos, Cámara, Ubicación, Documento) */}
-                {isAttachMenuOpen && (
-                  <View style={styles.chatAttachMenuOverlay}>
-                    <TouchableOpacity
-                      style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 }}
-                      activeOpacity={1}
-                      onPress={() => setIsAttachMenuOpen(false)}
-                      accessibilityLabel="Cerrar menú de adjuntos"
-                    />
-                    <View style={styles.chatAttachMenuCard}>
-                          <View style={styles.chatAttachMenuRow}>
-                            {/* 1. Fotos */}
-                            <TouchableOpacity
-                              style={styles.chatAttachMenuItem}
-                              onPress={handlePickPhoto}
-                              activeOpacity={0.75}
-                            >
-                              <View style={[styles.chatAttachIconCircle, { backgroundColor: '#2563eb' }]}>
-                                <ImageIcon size={26} color="#ffffff" strokeWidth={2} />
-                              </View>
-                              <Text style={styles.chatAttachMenuLabel}>Fotos</Text>
-                            </TouchableOpacity>
-
-                            {/* 2. Cámara */}
-                            <TouchableOpacity
-                              style={styles.chatAttachMenuItem}
-                              onPress={handleOpenCamera}
-                              activeOpacity={0.75}
-                            >
-                              <View style={[styles.chatAttachIconCircle, { backgroundColor: '#475569' }]}>
-                                <CameraIcon size={26} color="#ffffff" strokeWidth={2} />
-                              </View>
-                              <Text style={styles.chatAttachMenuLabel}>Cámara</Text>
-                            </TouchableOpacity>
-
-                            {/* 3. Ubicación */}
-                            <TouchableOpacity
-                              style={styles.chatAttachMenuItem}
-                              onPress={handleShareLocation}
-                              activeOpacity={0.75}
-                            >
-                              <View style={[styles.chatAttachIconCircle, { backgroundColor: '#059669' }]}>
-                                <MapPinIcon size={26} color="#ffffff" strokeWidth={2} />
-                              </View>
-                              <Text style={styles.chatAttachMenuLabel}>Ubicación</Text>
-                            </TouchableOpacity>
-
-                            {/* 4. Documento */}
-                            <TouchableOpacity
-                              style={styles.chatAttachMenuItem}
-                              onPress={handlePickDocument}
-                              activeOpacity={0.75}
-                            >
-                              <View style={[styles.chatAttachIconCircle, { backgroundColor: '#0284c7' }]}>
-                                <FileTextIcon size={26} color="#ffffff" strokeWidth={2} />
-                              </View>
-                              <Text style={styles.chatAttachMenuLabel}>Documento</Text>
-                            </TouchableOpacity>
-                          </View>
-                        </View>
-                  </View>
-                )}
+                {/* Menú de adjuntos: Modal real en iOS para liberar la presentación nativa. */}
+                {Platform.OS === 'ios' ? (
+                  <Modal
+                    visible={isAttachMenuOpen}
+                    transparent
+                    animationType="fade"
+                    presentationStyle="overFullScreen"
+                    onRequestClose={() => setIsAttachMenuOpen(false)}
+                    onDismiss={onIOSAttachmentMenuDismiss}
+                  >
+                    {renderChatAttachMenu()}
+                  </Modal>
+                ) : isAttachMenuOpen ? renderChatAttachMenu() : null}
 
                 {/* Barra de entrada dinámica idéntica a Imagen 1 */}
                 <KeyboardAvoidingView
@@ -11183,6 +11254,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingBottom: 72,
     zIndex: 999,
+  },
+  chatAttachMenuOverlayIos: {
+    paddingBottom: 36,
   },
   liveCamModalBackdrop: {
     flex: 1,
