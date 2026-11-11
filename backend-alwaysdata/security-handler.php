@@ -42,7 +42,7 @@ function handleSecurity(PDO $db,array $data,$session,$ip,array $config,$afterQue
             $q=$db->prepare($emailFlow?'SELECT * FROM users WHERE id=? FOR UPDATE':'SELECT * FROM users WHERE '.(strpos($identifier,'@')!==false?'correo':'phone_number').'=? LIMIT 1 FOR UPDATE');
             $q->execute([$emailFlow?$owner:$identifier]); $user=$q->fetch(PDO::FETCH_ASSOC) ?: null;
             if ($emailFlow) {
-                if (!$user || !verifyAccountPassword($data['password'] ?? null,$user)) throw new SecurityRequestError(403,'Verifica tu contraseña actual.');
+                if (!$user) throw new SecurityRequestError(401,'Tu sesión venció. Inicia sesión de nuevo.');
                 if (strtolower($user['correo'] ?? '')===$identifier) throw new SecurityRequestError(400,'Ese ya es tu correo actual.');
                 $duplicate=$db->prepare('SELECT id FROM users WHERE correo=? AND id<>? LIMIT 1'); $duplicate->execute([$identifier,$owner]);
                 if ($duplicate->fetchColumn()) throw new SecurityRequestError(409,'Ese correo ya está registrado.');

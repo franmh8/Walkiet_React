@@ -3,7 +3,7 @@ require_once __DIR__.'/lib/PHPMailer/src/Exception.php';
 require_once __DIR__.'/lib/PHPMailer/src/SMTP.php';
 require_once __DIR__.'/lib/PHPMailer/src/PHPMailer.php';
 
-function securitySendSmtp(array $config,$email,$subject,$text) {
+function securitySendSmtp(array $config,$email,$subject,$text,$html=null) {
     $mail=new \PHPMailer\PHPMailer\PHPMailer(true);
     $mail->isSMTP();
     $mail->Host='smtp.gmail.com';
@@ -26,7 +26,9 @@ function securitySendSmtp(array $config,$email,$subject,$text) {
     try {
         $mail->CharSet='UTF-8'; $mail->Encoding='base64';
         $mail->setFrom($config['gmail_sender'],'Walkiet');
-        $mail->addAddress($email); $mail->Subject=$subject; $mail->Body=$text; $mail->isHTML(false);
+        $mail->addAddress($email); $mail->Subject=$subject;
+        $mail->isHTML($html!==null);$mail->Body=$html ?? $text;
+        if ($html!==null) $mail->AltBody=$text;
         $mail->send();
     } catch (Throwable $error) {
         $smtp=$mail->getSMTPInstance()->getError();

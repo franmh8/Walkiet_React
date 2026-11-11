@@ -17,7 +17,7 @@ export function createSecurityApi(server: string, token = '', fetcher: typeof fe
     } finally { clearTimeout(timeout); }
   }
   return {
-    emailRequest: (email: string,password: string)=>request('email_request',{email,password},true),
+    emailRequest: (email: string)=>request('email_request',{email},true),
     emailVerify: (challenge_id: string,code: string)=>request('email_verify',{challenge_id,code},true),
     recoveryRequest: (identifier: string)=>request('recovery_request',{identifier}),
     recoveryVerify: (challenge_id: string,code: string)=>request('recovery_verify',{challenge_id,code}),

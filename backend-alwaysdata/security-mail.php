@@ -39,11 +39,12 @@ function securityHttp($url, $body, array $headers) {
     return $json;
 }
 function securitySendMail(array $config, $email, $code, $purpose) {
-    $subject=$purpose==='email_change' ? 'Verifica tu nuevo correo - Walkiet' : 'Recupera tu acceso - Walkiet';
-    $text="Tu código de verificación es: $code\n\nCaduca en 10 minutos y solo puede usarse una vez. No lo compartas.\nSi no solicitaste este cambio, ignora este mensaje.";
+    require_once __DIR__.'/security-mail-template.php';
+    $content=securityMailTemplate($code,$purpose);
+    $subject=$content['subject'];$text=$content['text'];$html=$content['html'];
     if (($config['provider'] ?? 'gmail_api')==='gmail_smtp') {
         require_once __DIR__.'/security-smtp.php';
-        securitySendSmtp($config,$email,$subject,$text); return;
+        securitySendSmtp($config,$email,$subject,$text,$html); return;
     }
     $tokenUrl='https://oauth2.googleapis.com/token';
     $sendUrl='https://gmail.googleapis.com/gmail/v1/users/me/messages/send';
@@ -53,7 +54,10 @@ function securitySendMail(array $config, $email, $code, $purpose) {
     }
     $oauth=securityHttp($tokenUrl,http_build_query(['client_id'=>$config['gmail_client_id'],'client_secret'=>$config['gmail_client_secret'],'refresh_token'=>$config['gmail_refresh_token'],'grant_type'=>'refresh_token']),['Content-Type: application/x-www-form-urlencoded']);
     if (!is_string($oauth['access_token'] ?? null) || preg_match('/[\r\n]/',$oauth['access_token'])) throw new RuntimeException('mail_oauth_failed');
-    $mime='From: '.$config['gmail_sender']."\r\nTo: ".$email."\r\nSubject: ".$subject."\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=UTF-8\r\nContent-Transfer-Encoding: base64\r\n\r\n".chunk_split(base64_encode($text),76,"\r\n");
+    $boundary='walkiet_'.bin2hex(random_bytes(16));
+    $mime='From: '.$config['gmail_sender']."\r\nTo: ".$email."\r\nSubject: ".$subject."\r\nMIME-Version: 1.0\r\nContent-Type: multipart/alternative; boundary=\"".$boundary."\"\r\n\r\n";
+    foreach (['plain'=>$text,'html'=>$html] as $type=>$body) $mime.='--'.$boundary."\r\nContent-Type: text/".$type."; charset=UTF-8\r\nContent-Transfer-Encoding: base64\r\n\r\n".chunk_split(base64_encode($body),76,"\r\n");
+    $mime.='--'.$boundary."--\r\n";
     $raw=rtrim(strtr(base64_encode($mime),'+/','-_'),'=');
     $sent=securityHttp($sendUrl,json_encode(['raw'=>$raw]),['Content-Type: application/json','Authorization: Bearer '.$oauth['access_token']]);
     if (empty($sent['id'])) throw new RuntimeException('mail_send_unconfirmed');

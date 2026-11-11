@@ -49,6 +49,7 @@ Actualizar desde la rama `codex/fix-contacts-mysql-crud` y subir a `www`:
 
 - [security-mail.php](security-mail.php)
 - [security-smtp.php](security-smtp.php)
+- [security-mail-template.php](security-mail-template.php)
 - [security-handler.php](security-handler.php)
 - La carpeta completa **`lib/PHPMailer/`**, conservando su estructura, los tres
   archivos de `src/`, `LICENSE` y `UPSTREAM.md`.
@@ -67,12 +68,13 @@ No copiar `security-config.example.php` dentro de `www` con datos reales.
 
 Probar con una cuenta de prueba que tenga correo accesible:
 
-1. En Perfil → Correo introducir la nueva dirección y contraseña actual.
+1. En Perfil → Correo introducir la nueva dirección (requiere sesión iniciada).
 2. Solicitar el código y revisar entrada/spam del nuevo correo.
 3. Verificarlo y comprobar que la dirección se actualiza después de validarlo.
 4. Cerrar sesión → Recuperar acceso. Introducir teléfono o correo de la cuenta;
    el mensaje llega al correo asociado, no por SMS.
 
+Los mensajes incluyen una plantilla HTML guinda y texto plano equivalente.
 El servicio conserva los límites, caducidad, cinco intentos y uso único de los
 códigos. Un fallo SMTP mantiene los datos anteriores. Aceptación SMTP significa
 que Gmail recibió el mensaje para entrega, no que el destinatario ya lo leyó.

@@ -88,7 +88,7 @@ con OpenSSL y `allow_url_fopen`. No desactivar la validación TLS.
 2. Subir a `www`:
    - [security.php](security.php)
    - [security-handler.php](security-handler.php)
-   - [security-mail.php](security-mail.php)
+   - [security-mail.php](security-mail.php) y [security-mail-template.php](security-mail-template.php)
    - Para SMTP: [security-smtp.php](security-smtp.php) y la carpeta `lib/PHPMailer/`
      completa, con clases y licencia.
    - [account-handler.php](account-handler.php) actualizado: bloquea cambiar el
@@ -106,7 +106,8 @@ estados HTTP, no sigue redirecciones y solo reenvía el Bearer en cambios de cor
 
 ## 4. Comportamiento
 
-- **Cambiar correo:** exige sesión y contraseña actual. Envía un código al
+- **Cambiar correo:** exige sesión activa y el código enviado al nuevo correo; no
+  solicita la contraseña actual. Envía un código al
   nuevo destino y conserva el correo anterior hasta verificarlo. El reto queda
   ligado a cuenta, sesión, propósito y dirección; no se puede verificar desde
   otra sesión ni sustituir el destino después de solicitarlo. Una dirección ya
@@ -147,6 +148,25 @@ proceso termina el envío después; no necesita un servicio continuo. Si no exis
 `fastcgi_finish_request` (por ejemplo, servidor PHP local de pruebas), se usa el
 envío síncrono: el cuerpo sigue siendo genérico, pero la latencia puede diferir.
 No se guardan códigos en claro ni en una cola pública.
+
+## Presentación del código y del correo
+
+`SecurityCodeModal.tsx` utiliza `VerificationCodeInput.tsx` para mostrar seis
+casillas con avance automático, edición individual, borrado y pegado/autocompletado
+del código completo. Validar permanece desactivado mientras falte algún dígito.
+Reenviar es un enlace pequeño con el contador, sin botón grande ni “Cambiar datos”.
+Cancelar y Validar aparecen juntos al pie. La confirmación de contraseña de la
+pantalla de recuperación sigue siendo para elegir y repetir la contraseña nueva;
+no se solicita contraseña actual para cambiar el correo del perfil.
+
+`security-mail-template.php` comparte una plantilla HTML guinda con código
+copiable, caducidad y aviso de seguridad. SMTP y Gmail API envían
+`multipart/alternative` con HTML y texto plano equivalente, sin imágenes externas,
+fuentes remotas ni seguimiento. El aspecto en cada cliente de correo puede variar.
+
+Para actualizar desde la versión de correo anterior, subir `security-handler.php`,
+`security-mail.php`, `security-smtp.php` y `security-mail-template.php`, y actualizar
+la app. No requiere otra migración ni cambiar `security-config.php`.
 
 ## 5. Diagnóstico y limpieza
 

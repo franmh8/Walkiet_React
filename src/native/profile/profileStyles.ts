@@ -54,5 +54,12 @@ export const createProfileStyles = (p: Palette) => StyleSheet.create({
   modal: { backgroundColor: p.card, padding: 24, borderRadius: 26, width: '100%', maxWidth: 430, gap: 18, borderWidth: 1, borderColor: p.border },
   modalTitle: { color: p.text, fontSize: 21, fontWeight: '800', flex: 1 },
   modalHeader: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  securityBadge: { width: 48, height: 48, borderRadius: 16, alignItems: 'center', justifyContent: 'center', backgroundColor: p.soft, borderWidth: 1, borderColor: p.border },
+  codeLabel: { color: p.secondary, textAlign: 'center', fontSize: 14, fontWeight: '600', marginTop: 6 },
+  codeHint: { color: p.muted, textAlign: 'center', fontSize: 11, lineHeight: 17, marginTop: -4 },
+  resendLink: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, alignSelf: 'center', minHeight: 32, paddingHorizontal: 8 },
+  resendLabel: { fontSize: 12, fontWeight: '500' },
+  codeActions: { flexDirection: 'row', gap: 12, marginTop: 4 },
+  codeCancel: { backgroundColor: p.input },
   disabled: { opacity: 0.5 },
 });

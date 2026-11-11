@@ -9,7 +9,7 @@
 
 El perfil muestra nombre, teléfono y correo. Rol y Unidad se retiraron de esta
 vista, conservando sus datos existentes en la BD. Nombre y foto se editan para
-el titular del token. El cambio de correo exige contraseña actual y un código
+el titular del token. El cambio de correo exige sesión activa y un código
 enviado al nuevo destino; la API de edición directa no permite saltarlo.
 El teléfono es de consulta: el cliente no puede modificarlo ni editar otra
 cuenta enviando un ID. El nombre/correo guardados se reflejan en la sesión

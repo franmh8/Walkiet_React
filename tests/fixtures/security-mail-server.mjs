@@ -1,6 +1,7 @@
 // Sustituye solo los dos endpoints HTTP de Google en una BD contacts_test_ y proceso marcado de pruebas.
 // No envía correo y no se usa desde la aplicación publicada.
 import http from 'node:http';
+import {readSecurityMime} from './security-mime.mjs';
 const events=[];let failure='';
 http.createServer(async(req,res)=>{
   res.setHeader('Content-Type','application/json');
@@ -18,10 +19,10 @@ http.createServer(async(req,res)=>{
     if(req.headers.authorization!=='Bearer synthetic-google-access')return respond(401,{error:'unauthorized'});
     if(failure==='send')return respond(503,{error:'unavailable'});
     const mime=Buffer.from(JSON.parse(raw).raw,'base64url').toString();
-    const [headers,body]=mime.split('\r\n\r\n'); const text=Buffer.from(body.replace(/\s/g,''),'base64').toString();
-    const code=text.match(/\b\d{6}\b/)?.[0]; const to=headers.match(/^To: (.+)$/m)?.[1].trim();
+    const message=readSecurityMime(mime);
+    const code=message.plain.match(/\b\d{6}\b/)?.[0]; const to=message.to;
     if(!code||!to)return respond(400,{error:'invalid_mime'});
-    events.push({to,code,subject:headers.match(/^Subject: (.+)$/m)?.[1].trim()});
+    events.push({...message,to,code});
     return respond(200,{id:'synthetic-message-'+events.length});
   }
   respond(404,{error:'not_found'});

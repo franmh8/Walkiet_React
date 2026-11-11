@@ -3,6 +3,7 @@ import net from 'node:net';
 import tls from 'node:tls';
 import http from 'node:http';
 import fs from 'node:fs';
+import {readSecurityMime} from './security-mime.mjs';
 const certPath=process.env.WALKIET_SMTP_TEST_CERT,keyPath=process.env.WALKIET_SMTP_TEST_KEY;
 if(!certPath||!keyPath)throw Error('Indica certificado/clave de pruebas fuera del repositorio.');
 const secureContext=tls.createSecureContext({cert:fs.readFileSync(certPath),key:fs.readFileSync(keyPath)});
@@ -19,12 +20,10 @@ const server=net.createServer(socket=>{
         if(line!=='.'){lines.push(line.startsWith('..')?line.slice(1):line);continue;}
         data=false;
         if(failure==='send'){write('451 4.3.0 synthetic temporary failure');continue;}
-        const mime=lines.join('\r\n'),separator=mime.indexOf('\r\n\r\n');
-        const headers=mime.slice(0,separator),body=mime.slice(separator+4);
-        const text=Buffer.from(body.replace(/\s/g,''),'base64').toString();
-        const code=text.match(/\b\d{6}\b/)?.[0];
+        const message=readSecurityMime(lines.join('\r\n'));
+        const code=message.plain.match(/\b\d{6}\b/)?.[0];
         if(!code){write('550 5.6.0 invalid synthetic message');continue;}
-        events.push({to:recipient,code,subject:headers.match(/^Subject: (.+)$/m)?.[1].trim(),tls:secure});write('250 2.0.0 synthetic queued');continue;
+        events.push({...message,to:recipient,code,tls:secure});write('250 2.0.0 synthetic queued');continue;
       }
       if(authStep===1){user=Buffer.from(line,'base64').toString();authStep=2;write('334 UGFzc3dvcmQ6');continue;}
       if(authStep===2){authStep=0;const password=Buffer.from(line,'base64').toString();authenticated=secure&&user==='sender@example.test'&&password==='abcdefghijklmnop'&&failure!=='auth';write(authenticated?'235 2.7.0 accepted':'535 5.7.8 synthetic authentication failure');continue;}

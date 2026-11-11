@@ -18,13 +18,14 @@ try{
   const initial=await post('/account.php',{action:'get'},a);assert.equal(initial.body.user.correo,'security-a@example.test');
   const cors=await fetch(base+'/security.php',{method:'OPTIONS',headers:{Origin:'http://localhost:8081','Access-Control-Request-Method':'POST','Access-Control-Request-Headers':'authorization,content-type'}});
   assert.equal(cors.status,200);assert.equal(cors.headers.get('access-control-allow-origin'),'http://localhost:8081');
-  assert.equal((await api('email_request',{email:'next@example.test',password:'wrong'},a)).status,403);await clearRate();
   assert.equal((await api('email_request',{email:'security-b@example.test',password:'security-test-password'},a)).status,409);await clearRate();
-  const change=await api('email_request',{email:'NEW-A@example.test',password:'security-test-password',user_id:'security-b'},a);
+  const change=await api('email_request',{email:'NEW-A@example.test',user_id:'security-b'},a);
   assert.equal(change.status,200);assert.equal(change.cache,'no-store');assert.ok(change.body.challenge_id);assert.equal('code' in change.body,false);
   assert.equal((await post('/account.php',{action:'get'},a)).body.user.correo,'security-a@example.test');
   assert.equal((await api('email_request',{email:'other@example.test',password:'security-test-password'},a)).status,429);
   const sent=await latest('new-a@example.test');assert.ok(sent);assert.match(sent.subject,/Verifica/);
+  assert.ok(sent.html.includes(sent.code)&&sent.html.includes('#691c32')&&sent.html.includes('WALKIET'));assert.ok(sent.plain.includes(sent.code));
+  assert.equal(/<script|<img|https?:\/\//i.test(sent.html),false,'La plantilla no carga imágenes remotas ni scripts.');
   const [[stored]]=await db.query('SELECT code_hash FROM security_challenges WHERE id=?',[change.body.challenge_id]);assert.notEqual(stored.code_hash,sent.code);
   assert.equal((await api('email_verify',codeBody(change,sent.code),b)).status,400);
   assert.equal((await api('recovery_verify',codeBody(change,sent.code))).status,400);
@@ -78,5 +79,5 @@ try{
   }
   await clearRate();for(let i=0;i<5;i++){const r=await api('recovery_request',{identifier:'nobody@example.test'});assert.equal(r.status,200);await db.execute('UPDATE security_rate_limits SET expires_at=DATE_SUB(UTC_TIMESTAMP(),INTERVAL 1 SECOND) WHERE expires_at<DATE_ADD(UTC_TIMESTAMP(),INTERVAL 65 SECOND)');}
   assert.equal((await api('recovery_request',{identifier:'nobody@example.test'})).status,429);
-  console.log(`OK PHP/MySQL/${smtp?'SMTP STARTTLS':'OAuth'} controlado: MIME Gmail, cambio solo tras código, contraseña actual, sin bypass correo, sesiones/propósitos aislados, recuperación teléfono/correo con respuesta genérica, intentos/caducidad/reenvío, prueba de acceso de un uso, revocación y errores de proveedor sin cambios ficticios.`);
+  console.log(`OK PHP/MySQL/${smtp?'SMTP STARTTLS':'OAuth'} controlado: MIME HTML + texto, cambio con sesión y código sin pedir contraseña, sin bypass correo, sesiones/propósitos aislados, recuperación teléfono/correo con respuesta genérica, intentos/caducidad/reenvío, prueba de acceso de un uso, revocación y errores de proveedor sin cambios ficticios.`);
 }finally{await db.end();}
