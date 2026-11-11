@@ -141,6 +141,89 @@ async function requestExpoCameraPermission(): Promise<{ granted: boolean; status
   return { granted: false, status: 'denied', canAskAgain: false };
 }
 
+// Tamaño moderado: el servidor de chat actual recibe el adjunto dentro de JSON.
+// Para archivos grandes conviene implementar un endpoint de subida binaria.
+const MAX_CHAT_ATTACHMENT_BYTES = 3 * 1024 * 1024;
+
+// Decodificador Base64 independiente de APIs del navegador (compatible con Hermes).
+function decodeAttachmentBase64(base64: string): Uint8Array {
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+  const bytes: number[] = [];
+  let accumulator = 0;
+  let bits = 0;
+  for (const char of base64.replace(/\s/g, '')) {
+    if (char === '=') break;
+    const index = alphabet.indexOf(char);
+    if (index < 0) throw new Error('El documento tiene una codificación inválida.');
+    accumulator = (accumulator << 6) | index;
+    bits += 6;
+    if (bits >= 8) {
+      bits -= 8;
+      bytes.push((accumulator >> bits) & 255);
+      accumulator &= (1 << bits) - 1;
+    }
+  }
+  return Uint8Array.from(bytes);
+}
+
+function extensionMime(name: string): string {
+  const ext = (name.split('.').pop() || '').toLowerCase();
+  const types: Record<string, string> = {
+    pdf: 'application/pdf', txt: 'text/plain', csv: 'text/csv',
+    doc: 'application/msword', docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    xls: 'application/vnd.ms-excel', xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    ppt: 'application/vnd.ms-powerpoint', pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    zip: 'application/zip', rar: 'application/vnd.rar', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg',
+  };
+  return types[ext] || 'application/octet-stream';
+}
+
+
+// En algunos proveedores de Android, el selector devuelve nombres como
+// "msf:1000126325" en vez del nombre real. Conservar el MIME y una extension
+// valida permite que Android encuentre aplicaciones compatibles para abrirlo.
+const DOCUMENT_EXT_BY_MIME: Record<string, string> = {
+  'application/pdf': '.pdf',
+  'application/msword': '.doc',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': '.docx',
+  'application/vnd.ms-excel': '.xls',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': '.xlsx',
+  'application/vnd.ms-powerpoint': '.ppt',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation': '.pptx',
+  'text/plain': '.txt',
+  'text/csv': '.csv',
+  'application/zip': '.zip',
+  'application/vnd.rar': '.rar',
+  'image/png': '.png',
+  'image/jpeg': '.jpg',
+};
+
+function determineDocumentMime(name: string | undefined, url: string, hint?: string): string {
+  const cleanHint = String(hint || '').split(';')[0].toLowerCase().trim();
+  if (cleanHint && cleanHint !== 'application/octet-stream') return cleanHint;
+  const declared = /^data:([^;,]+)[;,]/i.exec(url)?.[1]?.toLowerCase();
+  if (declared && declared !== 'application/octet-stream') return declared;
+  const nameMime = extensionMime(String(name || ''));
+  if (nameMime !== 'application/octet-stream') return nameMime;
+  // Reconocimiento basico de firmas cuando Android entrega un ID "msf:".
+  const encoded = /^data:[^,]*;base64,([\s\S]*)$/i.exec(url)?.[1] || '';
+  if (encoded.startsWith('JVBERi0')) return 'application/pdf'; // %PDF-
+  if (encoded.startsWith('UEsDB')) return 'application/zip'; // ZIP/Office sin tipo explicito
+  if (encoded.startsWith('iVBORw0')) return 'image/png';
+  if (encoded.startsWith('/9j/')) return 'image/jpeg';
+  return 'application/octet-stream';
+}
+
+function documentNameWithExtension(name: string | undefined, mime: string): string {
+  const original = String(name || '').trim();
+  const isProviderId = !original || /^(msf:|content:|document:)/i.test(original);
+  const cleaned = original.replace(/[^a-zA-Z0-9._ -]/g, '_').replace(/^\.+/, '').slice(0, 100);
+  const base = isProviderId ? `documento_${Date.now()}` : (cleaned || `documento_${Date.now()}`);
+  const ext = DOCUMENT_EXT_BY_MIME[mime] || '.bin';
+  // Si ya posee una extension (ej. original.pdf), conservarla.
+  return /\.[a-zA-Z0-9]{1,8}$/.test(base) ? base : `${base}${ext}`;
+}
+
 // Tipos para React Native
 interface User {
   id: string;
@@ -2967,7 +3050,7 @@ function NativeAppScreen() {
               method: 'POST',
               headers,
               body: payload,
-            }, 4000).catch(() => null);
+            }, mediaType === 'image' || mediaType === 'document' ? 20000 : 4000).catch(() => null);
             if (res && res.status >= 400) {
               isChatPhpAvailableRef.current = false;
             } else if (res && res.ok) {
@@ -2978,7 +3061,7 @@ function NativeAppScreen() {
               method: 'POST',
               headers,
               body: payload,
-            }, 4000).catch(() => null);
+            }, mediaType === 'image' || mediaType === 'document' ? 20000 : 4000).catch(() => null);
           }
         } catch (e) {
           console.warn('Error dispatching message to backend:', e);
@@ -3009,8 +3092,8 @@ function NativeAppScreen() {
     }, 450);
   };
 
-  // 1. ADJUNTAR: Fotos / Galería Real (Selector de archivos nativo/web sin simulación)
-  const handlePickPhoto = () => {
+  // Fotos: selector web en navegador y biblioteca del teléfono en Android/iOS.
+  const handlePickPhoto = async () => {
     setIsAttachMenuOpen(false);
     if (Platform.OS === 'web' && typeof document !== 'undefined') {
       const input = document.createElement('input');
@@ -3018,22 +3101,75 @@ function NativeAppScreen() {
       input.accept = 'image/*';
       input.onchange = (e: any) => {
         const file = e.target?.files?.[0];
-        if (file) {
-          const reader = new FileReader();
-          reader.onload = () => {
-            const dataUrl = reader.result as string;
-            sendMediaMessage('image', file.name || 'Foto adjunta', dataUrl, file.name);
-          };
-          reader.readAsDataURL(file);
+        if (!file) return;
+        if (file.size > MAX_CHAT_ATTACHMENT_BYTES) {
+          window.alert('Elige una foto de hasta 3 MB.');
+          return;
         }
+        const reader = new FileReader();
+        reader.onload = () => {
+          sendMediaMessage('image', file.name || 'Foto adjunta', reader.result as string, file.name);
+        };
+        reader.readAsDataURL(file);
       };
       input.click();
+      return;
+    }
+    try {
+      const ImagePicker = await import('expo-image-picker');
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        allowsEditing: false,
+        quality: 0.55,
+        base64: true,
+      });
+      if (result.canceled || !result.assets?.length) return;
+      const photo = result.assets[0];
+      if (!photo.base64) throw new Error('No se pudieron leer los datos de la foto.');
+      if (Math.ceil(photo.base64.length * 0.75) > MAX_CHAT_ATTACHMENT_BYTES) {
+        Alert.alert('Foto demasiado grande', 'Elige una foto de hasta 3 MB.');
+        return;
+      }
+      const fileName = `foto_${Date.now()}.jpg`; // Base64 del selector es JPEG, incluso si el original era HEIC.
+      // Base64 genera una URL transportable; file:// solamente sirve en el dispositivo de origen.
+      sendMediaMessage('image', fileName, `data:image/jpeg;base64,${photo.base64}`, fileName);
+    } catch (error: any) {
+      Alert.alert('No se pudo abrir Fotos', error?.message || 'Revisa los permisos de tus fotos.');
     }
   };
 
-  // 2. ADJUNTAR: Cámara en Vivo Real (Solicita permiso de cámara del dispositivo y abre visor en vivo)
+  // Cámara: el selector nativo de Expo hace la captura y devuelve su imagen.
   const handleOpenCamera = async () => {
     setIsAttachMenuOpen(false);
+    if (Platform.OS !== 'web') {
+      try {
+        const ImagePicker = await import('expo-image-picker');
+        const permission = await ImagePicker.requestCameraPermissionsAsync();
+        if (!permission.granted) {
+          Alert.alert('Permiso de cámara', 'Autoriza el acceso a la cámara en los ajustes de tu dispositivo.');
+          return;
+        }
+        const result = await ImagePicker.launchCameraAsync({
+          mediaTypes: ['images'],
+          quality: 0.55,
+          base64: true,
+          allowsEditing: false,
+        });
+        if (result.canceled || !result.assets?.length) return;
+        const picture = result.assets[0];
+        if (!picture.base64) throw new Error('No se pudo leer la foto capturada.');
+        if (Math.ceil(picture.base64.length * 0.75) > MAX_CHAT_ATTACHMENT_BYTES) {
+          Alert.alert('Foto demasiado grande', 'Intenta capturar una imagen más pequeña.');
+          return;
+        }
+        const fileName = `camara_${Date.now()}.jpg`;
+        sendMediaMessage('image', '📸 Foto capturada', `data:image/jpeg;base64,${picture.base64}`, fileName);
+      } catch (error: any) {
+        Alert.alert('Error de cámara', error?.message || 'No se pudo abrir la cámara.');
+      }
+      return;
+    }
+    // Conservar la cámara en vivo de la versión web.
     try {
       if (typeof navigator !== 'undefined' && navigator.mediaDevices?.getUserMedia) {
         try {
@@ -3043,57 +3179,94 @@ function NativeAppScreen() {
           setLiveCameraStream(stream);
           setIsLiveCameraModalOpen(true);
           return;
-        } catch (err: any) {
-          console.warn('Permiso de cámara web:', err);
-          if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
-            Alert.alert(
-              'Permiso de Cámara Denegado',
-              'Has denegado el acceso a la cámara. Por favor autoriza el permiso de cámara en los ajustes de tu navegador o dispositivo para capturar fotos tácticas.',
-              [{ text: 'Entendido' }]
-            );
+        } catch (error: any) {
+          if (error?.name === 'NotAllowedError' || error?.name === 'PermissionDeniedError') {
+            window.alert('Permite el acceso a la cámara en el navegador.');
             return;
           }
         }
       }
-
-      // Si es dispositivo móvil táctil con cámara nativa directa
-      if (Platform.OS === 'web' && typeof document !== 'undefined') {
+      if (typeof document !== 'undefined') {
         const input = document.createElement('input');
         input.type = 'file';
         input.accept = 'image/*';
         input.capture = 'environment';
         input.onchange = (e: any) => {
           const file = e.target?.files?.[0];
-          if (file) {
-            const reader = new FileReader();
-            reader.onload = () => {
-              sendMediaMessage('image', file.name || 'Captura de Cámara', reader.result as string, file.name);
-            };
-            reader.readAsDataURL(file);
+          if (!file) return;
+          if (file.size > MAX_CHAT_ATTACHMENT_BYTES) {
+            window.alert('Elige una imagen de hasta 3 MB.');
+            return;
           }
+          const reader = new FileReader();
+          reader.onload = () => {
+            sendMediaMessage('image', file.name || 'Captura de Cámara', reader.result as string, file.name);
+          };
+          reader.readAsDataURL(file);
         };
         input.click();
       }
-    } catch (e: any) {
-      Alert.alert('Error de Cámara', e.message || 'No se pudo inicializar la cámara del dispositivo.');
+    } catch (error: any) {
+      console.warn('Error de cámara web:', error);
     }
   };
 
-  // 3. ADJUNTAR: Ubicación GPS Real (Solicita permiso de geolocalización al dispositivo)
-  const handleShareLocation = () => {
+  // Ubicación: Expo Location en móvil. Sólo comparte al confirmar expresamente.
+  const handleShareLocation = async () => {
     setIsAttachMenuOpen(false);
-    if (typeof navigator === 'undefined' || !navigator.geolocation) {
-      Alert.alert('Geolocalización No Disponible', 'Tu dispositivo no cuenta con sensor o soporte de geolocalización.');
+    if (Platform.OS !== 'web') {
+      try {
+        const Location = await import('expo-location');
+        const permission = await Location.requestForegroundPermissionsAsync();
+        if (!permission.granted) {
+          Alert.alert('Permiso de ubicación', 'Autoriza la ubicación mientras usas la app.');
+          return;
+        }
+        const cachedPosition = await Location.getLastKnownPositionAsync({
+  maxAge: 15000,
+  requiredAccuracy: 100,
+});
+
+const position =
+  cachedPosition ??
+  await Location.getCurrentPositionAsync({
+    accuracy: Location.Accuracy.Balanced,
+  });
+        const lat = position.coords.latitude;
+        const lng = position.coords.longitude;
+        const coords = {
+          latitude: lat,
+          longitude: lng,
+          address: `Precisión aproximada: ±${Math.round(position.coords.accuracy || 0)} m`,
+        };
+        Alert.alert('Compartir ubicación', '¿Quieres enviar tu ubicación actual a esta conversación?', [
+          { text: 'Cancelar', style: 'cancel' },
+          {
+            text: 'Enviar ubicación',
+            onPress: () => sendMediaMessage(
+              'location',
+              `📍 Ubicación Real [${lat.toFixed(5)}, ${lng.toFixed(5)}]`,
+              `https://www.google.com/maps?q=${lat},${lng}`,
+              undefined,
+              coords
+            ),
+          },
+        ]);
+      } catch (error: any) {
+        Alert.alert('No se pudo obtener la ubicación', error?.message || 'Comprueba que el GPS esté activo.');
+      }
       return;
     }
-
+    // Web: geolocalización estándar del navegador.
+    if (typeof navigator === 'undefined' || !navigator.geolocation) {
+      window.alert('Geolocalización no disponible en este navegador.');
+      return;
+    }
     navigator.geolocation.getCurrentPosition(
       async (pos) => {
         const lat = pos.coords.latitude;
         const lng = pos.coords.longitude;
         const accuracy = Math.round(pos.coords.accuracy || 10);
-
-        // Obtener dirección real del cuadrante mediante geocodificación inversa
         let addressLabel = `Precisión GPS: ±${accuracy} metros`;
         try {
           const controller = new AbortController();
@@ -3105,65 +3278,154 @@ function NativeAppScreen() {
           clearTimeout(tid);
           if (geoRes && geoRes.ok) {
             const geoData = await geoRes.json().catch(() => null);
-            if (geoData?.display_name) {
-              const parts = geoData.display_name.split(',').slice(0, 3).join(', ');
-              addressLabel = parts || addressLabel;
-            }
+            if (geoData?.display_name) addressLabel = geoData.display_name.split(',').slice(0, 3).join(', ');
           }
         } catch {}
-
-        const locCaption = `📍 Ubicación Real [${lat.toFixed(5)}, ${lng.toFixed(5)}]`;
-        sendMediaMessage('location', locCaption, `https://www.google.com/maps?q=${lat},${lng}`, undefined, {
-          latitude: lat,
-          longitude: lng,
-          address: addressLabel,
-        });
+        sendMediaMessage('location', `📍 Ubicación Real [${lat.toFixed(5)}, ${lng.toFixed(5)}]`,
+          `https://www.google.com/maps?q=${lat},${lng}`, undefined,
+          { latitude: lat, longitude: lng, address: addressLabel });
       },
-      (err) => {
-        console.warn('Error real de geolocalización:', err);
-        if (err.code === 1) {
-          Alert.alert(
-            'Permiso de Ubicación Denegado',
-            'Has denegado el acceso al GPS. Por favor autoriza el permiso de ubicación en los ajustes de tu navegador o dispositivo para compartir tu posición táctica.',
-            [{ text: 'Entendido' }]
-          );
-        } else if (err.code === 2) {
-          Alert.alert('GPS No Disponible', 'La señal de geolocalización satelital no está disponible.');
-        } else if (err.code === 3) {
-          Alert.alert('Tiempo de Espera Agotado', 'El GPS tardó demasiado tiempo en fijar las coordenadas.');
-        } else {
-          Alert.alert('Error de Ubicación', err.message || 'No fue posible obtener la posición GPS.');
-        }
-      },
+      (error) => window.alert(error.message || 'No se pudo obtener tu ubicación.'),
       { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
     );
   };
 
-  // 4. ADJUNTAR: Documentos Reales (Abre el explorador de archivos del sistema)
-  const handlePickDocument = () => {
+  
+
+  // Documentos: el selector de expo-file-system devuelve un archivo con acceso
+  // de lectura en Android/iOS. Evitamos copiar las rutas de DocumentPicker, pues
+  // la segunda copia desde su caché puede fallar con IOException/READ permission.
+  const handlePickDocument = async () => {
     setIsAttachMenuOpen(false);
+
+    // En web conservamos el selector de archivos del navegador.
     if (Platform.OS === 'web' && typeof document !== 'undefined') {
       const input = document.createElement('input');
       input.type = 'file';
       input.accept = '.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,.zip,.rar';
       input.onchange = (e: any) => {
         const file = e.target?.files?.[0];
-        if (file) {
-          const reader = new FileReader();
-          reader.onload = () => {
-            const fileUrl = reader.result as string;
-            const sizeKb = (file.size / 1024).toFixed(1);
-            sendMediaMessage(
-              'document',
-              `📄 ${file.name} (${sizeKb} KB)`,
-              fileUrl,
-              file.name
-            );
-          };
-          reader.readAsDataURL(file);
+        if (!file) return;
+        if (file.size > MAX_CHAT_ATTACHMENT_BYTES) {
+          window.alert('Elige un documento de hasta 3 MB.');
+          return;
         }
+        const reader = new FileReader();
+        reader.onload = () => {
+          const sizeKb = (file.size / 1024).toFixed(1);
+          sendMediaMessage('document', `📄 ${file.name} (${sizeKb} KB)`, reader.result as string, file.name);
+        };
+        reader.readAsDataURL(file);
       };
       input.click();
+      return;
+    }
+
+    try {
+      const { File } = await import('expo-file-system');
+      // File.pickFileAsync abre el selector del sistema y conserva el acceso
+      // al archivo elegido sin hacer una segunda copia manual de su URI.
+      const result = await File.pickFileAsync({ mimeTypes: '*/*', multipleFiles: false });
+      if (result.canceled || !result.result) return;
+      const file = result.result;
+      const pickedName = file.name || `documento_${Date.now()}`;
+      const reportedSize = file.size || 0;
+      if (reportedSize > MAX_CHAT_ATTACHMENT_BYTES) {
+        Alert.alert('Documento demasiado grande', 'Elige un documento de hasta 3 MB.');
+        return;
+      }
+
+      const content = await file.base64();
+      if (!content) throw new Error('El documento está vacío o no se pudo leer.');
+      const actualBytes = Math.floor((content.length * 3) / 4) -
+        (content.endsWith('==') ? 2 : content.endsWith('=') ? 1 : 0);
+      if (actualBytes > MAX_CHAT_ATTACHMENT_BYTES) {
+        Alert.alert('Documento demasiado grande', 'Elige un documento de hasta 3 MB.');
+        return;
+      }
+      const mime = determineDocumentMime(pickedName,
+        `data:application/octet-stream;base64,${content}`, file.type);
+      const fileName = documentNameWithExtension(pickedName, mime);
+      sendMediaMessage('document', `📄 ${fileName} (${(actualBytes / 1024).toFixed(1)} KB)`,
+        `data:${mime};base64,${content}`, fileName);
+    } catch (error: any) {
+      console.warn('[Walkiet] Error leyendo documento:', error);
+      Alert.alert('No se pudo adjuntar el documento',
+        error?.message || 'Intenta seleccionar un archivo local desde Descargas.');
+    }
+  };
+
+  // Abrir documentos locales/recibidos. Android identifica el visor por MIME.
+  // Si no hay un visor directo, ofrecer el selector del sistema como alternativa.
+  const handleOpenChatDocument = async (message: ChatMessage) => {
+    if (!message.mediaUrl) {
+      Alert.alert('Documento no disponible', 'Este mensaje no contiene un archivo descargable.');
+      return;
+    }
+    if (Platform.OS === 'web') {
+      const link = document.createElement('a');
+      link.href = message.mediaUrl;
+      const mime = determineDocumentMime(message.fileName, message.mediaUrl);
+      link.download = documentNameWithExtension(message.fileName, mime);
+      link.click();
+      return;
+    }
+
+    try {
+      const { File, Paths } = await import('expo-file-system');
+      const mediaUrl = message.mediaUrl;
+      const mime = determineDocumentMime(message.fileName, mediaUrl);
+      const safeName = documentNameWithExtension(message.fileName, mime);
+      let file: InstanceType<typeof File>;
+
+      if (mediaUrl.startsWith('data:')) {
+        const match = /^data:([^;,]+)?;base64,([\s\S]*)$/i.exec(mediaUrl);
+        if (!match) throw new Error('El formato del documento recibido no es compatible.');
+        file = new File(Paths.cache, `${Date.now()}_${safeName}`);
+        await file.write(decodeAttachmentBase64(match[2]));
+      } else if (/^https?:\/\//i.test(mediaUrl)) {
+        file = new File(Paths.cache, `${Date.now()}_${safeName}`);
+        await File.downloadFileAsync(mediaUrl, file);
+      } else if (mediaUrl.startsWith('file:') || mediaUrl.startsWith('content:')) {
+        file = new File(mediaUrl);
+      } else {
+        throw new Error('La dirección de este documento no es compatible.');
+      }
+
+      // Es especialmente importante pasar mimeType en Android: proveedores
+      // externos pueden devolver nombres "msf:" sin extension .pdf/.docx.
+      let previewAvailable = false;
+      try {
+        previewAvailable = await file.canPreview({ mimeType: mime });
+      } catch (previewError) {
+        console.warn('[Walkiet] No se pudo consultar el visor de documentos:', previewError);
+      }
+      if (previewAvailable) {
+        try {
+          await file.preview({ title: safeName, mimeType: mime });
+          return;
+        } catch (previewError) {
+          console.warn('[Walkiet] Fallo el visor directo; intentando Abrir con:', previewError);
+        }
+      }
+
+      // En Android e iOS la hoja de compartir permite elegir Drive,
+      // Acrobat, Word u otra aplicacion ya instalada que acepte el documento.
+      const Sharing = await import('expo-sharing');
+      if (await Sharing.isAvailableAsync()) {
+        await Sharing.shareAsync(file.uri, {
+          mimeType: mime,
+          dialogTitle: 'Abrir documento con...',
+        });
+        return;
+      }
+
+      Alert.alert('Visor no disponible',
+        'No se encontró una aplicación compatible para abrir este documento en el teléfono.');
+    } catch (error: any) {
+      console.warn('[Walkiet] Error abriendo documento:', error);
+      Alert.alert('No se pudo abrir el documento',
+        error?.message || 'Prueba abrir el documento desde otra aplicación.');
     }
   };
 
@@ -4720,14 +4982,7 @@ function NativeAppScreen() {
                                 <TouchableOpacity
                                   style={styles.chatBubbleDocBox}
                                   activeOpacity={0.8}
-                                  onPress={() => {
-                                    if (msg.mediaUrl && Platform.OS === 'web') {
-                                      const a = document.createElement('a');
-                                      a.href = msg.mediaUrl;
-                                      a.download = msg.fileName || 'documento_c5i';
-                                      a.click();
-                                    }
-                                  }}
+                                  onPress={() => { void handleOpenChatDocument(msg); }}
                                 >
                                   <FileTextIcon size={20} color={isSelf ? '#bae6fd' : '#0284c7'} />
                                   <Text
@@ -4789,16 +5044,14 @@ function NativeAppScreen() {
 
                 {/* Menú de Adjuntos tipo WhatsApp (Fotos, Cámara, Ubicación, Documento) */}
                 {isAttachMenuOpen && (
-                  <TouchableWithoutFeedback onPress={() => setIsAttachMenuOpen(false)}>
-                    <View style={styles.chatAttachMenuOverlay}>
-                      <TouchableWithoutFeedback
-                        onPress={(e) => {
-                          if (Platform.OS === 'web') {
-                            (e as any)?.stopPropagation?.();
-                          }
-                        }}
-                      >
-                        <View style={styles.chatAttachMenuCard}>
+                  <View style={styles.chatAttachMenuOverlay}>
+                    <TouchableOpacity
+                      style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 }}
+                      activeOpacity={1}
+                      onPress={() => setIsAttachMenuOpen(false)}
+                      accessibilityLabel="Cerrar menú de adjuntos"
+                    />
+                    <View style={styles.chatAttachMenuCard}>
                           <View style={styles.chatAttachMenuRow}>
                             {/* 1. Fotos */}
                             <TouchableOpacity
@@ -4849,9 +5102,7 @@ function NativeAppScreen() {
                             </TouchableOpacity>
                           </View>
                         </View>
-                      </TouchableWithoutFeedback>
-                    </View>
-                  </TouchableWithoutFeedback>
+                  </View>
                 )}
 
                 {/* Barra de entrada dinámica idéntica a Imagen 1 */}
