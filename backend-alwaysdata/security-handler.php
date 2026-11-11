@@ -1,4 +1,5 @@
 <?php
+const SECURITY_CODE_TTL_SECONDS=180;
 class SecurityRequestError extends RuntimeException {
     public $status;
     public function __construct($status,$message) { parent::__construct($message); $this->status=$status; }
@@ -50,8 +51,9 @@ function handleSecurity(PDO $db,array $data,$session,$ip,array $config,$afterQue
             $target=$emailFlow?$identifier:($user['correo'] ?? null);
             if (!$target || !filter_var($target,FILTER_VALIDATE_EMAIL)) { $user=null; $target=null; }
             $id=bin2hex(random_bytes(32)); $code=(string)random_int(100000,999999);
+            $issuedAt=time();
             if ($user) $db->prepare("UPDATE security_challenges SET status='used',proof_hash=NULL WHERE user_id=? AND purpose=? AND status IN ('pending','sent','verified')")->execute([$user['id'],$purpose]);
-            $db->prepare('INSERT INTO security_challenges(id,user_id,purpose,session_hash,target_email,credential_hash,code_hash,expires_at) VALUES(?,?,?,?,?,?,?,?)')->execute([$id,$user['id'] ?? null,$purpose,$emailFlow?hash('sha256',$session):null,$target,$user?hash('sha256',$user['password_hash']):null,securityHash($config,$id.':'.$code),gmdate('Y-m-d H:i:s',time()+600)]);
+            $db->prepare('INSERT INTO security_challenges(id,user_id,purpose,session_hash,target_email,credential_hash,code_hash,created_at,expires_at) VALUES(?,?,?,?,?,?,?,?,?)')->execute([$id,$user['id'] ?? null,$purpose,$emailFlow?hash('sha256',$session):null,$target,$user?hash('sha256',$user['password_hash']):null,securityHash($config,$id.':'.$code),gmdate('Y-m-d H:i:s',$issuedAt),gmdate('Y-m-d H:i:s',$issuedAt+SECURITY_CODE_TTL_SECONDS)]);
             $db->commit();
         } catch (Throwable $error) { if ($db->inTransaction()) $db->rollBack(); throw $error; }
         $response=['success'=>true,'challenge_id'=>$id,'resend_after'=>60,'message'=>$emailFlow?'Enviamos un código al nuevo correo.':'Si existe una cuenta con correo asociado, recibirá un código. Revisa también spam.'];
@@ -79,6 +81,9 @@ function handleSecurity(PDO $db,array $data,$session,$ip,array $config,$afterQue
         if ($userId!==false && $userId!==null) { $q=$db->prepare('SELECT * FROM users WHERE id=? FOR UPDATE'); $q->execute([$userId]); $user=$q->fetch(PDO::FETCH_ASSOC); }
         $q=$db->prepare('SELECT * FROM security_challenges WHERE id=? FOR UPDATE'); $q->execute([$id]); $challenge=$q->fetch(PDO::FETCH_ASSOC);
         $valid=$challenge && $user && $challenge['purpose']===$purpose && $challenge['expires_at']>gmdate('Y-m-d H:i:s') && hash_equals($challenge['credential_hash'],hash('sha256',$user['password_hash']));
+        // Los códigos emitidos con la política anterior de 10 minutos se sustituyen solicitando uno nuevo.
+        // La autorización de recuperación ya verificada tiene su propio plazo de 5 minutos.
+        if ($valid && $action!=='recovery_reset') $valid=strtotime($challenge['expires_at'].' UTC')-strtotime($challenge['created_at'].' UTC')===SECURITY_CODE_TTL_SECONDS;
         if ($emailFlow) $valid=$valid && (string)$challenge['user_id']===(string)$owner && hash_equals($challenge['session_hash'],hash('sha256',$session));
         else $valid=$valid && strtolower($challenge['target_email'])===strtolower($user['correo'] ?? '');
         if ($action==='recovery_reset') {

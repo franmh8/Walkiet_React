@@ -1,5 +1,8 @@
 # Correo verificado y recuperación de contraseña
 
+Para actualizar una instalación que ya envía correo, seguir
+[ACTUALIZACION_CODIGOS_3_MINUTOS.md](ACTUALIZACION_CODIGOS_3_MINUTOS.md).
+
 El perfil ya no muestra Rol ni Unidad. Los campos existentes en la BD se
 conservan. Los controles de ajustes usan guinda y sus variantes para modo oscuro.
 
@@ -128,7 +131,7 @@ estados HTTP, no sigue redirecciones y solo reenvía el Bearer en cambios de cor
   La recepción PTT de una sesión retirada depende del siguiente
   barrido del worker, como en el cierre/revocación existentes.
 - Códigos de seis dígitos generados con `random_int`, guardados solo como HMAC,
-  caducidad de diez minutos y máximo cinco intentos. Reenvío cada 60 segundos,
+  caducidad de tres minutos y máximo cinco intentos. Reenvío cada 60 segundos,
   máximo cinco solicitudes por identificador/destino introducido por hora,
   20 por IP/hora y 60 verificaciones por
   IP/hora. Cambiar de pantalla no elimina los límites del servidor. Reenviar

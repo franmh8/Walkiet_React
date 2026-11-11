@@ -5,13 +5,13 @@ function securityMailTemplate($code,$purpose) {
     $change=$purpose==='email_change';
     $title=$change?'Verifica tu nuevo correo':'Recupera tu acceso';
     $intro=$change?'Estás a un paso de actualizar el correo de tu cuenta. Ingresa este código en Walkiet para confirmar tu nueva dirección.':'Vamos a ayudarte a volver a tu cuenta. Ingresa este código en Walkiet para elegir una contraseña nueva.';
-    $text=$title." - Walkiet\n\n".$intro."\n\nTu código de verificación es: ".$code."\n\nCaduca en 10 minutos y solo puede usarse una vez. No lo compartas.\nSi no solicitaste este cambio, ignora este mensaje. Tu cuenta se conserva sin cambios.";
+    $text=$title." - Walkiet\n\n".$intro."\n\nTu código de verificación es: ".$code."\n\nCaduca en 3 minutos y solo puede usarse una vez. No lo compartas.\nSi no solicitaste este cambio, ignora este mensaje. Tu cuenta se conserva sin cambios.";
     $safeTitle=htmlspecialchars($title,ENT_QUOTES,'UTF-8');$safeIntro=htmlspecialchars($intro,ENT_QUOTES,'UTF-8');
     $html=<<<HTML
 <!doctype html>
 <html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light"><title>$safeTitle · Walkiet</title></head>
 <body style="margin:0;padding:0;background-color:#f4f1f2;font-family:Arial,Helvetica,sans-serif;color:#182132;">
-<div style="display:none;max-height:0;overflow:hidden;opacity:0;">Tu código de Walkiet está listo. Es válido durante 10 minutos.</div>
+<div style="display:none;max-height:0;overflow:hidden;opacity:0;">Tu código de Walkiet está listo. Es válido durante 3 minutos.</div>
 <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color:#f4f1f2;"><tr><td align="center" style="padding:32px 16px;">
 <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="max-width:560px;background-color:#ffffff;border:1px solid #e6dce0;border-radius:24px;overflow:hidden;">
 <tr><td style="padding:28px 32px;background-color:#691c32;border-radius:23px 23px 0 0;">
@@ -27,7 +27,7 @@ function securityMailTemplate($code,$purpose) {
 <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color:#fbf5f7;border:1px solid #ead4dc;border-radius:18px;"><tr><td align="center" style="padding:24px 8px;">
 <div style="font-size:10px;letter-spacing:1.8px;font-weight:700;color:#8e5b6b;">TU CÓDIGO DE SEGURIDAD</div>
 <div style="margin:14px 0;font-family:'Courier New',Courier,monospace;font-size:36px;font-weight:700;letter-spacing:6px;line-height:1.2;color:#691c32;">$code</div>
-<div style="font-size:12px;color:#75515d;">Válido por 10 minutos · Un solo uso</div>
+<div style="font-size:12px;color:#75515d;">Válido por 3 minutos · Un solo uso</div>
 </td></tr></table>
 </td></tr>
 <tr><td style="padding:0 28px 28px;">

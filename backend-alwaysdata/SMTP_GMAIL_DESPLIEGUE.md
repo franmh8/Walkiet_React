@@ -1,5 +1,8 @@
 # Gmail SMTP con contraseña de aplicación
 
+Actualización del modal/correo y vigencia de 3 minutos en una instalación ya
+operativa: [guía de actualización](ACTUALIZACION_CODIGOS_3_MINUTOS.md).
+
 La pantalla **Contraseñas de aplicaciones** de Google permite usar Gmail por
 SMTP. Se admite como proveedor de los códigos de cambio de correo y recuperación.
 No requiere Google Cloud, client ID, client secret ni refresh token.

@@ -23,6 +23,7 @@ try{
   await page.getByLabel('Enviar código de verificación',{exact:true}).click();await page.getByText('Envío de prueba no disponible',{exact:true}).waitFor();assert.equal(await page.getByLabel('Nuevo correo',{exact:true}).inputValue(),'verified-a@example.test');
   await page.unroute('**/api/security');await page.getByLabel('Enviar código de verificación',{exact:true}).click();await page.getByLabel('Dígito 1 del código',{exact:true}).waitFor();
   const emailCode=(await latest('verified-a@example.test')).code;
+  await page.getByText('Caduca en 3 minutos · Máximo 5 intentos',{exact:true}).waitFor();
   assert.equal(await page.getByRole('textbox',{name:/Dígito \d del código/}).count(),6);
   assert.equal(await page.getByLabel('Verificar código',{exact:true}).isDisabled(),true);
   assert.equal(await page.getByText('Cambiar datos',{exact:true}).count(),0);
