@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import * as ReactNative from 'react-native';
 import {
   StyleSheet,
   Text,
@@ -3468,55 +3467,38 @@ const position =
     );
   };
 
-  // En iOS utilizamos el menu del sistema, no un Modal de React Native.
-  // El Modal anterior cerraba el menu sin ejecutar los selectores de archivos
-  // en algunos iPhone. El menu nativo evita depender del evento onDismiss.
-  const iosAttachmentInProgressRef = useRef(false);
+  // Mantener los cuatro botones originales (Fotos, Cámara, Ubicación, Documento).
+  // En iOS se espera al cierre completo del Modal antes de abrir un selector
+  // del sistema. Android y web siguen llamando a la acción sin demora.
+  const pendingIOSAttachmentRef = useRef<null | { label: string; run: () => Promise<void> }>(null);
 
-  const openIOSAttachmentMenu = () => {
-    if (iosAttachmentInProgressRef.current) return;
-    setIsAttachMenuOpen(false);
-    Keyboard.dismiss();
+  const chooseChatAttachment = (label: string, run: () => Promise<void>) => {
+    console.log(`[Walkiet-adjuntos] Botón pulsado: ${label} (${Platform.OS})`);
+    if (Platform.OS === 'ios') {
+      pendingIOSAttachmentRef.current = { label, run };
+      setIsAttachMenuOpen(false);
+      return;
+    }
+    // En web el selector necesita ejecutarse durante el gesto original.
+    void run().catch((error: any) => {
+      console.warn(`[Walkiet-adjuntos] Error en ${label}:`, error);
+      Alert.alert('No se pudo abrir el adjunto', String(error?.message || error));
+    });
+  };
 
-    // Dejar que el teclado termine de ocultarse antes de presentar la hoja.
+  const onIOSChatAttachmentDismiss = () => {
+    const chosen = pendingIOSAttachmentRef.current;
+    pendingIOSAttachmentRef.current = null;
+    if (!chosen) return;
+    console.log(`[Walkiet-iOS] Menú cerrado. Abriendo ${chosen.label}`);
+    // onDismiss confirma que iOS terminó de cerrar el controlador anterior.
+    // El intervalo breve deja concluir la animación antes del selector nativo.
     setTimeout(() => {
-      // Importación como namespace: react-native-web no exporta ActionSheetIOS.
-      // Este método solo se ejecuta en iOS.
-      const sheet = ReactNative.ActionSheetIOS;
-      if (!sheet?.showActionSheetWithOptions) {
-        Alert.alert('Menú no disponible', 'Expo Go no pudo abrir el menú de adjuntos.');
-        return;
-      }
-      sheet.showActionSheetWithOptions(
-        {
-          title: 'Adjuntar al chat',
-          options: ['Fotos', 'Cámara', 'Ubicación', 'Documento', 'Cancelar'],
-          cancelButtonIndex: 4,
-          tintColor: '#8a1a36',
-        },
-        (selectedIndex) => {
-          if (selectedIndex < 0 || selectedIndex > 3) return;
-          console.log('[Walkiet] Opcion de adjunto iOS:', selectedIndex);
-          const actions = [handlePickPhoto, handleOpenCamera, handleShareLocation, handlePickDocument];
-          const action = actions[selectedIndex];
-          if (!action) return;
-          iosAttachmentInProgressRef.current = true;
-
-          // La hoja del sistema debe cerrarse antes de abrir otro selector.
-          setTimeout(async () => {
-            try {
-              await action();
-            } catch (error: any) {
-              console.warn('[Walkiet] Error en adjunto iOS:', error);
-              Alert.alert('No se pudo abrir el adjunto',
-                error?.message || 'Intenta de nuevo o revisa los permisos del telefono.');
-            } finally {
-              iosAttachmentInProgressRef.current = false;
-            }
-          }, 400);
-        }
-      );
-    }, 120);
+      void chosen.run().catch((error: any) => {
+        console.warn(`[Walkiet-iOS] Error abriendo ${chosen.label}:`, error);
+        Alert.alert('No se pudo abrir el adjunto', String(error?.message || error));
+      });
+    }, 180);
   };
 
   const renderChatAttachMenu = () => (
@@ -3527,11 +3509,11 @@ const position =
         onPress={() => setIsAttachMenuOpen(false)}
         accessibilityLabel="Cerrar menú de adjuntos"
       />
-      <View style={[styles.chatAttachMenuCard, { zIndex: 1, width: '100%' }]}>
+      <View pointerEvents="auto" style={[styles.chatAttachMenuCard, { zIndex: 2, width: '100%' }]}>
         <View style={styles.chatAttachMenuRow}>
           <TouchableOpacity
             style={styles.chatAttachMenuItem}
-            onPress={handlePickPhoto}
+            onPress={() => chooseChatAttachment('Fotos', handlePickPhoto)}
             activeOpacity={0.75}
             accessibilityLabel="Seleccionar fotos"
           >
@@ -3542,7 +3524,7 @@ const position =
           </TouchableOpacity>
           <TouchableOpacity
             style={styles.chatAttachMenuItem}
-            onPress={handleOpenCamera}
+            onPress={() => chooseChatAttachment('Cámara', handleOpenCamera)}
             activeOpacity={0.75}
             accessibilityLabel="Abrir cámara"
           >
@@ -3553,7 +3535,7 @@ const position =
           </TouchableOpacity>
           <TouchableOpacity
             style={styles.chatAttachMenuItem}
-            onPress={handleShareLocation}
+            onPress={() => chooseChatAttachment('Ubicación', handleShareLocation)}
             activeOpacity={0.75}
             accessibilityLabel="Compartir ubicación"
           >
@@ -3564,7 +3546,7 @@ const position =
           </TouchableOpacity>
           <TouchableOpacity
             style={styles.chatAttachMenuItem}
-            onPress={handlePickDocument}
+            onPress={() => chooseChatAttachment('Documento', handlePickDocument)}
             activeOpacity={0.75}
             accessibilityLabel="Seleccionar documento"
           >
@@ -5172,8 +5154,26 @@ const position =
                   )}
                 </ScrollView>
 
-                {/* Android y web conservan el menu actual. iOS usa ActionSheetIOS. */}
-                {Platform.OS !== 'ios' && isAttachMenuOpen ? renderChatAttachMenu() : null}
+                {/* Mismo menú de cuatro botones en todas las plataformas.
+                    iOS lo presenta en un Modal para que las pulsaciones no queden
+                    interceptadas por otras capas de la pantalla del chat. */}
+                {Platform.OS === 'ios' ? (
+                  <Modal
+                    visible={isAttachMenuOpen}
+                    transparent
+                    presentationStyle="overFullScreen"
+                    animationType="fade"
+                    onDismiss={onIOSChatAttachmentDismiss}
+                    onRequestClose={() => {
+                      pendingIOSAttachmentRef.current = null;
+                      setIsAttachMenuOpen(false);
+                    }}
+                  >
+                    <View style={{ flex: 1 }} pointerEvents="box-none">
+                      {renderChatAttachMenu()}
+                    </View>
+                  </Modal>
+                ) : isAttachMenuOpen ? renderChatAttachMenu() : null}
 
                 {/* Barra de entrada dinámica idéntica a Imagen 1 */}
                 <KeyboardAvoidingView
@@ -5190,11 +5190,8 @@ const position =
                         ]}
                         activeOpacity={0.7}
                         onPress={() => {
-                          if (Platform.OS === 'ios') {
-                            openIOSAttachmentMenu();
-                          } else {
-                            setIsAttachMenuOpen((prev) => !prev);
-                          }
+                          console.log(`[Walkiet-adjuntos] Clip pulsado (${Platform.OS})`);
+                          setIsAttachMenuOpen((prev) => !prev);
                         }}
                         accessibilityLabel="Adjuntar archivo o evidencia"
                       >
