@@ -2,24 +2,28 @@
 # Habilita CORS completo y enrutamiento hacia endpoints PHP
 
 <IfModule mod_headers.c>
-    Header always set Access-Control-Allow-Origin "*"
     Header always set Access-Control-Allow-Methods "GET, POST, OPTIONS, PUT, DELETE"
     Header always set Access-Control-Allow-Headers "Content-Type, Authorization, X-Requested-With, Origin, Accept"
 </IfModule>
 
 RewriteEngine On
+RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
 
-# 1. Responder directamente a solicitudes OPTIONS (Preflight)
-RewriteCond %{REQUEST_METHOD} OPTIONS
-RewriteRule ^(.*)$ $1 [R=200,L]
+# OPTIONS lo responde cors.php con una sola cabecera de origen.
 
 # 2. Rutas RESTful mapeadas a scripts PHP de Alwaysdata
 RewriteRule ^api/channels/?$ channels.php [QSA,L]
+RewriteRule ^api/contacts/?$ contacts.php [QSA,L]
+RewriteRule ^api/contacts/([^/]+)/?$ contacts.php?id=$1 [QSA,L]
 RewriteRule ^api/channels/(.+)$ channels.php?id=$1 [QSA,L]
+RewriteRule ^api/account/?$ account.php [QSA,L]
+RewriteRule ^api/security/?$ security.php [QSA,L]
+RewriteRule ^api/ptt/?$ ptt.php [QSA,L]
 RewriteRule ^api/voice-messages/?$ voice-messages.php [QSA,L]
 RewriteRule ^api/database/status/?$ status.php [QSA,L]
 RewriteRule ^api/status\.php$ status.php [QSA,L]
 RewriteRule ^api/auth/login/?$ login.php [QSA,L]
+RewriteRule ^api/auth/logout/?$ logout.php [QSA,L]
 RewriteRule ^api/auth/register/?$ register.php [QSA,L]
 RewriteRule ^api/auth/send-otp/?$ send-otp.php [QSA,L]
 RewriteRule ^api/auth/verify-otp/?$ verify-otp.php [QSA,L]

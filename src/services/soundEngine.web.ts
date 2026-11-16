@@ -4,6 +4,11 @@
 class WebSoundEngine {
   private audioCtx: AudioContext | null = null;
   private isMuted: boolean = false;
+  private messageSounds = true;
+  private rogerBeep = true;
+  public setRadioActive(_active: boolean) {}
+  public setMessageSounds(value: boolean) { this.messageSounds = value; }
+  public setRogerBeep(value: boolean) { this.rogerBeep = value; }
   private volume: number = 0.85;
 
   private getContext(): AudioContext | null {
@@ -66,7 +71,7 @@ class WebSoundEngine {
 
   // Roger Beep (PTT soltado - Notificación de cambio y fuera)
   public playRogerBeep() {
-    if (this.isMuted) return;
+    if (this.isMuted || !this.rogerBeep) return;
     try {
       const ctx = this.getContext();
       if (!ctx) return;
@@ -164,7 +169,7 @@ class WebSoundEngine {
 
   // Incoming transmission chirp
   public playIncomingChirp() {
-    if (this.isMuted) return;
+    if (this.isMuted || !this.messageSounds) return;
     try {
       const ctx = this.getContext();
       if (!ctx) return;

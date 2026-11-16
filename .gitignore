@@ -12,3 +12,13 @@ web-build/
 
 # macOS
 .DS_Store
+
+# Credenciales privadas de radio
+/private/
+/backend-alwaysdata/ptt-config.php
+/backend-alwaysdata/security-config.php
+
+# Configuración local y archivos de servicios móviles
+.env.local
+google-services.json
+GoogleService-Info.plist

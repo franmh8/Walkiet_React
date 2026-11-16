@@ -1,48 +1,80 @@
-# C5i Hidalgo WalkieT - App Móvil (Expo / React Native)
+# Walkiet
 
-Aplicación nativa móvil para **Expo Go** (iOS y Android) actualizada a **Expo SDK 57**, **React 19.2** y **React Native 0.86**.
+Aplicación de radio PTT, grupos, chat, contactos privados y perfil con Expo SDK 58,
+React Native 0.88 y un servidor PHP/MySQL en Alwaysdata. La versión que comparte
+el equipo está en la rama `main`.
 
----
+## Actualizar un equipo existente
 
-## 📱 Cómo ejecutar en tu teléfono (iOS / Android con Expo Go)
+Desde la carpeta `Walkiet_React`, detener Expo con **Ctrl+C** y revisar primero:
 
-### 1. Entra a la carpeta de la app móvil:
-```bash
-cd expo-app
+```sh
+git status --short
 ```
 
-### 2. Instala las dependencias limpias:
-```bash
-rm -rf node_modules package-lock.json
-npm install
+Si aparecen cambios locales, guardarlos en un commit propio o crear un respaldo
+antes de cambiar de rama:
+
+```sh
+git stash push -u -m "respaldo-antes-de-actualizar-main"
 ```
 
-### 3. Inicia el servidor Expo con túnel y caché limpia:
-```bash
-npx expo start --tunnel -c
+Conservar ese respaldo y revisar sus diferencias antes de recuperarlo; no es
+necesario borrar archivos ni descartar cambios para actualizar.
+
+```sh
+git fetch origin
+git switch main
+git pull --ff-only origin main
+npm ci
+npx expo start -c
 ```
-*(El parámetro `--tunnel` permite que tu iPhone y Android se conecten sin importar la red Wi-Fi; `-c` limpia la caché de Metro)*.
 
-> **Nota si viste el error `TypeError: Cannot read properties of undefined (reading 'transformFile')`:**
-> Ocurría porque `expo-app/package.json` tenía `"type": "module"` y dependencias de servidor web en lugar de React Native. Tras actualizar el `package.json` corregido, borra `node_modules` y `package-lock.json` dentro de `expo-app/`, ejecuta `npm install` y luego `npx expo start -c`.
+Usar Node **24 LTS, versión 24.3 o posterior**, compatible con las dependencias
+actuales. Conservar `package-lock.json`: `npm ci` instala las mismas versiones en
+todos los equipos. Si Git informa que las ramas han divergido, revisar los commits
+locales antes de continuar; no forzar la actualización.
 
-### 4. Escanear en tu móvil:
-- **iPhone:** Abre la aplicación nativa de **Cámara**, enfoca el código QR en pantalla y toca la notificación para abrir en **Expo Go**.
-- **Android:** Abre la aplicación **Expo Go**, toca **"Scan QR code"** y enfoca el código QR.
+Para un equipo nuevo:
 
----
-
-## 🛠️ Estructura de `expo-app/`
+```sh
+git clone https://github.com/franmh8/Walkiet_React.git
+cd Walkiet_React
+npm ci
+npx expo start -c
 ```
-expo-app/
-├── package.json         # Dependencias para Expo SDK 57, React 19.2, React Native 0.86
-├── App.tsx              # Componente raíz con navegación (@react-navigation) y proveedores
-├── app.json             # Configuración y permisos nativos de Expo (Micrófono, Audio background, sdkVersion 57.0.0)
-├── babel.config.js      # Configuración de Babel
-├── tsconfig.json        # Configuración TypeScript
-└── src/
-    ├── screens/         # Pantallas (PTT, Grupos, Chat, Contactos, Perfil)
-    ├── context/         # Estados globales (Auth, Radio, Chat)
-    ├── services/        # AudioService (expo-av, expo-haptics), ApiService
-    └── types.ts         # Tipos e interfaces
+
+Pulsar **w** para probar en navegador. La radio nativa usa LiveKit y un módulo
+propio de Android: necesita una compilación de desarrollo instalada; Expo Go no
+incluye estos módulos. Las instrucciones y las limitaciones de segundo plano en
+iOS están en la guía PTT.
+
+## Servidor y configuración
+
+Actualizar Git descarga el código en cada computadora. El servidor de Alwaysdata
+se actualiza por separado, subiendo los PHP y aplicando las migraciones indicadas
+en cada guía. Las contraseñas de MySQL, Gmail y las claves de LiveKit permanecen en
+archivos privados del servidor y no se comparten mediante Git.
+
+- [Contactos y sesiones](backend-alwaysdata/CONTACTOS_DESPLIEGUE.md)
+- [Grupos](backend-alwaysdata/GRUPOS_DESPLIEGUE.md)
+- [Radio en vivo, notificaciones y proceso continuo](backend-alwaysdata/PTT_DESPLIEGUE.md)
+- [Perfil y ajustes](backend-alwaysdata/PERFIL_DESPLIEGUE.md)
+- [Verificación de correo y recuperación de acceso](backend-alwaysdata/CORREO_SEGURIDAD_DESPLIEGUE.md)
+- [Envío mediante Gmail SMTP](backend-alwaysdata/SMTP_GMAIL_DESPLIEGUE.md)
+- [Actualizar códigos a 3 minutos](backend-alwaysdata/ACTUALIZACION_CODIGOS_3_MINUTOS.md)
+
+El servicio continuo de PTT requiere un alojamiento que permita mantener el
+proceso en ejecución. El plan gratuito de Alwaysdata usado durante las pruebas
+rechaza la creación de Servicios. La recepción de audio con iOS suspendido aún
+requiere integrar Apple PushToTalk y probar una compilación nativa en dispositivos.
+
+## Comprobaciones locales
+
+```sh
+npm run lint
+npm run build
 ```
+
+Las pruebas de integración están en `tests/`; sus fixtures usan bases y cuentas
+sintéticas. Revisar sus variables de entorno antes de ejecutarlas.

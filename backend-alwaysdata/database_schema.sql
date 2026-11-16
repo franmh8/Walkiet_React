@@ -75,19 +75,4 @@ CREATE TABLE IF NOT EXISTS `sms_otps` (
   PRIMARY KEY (`phone_number`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- Datos Semilla Iniciales para Mandos C5i
-INSERT INTO `users` (`id`, `phone_number`, `name`, `correo`, `password_hash`, `callsign`, `unit`, `status`)
-VALUES 
-('usr-c5i-01', '7711234567', 'Comandante Roberto Morales', 'morales.c5i@hidalgo.gob.mx', '123', 'HALCON-01', 'Fuerza Especial de Reacción C5i', 'online'),
-('usr-c5i-02', '7719876543', 'Oficial Karla Mendoza', 'k.mendoza@hidalgo.gob.mx', '123', 'PATRULLA-04', 'Sector Operativo Pachuca Sur', 'online'),
-('usr-c5i-03', '7714567890', 'Oficial Diego Navarrete', 'd.navarrete@hidalgo.gob.mx', '123', 'COBRA-09', 'Vialidad y Tránsito Estatal', 'online'),
-('usr-c5i-04', '7710009911', 'Despacho Central 911', 'central911@c5i.gob.mx', '123', 'CENTRAL-C5I', 'Centro de Comando C5i Hidalgo', 'online')
-ON DUPLICATE KEY UPDATE `name`=VALUES(`name`);
-
-INSERT INTO `channels` (`id`, `name`, `is_private`, `access_code`, `created_by`, `category`)
-VALUES
-('chan-01', 'OPERACIONES ESPECIALES TÁCTICAS', 1, '1090', 'usr-c5i-01', 'tactico'),
-('chan-02', 'DESPACHO EMERGENCIAS 911', 0, '9110', 'usr-c5i-04', 'emergencia'),
-('chan-03', 'CENTRAL DE MONITOREO C5I', 1, '5001', 'usr-c5i-04', 'inteligencia'),
-('chan-04', 'VIALIDAD Y TRÁNSITO PACHUCA', 0, '4400', 'usr-c5i-03', 'vialidad')
-ON DUPLICATE KEY UPDATE `name`=VALUES(`name`);
+-- Las cuentas se crean únicamente desde el registro. No se insertan usuarios demo.

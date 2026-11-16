@@ -72,30 +72,3 @@ export const verifyPhoneOtpApi = async (phone: string, code: string): Promise<{ 
     return { success: true, message: 'Código verificado' };
   }
 };
-
-export const generateSecurityToken = (destination: string, _type: string = 'password_reset') => {
-  const token = Math.floor(100000 + Math.random() * 900000).toString();
-  return { token };
-};
-
-export const verifySecurityToken = (_destination: string, code: string, _type: string = 'password_reset') => {
-  if (code && code.length === 6) {
-    return { valid: true, message: 'Código verificado' };
-  }
-  return { valid: false, message: 'Código incorrecto' };
-};
-
-export const resetUserPasswordInDb = async (identifier: string, newPass: string) => {
-  try {
-    const base = getBackendUrl();
-    const res = await fetch(`${base}/api/auth/reset-password`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ identifier, new_password: newPass }),
-    });
-    const data = await res.json();
-    return { success: Boolean(data.success), message: data.message || 'Operación realizada' };
-  } catch {
-    return { success: true, message: 'Contraseña actualizada' };
-  }
-};
