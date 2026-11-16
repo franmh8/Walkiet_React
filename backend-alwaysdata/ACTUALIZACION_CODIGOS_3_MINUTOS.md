@@ -27,12 +27,13 @@ Después traer la versión nueva e instalar las dependencias:
 
 ```sh
 git fetch origin
-git switch codex/fix-contacts-mysql-crud
-git pull --ff-only origin codex/fix-contacts-mysql-crud
+git switch main
+git pull --ff-only origin main
 npm ci
 ```
 
-Los cambios están en la rama del PR #1; el PR sigue sin fusionarse a `main`.
+La versión compartida por el equipo se descarga desde `main`. Consulta el
+[README del proyecto](../README.md) para sincronizar un equipo existente.
 
 ## 2. Sustituir cuatro PHP en Alwaysdata
 
