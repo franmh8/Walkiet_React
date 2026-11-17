@@ -60,6 +60,7 @@ archivos privados del servidor y no se comparten mediante Git.
 - [Grupos](backend-alwaysdata/GRUPOS_DESPLIEGUE.md)
 - [Radio en vivo, notificaciones y proceso continuo](backend-alwaysdata/PTT_DESPLIEGUE.md)
 - [Perfil y ajustes](backend-alwaysdata/PERFIL_DESPLIEGUE.md)
+- [Fotos de perfil visibles en chats y contactos](backend-alwaysdata/FOTOS_CHAT_DESPLIEGUE.md)
 - [Verificación de correo y recuperación de acceso](backend-alwaysdata/CORREO_SEGURIDAD_DESPLIEGUE.md)
 - [Envío mediante Gmail SMTP](backend-alwaysdata/SMTP_GMAIL_DESPLIEGUE.md)
 - [Actualizar códigos a 3 minutos](backend-alwaysdata/ACTUALIZACION_CODIGOS_3_MINUTOS.md)

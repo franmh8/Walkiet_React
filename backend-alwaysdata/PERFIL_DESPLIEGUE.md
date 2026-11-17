@@ -21,7 +21,9 @@ La migración conserva las filas y campos anteriores. En una instalación nueva
 los avisos empiezan desactivados y requieren autorización del dispositivo.
 Las fotos se guardan aparte en **`account_avatars`**, con ID/FK compatibles con
 `users.id`, sin cargar imágenes en cada consulta de usuarios o contactos.
-Solo la API autenticada de la cuenta devuelve su foto.
+La API autenticada devuelve la foto propia y permite consultar fotos de contactos
+propios o compañeros de grupo, sin exponer el resto de su perfil. Véase
+[FOTOS_CHAT_DESPLIEGUE.md](FOTOS_CHAT_DESPLIEGUE.md).
 
 La selección usa archivos en navegador y galería/cámara en la app nativa, con
 recorte cuadrado y reducción
