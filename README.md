@@ -4,6 +4,12 @@ Aplicación de radio PTT, grupos, chat, contactos privados y perfil con Expo SDK
 React Native 0.88 y un servidor PHP/MySQL en Alwaysdata. La versión que comparte
 el equipo está en la rama `main`.
 
+Para la V1 se retiran los accesos de emergencia/SOS de todas las pantallas y las
+llamadas telefónicas y videollamadas de chat y contactos. Se conservan la radio
+PTT, los mensajes, los adjuntos y los datos de contacto. Este cambio solo requiere
+actualizar la app; no necesita cambios en PHP ni SQL. Los APK ya instalados deben
+recompilarse e instalarse de nuevo para reflejarlo.
+
 ## Actualizar un equipo existente
 
 Desde la carpeta `Walkiet_React`, detener Expo con **Ctrl+C** y revisar primero:

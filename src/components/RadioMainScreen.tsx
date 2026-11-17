@@ -2,7 +2,6 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
   Mic,
   Users,
-  AlertTriangle,
 } from 'lucide-react';
 import { useRadio } from '../context/RadioContext';
 import { useAuth } from '../context/AuthContext';
@@ -16,7 +15,6 @@ interface RadioMainScreenProps {
   onOpenContacts: () => void;
   onOpenChat: () => void;
   onOpenProfile: () => void;
-  onOpenSosModal: () => void;
 }
 
 export const RadioMainScreen: React.FC<RadioMainScreenProps> = ({
@@ -24,7 +22,6 @@ export const RadioMainScreen: React.FC<RadioMainScreenProps> = ({
   onOpenContacts,
   onOpenChat,
   onOpenProfile,
-  onOpenSosModal,
 }) => {
   const { user } = useAuth();
   const { settings } = useSettings();
@@ -129,10 +126,6 @@ export const RadioMainScreen: React.FC<RadioMainScreenProps> = ({
     }
   };
 
-  const handleSosClick = () => {
-    soundEngine.playEmergencyAlert();
-    onOpenSosModal();
-  };
 
   const channelTitle =
     mode === 'channel'
@@ -143,7 +136,7 @@ export const RadioMainScreen: React.FC<RadioMainScreenProps> = ({
 
   return (
     <div className="flex-1 flex flex-col justify-between bg-slate-50 dark:bg-[#070c16] text-slate-800 dark:text-slate-100 h-full min-h-0 select-none relative overflow-hidden transition-colors duration-200">
-      {/* TOP BAR: CANAL ACTUAL, SOS ICON & MEMBER BADGE (Matching Image 4) */}
+      {/* CANAL ACTUAL Y MIEMBROS */}
       <div className="w-full px-6 pt-6 sm:px-10 sm:pt-8 flex items-start justify-between z-10 gap-3 shrink-0">
         <div
           onClick={onOpenChannels}
@@ -158,18 +151,8 @@ export const RadioMainScreen: React.FC<RadioMainScreenProps> = ({
           </h1>
         </div>
 
-        {/* Action Pills: SOS Emergency (Icon-Only matching Image 4) and Member Count */}
+        {/* Miembros del canal */}
         <div className="flex items-center gap-2.5 shrink-0">
-          {/* Emergency Call / SOS Button (ICON-ONLY rounded square matching Image 4) */}
-          <button
-            id="btn-header-sos"
-            type="button"
-            onClick={handleSosClick}
-            className="w-10 h-10 rounded-2xl bg-[#e11d48] text-white flex items-center justify-center shadow-lg shadow-rose-600/35 hover:bg-rose-700 active:scale-95 transition-all cursor-pointer"
-            title="Llamada de Emergencia / Transmitir Alerta SOS"
-          >
-            <AlertTriangle className="w-5 h-5 text-white fill-white/20" />
-          </button>
 
           {/* Member count pill */}
           <button

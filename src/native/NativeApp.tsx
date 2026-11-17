@@ -7,7 +7,6 @@ import {
   TextInput,
   ScrollView,
   StatusBar,
-  Vibration,
   Platform,
   ActivityIndicator,
   Image,
@@ -51,7 +50,6 @@ import {
   SendIcon,
   PaperclipIcon,
   DoubleCheckIcon,
-  VideoIcon,
   ImageIcon,
   MapPinIcon,
   FileTextIcon,
@@ -167,17 +165,6 @@ interface User {
   authToken?: string;
 }
 
-interface Transmission {
-  id: string;
-  sender: string;
-  badge: string;
-  channel: string;
-  timestamp: string;
-  duration: number;
-  type: 'voice' | 'sos' | 'text';
-  text?: string;
-}
-
 export interface ChatMessage {
   id: string;
   senderId: string;
@@ -282,11 +269,9 @@ function NativeAppScreen() {
   useEffect(() => { setMode(account.settings.theme); }, [account.settings.theme, setMode]);
   useEffect(() => { soundEngine.setMessageSounds(account.settings.messageSounds); soundEngine.setRogerBeep(account.settings.rogerBeep); }, [account.settings.messageSounds, account.settings.rogerBeep]);
 
-  const [isSosActive, setIsSosActive] = useState(false);
   const [isMembersModalOpen, setIsMembersModalOpen] = useState(false);
 
   // History & Messages
-  const [transmissions, setTransmissions] = useState<Transmission[]>([]);
   const [messageInput, setMessageInput] = useState('');
 
   // Chat & Messaging State (WhatsApp-style C5i)
@@ -943,57 +928,6 @@ function NativeAppScreen() {
     } catch {}
   };
 
-  const handleTriggerSos = () => {
-    showNativeAlert(
-      '🚨 ALERTA DE EMERGENCIA C5i (10-33)',
-      '¿Confirmas la activación inmediata de código SOS con transmisión de coordenadas a toda la red del Centro de Comando?',
-      [
-        { text: 'Cancelar', style: 'cancel' },
-        {
-          text: 'ACTIVAR SOS',
-          style: 'destructive',
-          onPress: () => {
-            soundEngine.playEmergencyAlert();
-            setIsSosActive(true);
-            if (Platform.OS !== 'web') {
-              try { Vibration.vibrate([0, 500, 200, 500]); } catch {}
-            }
-            const sosTx: Transmission = {
-              id: Date.now().toString(),
-              sender: currentUser?.name || 'Unidad Táctica',
-              badge: currentUser?.badge || 'SOS-911',
-              channel: 'DESPACHO EMERGENCIAS 911',
-              timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-              duration: 5,
-              type: 'sos',
-              text: '🚨 ALERTA 10-33 SOS ACTIVA - Oficial en peligro requiere apoyo inmediato de unidades en cuadrante',
-            };
-            setTransmissions((prev) => [sosTx, ...prev]);
-
-            // Enviar alerta al backend
-            if (serverUrl) {
-              try {
-                const cleanUrl = serverUrl.replace(/\/+$/, '');
-                fetchWithTimeout(`${cleanUrl}/api/emergency/alert`, {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({
-                    userId: currentUser?.id,
-                    officer: currentUser?.name,
-                    callsign: currentUser?.badge,
-                    channelId: selectedChannel?.id || null,
-                    locationName: 'Pachuca Centro (Dispositivo Móvil Expo)',
-                    coords: { lat: 20.12, lng: -98.73 },
-                  }),
-                }, 3000).catch(() => {});
-              } catch {}
-            }
-          },
-        },
-      ]
-    );
-  };
-
   // Filtros y contadores para la pestaña Chat (WhatsApp-style C5i)
   const filteredConversations = useMemo(() => {
     return conversations.filter((c) => {
@@ -1018,7 +952,7 @@ function NativeAppScreen() {
 
   const handleStartDirectChat = (officer: ContactOfficer) => {
     if (!officer.registered_user_id) {
-      showTacticalAlert('Contacto sin cuenta', 'Este contacto aún no tiene cuenta en la app. Puedes llamarle por teléfono.', { type: 'info' });
+      showTacticalAlert('Contacto sin cuenta', 'Este contacto aún no tiene cuenta en la app. Podrás enviarle mensajes cuando se registre.', { type: 'info' });
       return false;
     }
     const recipient = officer.registered_user_id;
@@ -1551,25 +1485,6 @@ const position =
       showNativeAlert('No se pudo abrir el documento',
         error?.message || 'Prueba abrir el documento desde otra aplicación.');
     }
-  };
-
-  // Acciones de llamada desde el encabezado (Imagen 1)
-  const handleStartVideoCall = () => {
-    soundEngine.playIncomingChirp();
-    showNativeAlert(
-      '📹 Enlace de Videollamada C5i',
-      `Iniciando conexión de video encriptada punto a punto con ${activeConversation?.name || 'Oficial'}...`,
-      [{ text: 'Aceptar' }]
-    );
-  };
-
-  const handleStartVoiceCall = () => {
-    soundEngine.playIncomingChirp();
-    showNativeAlert(
-      '📞 Llamada Táctica C5i',
-      `Iniciando canal de voz seguro de alta fidelidad con ${activeConversation?.name || 'Oficial'}...`,
-      [{ text: 'Aceptar' }]
-    );
   };
 
   // Mantener los cuatro botones originales (Fotos, Cámara, Ubicación, Documento).
@@ -2250,13 +2165,6 @@ const position =
     <SafeAreaView style={styles.cleanContainer}>
       <StatusBar barStyle={dark ? "light-content" : "dark-content"} />
 
-      {/* SOS Active Banner */}
-      {isSosActive && (
-        <TouchableOpacity style={styles.sosBanner} onPress={() => setIsSosActive(false)}>
-          <Text style={styles.sosBannerText}>🚨 ALERTA SOS 10-33 ACTIVA • TOCAR PARA CANCELAR</Text>
-        </TouchableOpacity>
-      )}
-
       {/* Main Tab Content */}
       <View style={styles.cleanMainContent}>
         {currentTab === 'PTT' && (
@@ -2267,13 +2175,13 @@ const position =
           } }}
             groupsLoading={channelSelection.restoring} groupsError={channelSelection.error}
             hasGroups={channels.length > 0} onRetryGroups={() => { void refreshChannels(); }}
-            onGroups={() => setCurrentTab('Grupos')} onMembers={() => setIsMembersModalOpen(true)} onSos={handleTriggerSos} />
+            onGroups={() => setCurrentTab('Grupos')} onMembers={() => setIsMembersModalOpen(true)} />
         )}
 
         {currentTab === 'Grupos' && (
           <GroupsScreen key={channelsDirectory.scope} directory={channelsDirectory}
             selectedChannel={selectedChannel} onTune={chooseAndRememberChannel}
-            onSos={handleTriggerSos} onOpenPtt={() => setCurrentTab('PTT')} />
+            onOpenPtt={() => setCurrentTab('PTT')} />
         )}
 
         {currentTab === 'Chat' && (
@@ -2315,25 +2223,6 @@ const position =
                   </View>
 
 
-                  {/* Botón de Videollamada */}
-                  <TouchableOpacity
-                    style={styles.chatActiveHeaderActionBtn}
-                    onPress={handleStartVideoCall}
-                    activeOpacity={0.75}
-                    accessibilityLabel="Videollamada"
-                  >
-                    <VideoIcon size={20} color={palette.secondary} strokeWidth={2} />
-                  </TouchableOpacity>
-
-                  {/* Botón de Llamada de Voz */}
-                  <TouchableOpacity
-                    style={styles.chatActiveHeaderActionBtn}
-                    onPress={handleStartVoiceCall}
-                    activeOpacity={0.75}
-                    accessibilityLabel="Llamada de voz"
-                  >
-                    <PhoneIcon size={19} color={palette.secondary} strokeWidth={2} />
-                  </TouchableOpacity>
                 </View>
 
                 {/* Hilo de mensajes o Estado Vacío Limpio (Imagen 1) */}
@@ -2586,7 +2475,7 @@ const position =
             ) : (
               // LISTA DE CHATS (EXACTA A CAPTURA 1)
               <View style={styles.chatListView}>
-                {/* Header superior: Ícono de chat redondeado, Título "Chat", Botón SOS rojo y Botón Editar/Nuevo */}
+                {/* Encabezado de chat con acceso a nueva conversación */}
                 <View style={styles.chatTopHeader}>
                   <View style={styles.chatTopHeaderLeft}>
                     <View style={styles.chatHeaderIconBadge}>
@@ -2596,16 +2485,6 @@ const position =
                   </View>
 
                   <View style={styles.chatTopHeaderRight}>
-                    {/* Botón SOS Rojo idéntico a Captura 1 */}
-                    <TouchableOpacity
-                      style={styles.chatSosHeaderBtn}
-                      onPress={handleTriggerSos}
-                      activeOpacity={0.8}
-                      accessibilityLabel="Alerta de emergencia SOS"
-                    >
-                      <AlertTriangleIcon size={18} color="#ffffff" strokeWidth={2.4} />
-                    </TouchableOpacity>
-
                     {/* Botón Nuevo / Componer con icono de lápiz/editar */}
                     <TouchableOpacity
                       style={styles.chatComposeBtn}
@@ -2776,8 +2655,8 @@ const position =
         )}
 
         <ContactsScreen ref={contactsScreenRef} visible={currentTab === 'Contactos'} serverUrl={serverUrl}
-          directory={contactsDirectory} avatars={peerAvatars} onSos={handleTriggerSos} onStartChat={contact => { if (handleStartDirectChat(contact)) setCurrentTab('Chat'); }}
-          onContactUpdated={handleContactUpdated} onOpenCamera={handleOpenCamera} />
+          directory={contactsDirectory} avatars={peerAvatars} onStartChat={contact => { if (handleStartDirectChat(contact)) setCurrentTab('Chat'); }}
+          onContactUpdated={handleContactUpdated} />
 
         {currentTab === 'Perfil' && currentUser && (
           <ProfileScreen user={currentUser} account={account} notifications={notifications} serverUrl={serverUrl}
@@ -3413,17 +3292,6 @@ const baseStyles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
   },
-  sosBanner: {
-    backgroundColor: '#dc2626',
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-    alignItems: 'center',
-  },
-  sosBannerText: {
-    color: '#ffffff',
-    fontWeight: '800',
-    fontSize: 12,
-  },
   mainContent: {
     flex: 1,
   },
@@ -3556,18 +3424,6 @@ const baseStyles = StyleSheet.create({
   quickActions: {
     gap: 8,
   },
-  sosButton: {
-    backgroundColor: '#dc2626',
-    paddingVertical: 13,
-    borderRadius: 12,
-    alignItems: 'center',
-  },
-  sosButtonText: {
-    color: '#ffffff',
-    fontWeight: '800',
-    fontSize: 13,
-    letterSpacing: 1,
-  },
   quickRogerBtn: {
     backgroundColor: '#1e293b',
     paddingVertical: 11,
@@ -3611,10 +3467,6 @@ const baseStyles = StyleSheet.create({
     marginBottom: 10,
     borderLeftWidth: 3,
     borderLeftColor: '#38bdf8',
-  },
-  transmissionItemSos: {
-    borderLeftColor: '#ef4444',
-    backgroundColor: '#450a0a',
   },
   transHeader: {
     flexDirection: 'row',
@@ -4440,19 +4292,6 @@ const baseStyles = StyleSheet.create({
     alignItems: 'center',
     gap: 10,
   },
-  chatSosHeaderBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: 12,
-    backgroundColor: '#dc2626',
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#dc2626',
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.35,
-    shadowRadius: 5,
-    elevation: 4,
-  },
   chatComposeBtn: {
     width: 40,
     height: 40,
@@ -4696,33 +4535,6 @@ const baseStyles = StyleSheet.create({
     fontSize: 12,
     color: '#64748b',
     marginTop: 1,
-  },
-  chatActiveSosPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#ef4444',
-    paddingHorizontal: 9,
-    paddingVertical: 5,
-    borderRadius: 14,
-    gap: 4,
-    shadowColor: '#ef4444',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.3,
-    shadowRadius: 3,
-    elevation: 3,
-  },
-  chatActiveSosText: {
-    color: '#ffffff',
-    fontSize: 11,
-    fontWeight: '800',
-    letterSpacing: 0.5,
-  },
-  chatActiveHeaderActionBtn: {
-    width: 34,
-    height: 34,
-    borderRadius: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
   },
   chatMessagesScroll: {
     flex: 1,

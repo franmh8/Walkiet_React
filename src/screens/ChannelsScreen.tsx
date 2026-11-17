@@ -29,7 +29,6 @@ import { QrScannerModal } from '../components/QrScannerModal';
 const CATEGORIES = [
   { id: 'todos', label: 'Todos' },
   { id: 'general', label: 'General' },
-  { id: 'emergencia', label: 'Emergencia' },
   { id: 'tactico', label: 'Táctico' },
   { id: 'vialidad', label: 'Vialidad' },
   { id: 'inteligencia', label: 'Inteligencia' },
@@ -39,7 +38,6 @@ const CATEGORIES = [
 const CATEGORY_OPTIONS = [
   { id: 'tactico', label: 'Operaciones Especiales Tácticas' },
   { id: 'general', label: 'General / Despacho Central' },
-  { id: 'emergencia', label: 'Emergencias 911' },
   { id: 'vialidad', label: 'Vialidad y Tránsito' },
   { id: 'inteligencia', label: 'Inteligencia y Monitoreo' },
 ];

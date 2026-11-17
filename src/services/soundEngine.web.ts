@@ -139,34 +139,6 @@ class WebSoundEngine {
     }
   }
 
-  // Emergency SOS Siren Alert
-  public playEmergencyAlert() {
-    if (this.isMuted) return;
-    try {
-      const ctx = this.getContext();
-      if (!ctx) return;
-      const now = ctx.currentTime;
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-
-      osc.type = 'sawtooth';
-      osc.frequency.setValueAtTime(950, now);
-      osc.frequency.linearRampToValueAtTime(1550, now + 0.25);
-      osc.frequency.linearRampToValueAtTime(950, now + 0.5);
-
-      gain.gain.setValueAtTime(0.3 * this.volume, now);
-      gain.gain.linearRampToValueAtTime(0.01, now + 0.55);
-
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-
-      osc.start(now);
-      osc.stop(now + 0.55);
-    } catch (e) {
-      console.warn('Emergency alert error:', e);
-    }
-  }
-
   // Incoming transmission chirp
   public playIncomingChirp() {
     if (this.isMuted || !this.messageSounds) return;

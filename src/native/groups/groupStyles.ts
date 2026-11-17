@@ -1,18 +1,5 @@
 import { StyleSheet, Platform } from 'react-native';
 export const groupStyles = StyleSheet.create({
-  cleanSosBtn: {
-    width: 42,
-    height: 42,
-    borderRadius: 15,
-    backgroundColor: '#e11d48',
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#e11d48',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.35,
-    shadowRadius: 8,
-    elevation: 4,
-  },
   // Floating Channel Members Modal Styles (Matching Image 3)
   channelModalOverlay: {
     flex: 1,

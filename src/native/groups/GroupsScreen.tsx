@@ -16,10 +16,9 @@ interface Props {
   directory: ChannelsDirectory;
   selectedChannel: Channel | null;
   onTune: (channel: Channel | null) => void;
-  onSos: () => void;
   onOpenPtt: () => void;
 }
-export function GroupsScreen({ directory, selectedChannel, onTune, onSos, onOpenPtt }: Props) {
+export function GroupsScreen({ directory, selectedChannel, onTune, onOpenPtt }: Props) {
   const styles = useThemeStyles(baseStyles);
   const { palette, dark } = useAppTheme();
   const { channels } = directory;
@@ -208,17 +207,7 @@ export function GroupsScreen({ directory, selectedChannel, onTune, onSos, onOpen
               </View>
 
               <View style={styles.canalesHeaderActions}>
-                {/* 1. Botón SOS */}
-                <TouchableOpacity
-                  style={styles.cleanSosBtn}
-                  onPress={onSos}
-                  activeOpacity={0.85}
-                  accessibilityLabel="Llamada de Emergencia SOS"
-                >
-                  <AlertTriangleIcon size={18} color="#ffffff" strokeWidth={2.2} />
-                </TouchableOpacity>
-
-                {/* 2. Botón Unirse a Canal */}
+                {/* Botón Unirse a Canal */}
                 <TouchableOpacity
                   style={styles.canalesHeaderActionBtn}
                   onPress={() => {
@@ -232,7 +221,7 @@ export function GroupsScreen({ directory, selectedChannel, onTune, onSos, onOpen
                   <LogInIcon size={20} color="#334155" strokeWidth={2} />
                 </TouchableOpacity>
 
-                {/* 3. Botón Crear Canal */}
+                {/* Botón Crear Canal */}
                 <TouchableOpacity
                   style={styles.canalesHeaderCreateBtn}
                   onPress={() => {

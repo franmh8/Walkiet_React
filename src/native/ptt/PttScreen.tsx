@@ -1,16 +1,16 @@
 import { useThemeStyles, useAppTheme } from '../profile/AppTheme';
 import React, { useEffect, useRef } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Platform, ActivityIndicator } from 'react-native';
-import { AlertTriangleIcon, MicIcon, UsersIcon } from '../icons';
+import { MicIcon, UsersIcon } from '../icons';
 import { soundEngine } from '../../services/soundEngine';
 import type { Channel } from '../../services/channelsApi';
 import type { LiveRadio } from './useLiveRadio';
 import type { RadioNotifications } from './useRadioNotifications';
 
-export function PttScreen({ channel, radio, notifications, onGroups, onMembers, onSos, pttMode = 'hold', groupsLoading = false, groupsError = null, hasGroups = false, onRetryGroups }: {
+export function PttScreen({ channel, radio, notifications, onGroups, onMembers, pttMode = 'hold', groupsLoading = false, groupsError = null, hasGroups = false, onRetryGroups }: {
   pttMode?: 'hold'|'toggle'; channel: Channel | null; radio: LiveRadio; notifications: RadioNotifications;
   groupsLoading?: boolean; groupsError?: string | null; hasGroups?: boolean; onRetryGroups?: () => void;
-  onGroups: () => void; onMembers: () => void; onSos: () => void;
+  onGroups: () => void; onMembers: () => void;
 }) {
   const styles = useThemeStyles(baseStyles); const { palette } = useAppTheme();
   const keyboardDown = useRef(false); const transmitting = useRef(false);
@@ -35,7 +35,6 @@ export function PttScreen({ channel, radio, notifications, onGroups, onMembers, 
       <TouchableOpacity style={styles.titleArea} onPress={onGroups} accessibilityLabel="Seleccionar grupo de radio">
         <Text style={styles.eyebrow}>CANAL ACTUAL</Text><Text style={styles.title} numberOfLines={2}>{channelTitle}</Text>
       </TouchableOpacity>
-      <TouchableOpacity style={styles.sos} onPress={onSos} accessibilityLabel="Llamada de Emergencia SOS"><AlertTriangleIcon size={22} color="#fff" /></TouchableOpacity>
       <TouchableOpacity style={styles.members} onPress={onMembers} disabled={!channel} accessibilityLabel={channel ? 'Ver usuarios dentro del canal' : 'No hay grupo seleccionado'}>
         <UsersIcon size={20} color="#64748b" /><Text style={styles.memberCount}>{channel?.memberCount ?? 0}</Text>
       </TouchableOpacity>
@@ -66,7 +65,6 @@ const baseStyles = StyleSheet.create({
   header: { flexDirection: 'row', alignItems: 'center', padding: 20, gap: 8 },
   titleArea: { flex: 1 }, eyebrow: { color: '#64748b', fontSize: 11, fontWeight: '800', letterSpacing: 1 },
   title: { color: '#0f172a', fontSize: 22, fontWeight: '800', marginTop: 4 },
-  sos: { backgroundColor: '#e11d48', width: 44, height: 44, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
   members: { flexDirection: 'row', gap: 6, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 12, height: 44, backgroundColor: '#fff', borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 14 },
   memberCount: { color: '#334155', fontWeight: '700' },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 20, padding: 20 },
