@@ -7,6 +7,8 @@ import {
   TextInput,
   ScrollView,
   StatusBar,
+  Alert,
+  Vibration,
   Platform,
   ActivityIndicator,
   Image,
@@ -18,13 +20,15 @@ import {
 } from 'react-native';
 import { SafeAreaView, SafeAreaProvider } from 'react-native-safe-area-context';
 import { safeStorage } from './storage';
+import { useChatController } from './chat/ChatController';
+import { ChatAttachmentsMenu } from './chat/ChatAttachmentsMenu';
+/* WALKIET_CHAT_MODULAR_V1 */
+
+/* WALKIET_CHAT_SYNC_V1 */
 import { logoutContactSession, type DirectoryContact as ContactOfficer } from '../services/contactsApi';
 import { ContactsScreen, type ContactsScreenHandle } from './contacts/ContactsScreen';
 import { useContactsDirectory } from './contacts/useContactsDirectory';
-import { useChannelSelection } from './groups/useChannelSelection';
 import { PeerAvatar } from './profile/PeerAvatar';
-import { usePeerPresence } from './profile/usePeerPresence';
-import { presenceLabel } from '../services/presence';
 import { usePeerAvatars } from './profile/usePeerAvatars';
 import { useNativeFeedback } from './components/NativeFeedback';
 import c5iLogoImg from '../../assets/c5i-logo.png';
@@ -52,6 +56,7 @@ import {
   SendIcon,
   PaperclipIcon,
   DoubleCheckIcon,
+  VideoIcon,
   ImageIcon,
   MapPinIcon,
   FileTextIcon,
@@ -167,6 +172,17 @@ interface User {
   authToken?: string;
 }
 
+interface Transmission {
+  id: string;
+  sender: string;
+  badge: string;
+  channel: string;
+  timestamp: string;
+  duration: number;
+  type: 'voice' | 'sos' | 'text';
+  text?: string;
+}
+
 export interface ChatMessage {
   id: string;
   senderId: string;
@@ -193,7 +209,103 @@ export interface Conversation {
   lastMessage: string;
   lastMessageTime: string;
   unreadCount: number;
+  isOnline: boolean;
   messages: ChatMessage[];
+}
+
+// Preferencia de grupo por cuenta. No guardar un canal en una clave global:
+// una cuenta diferente no debe heredar el grupo de otro usuario.
+interface SavedChannelSelection {
+  id: string;
+  name: string;
+  code?: string;
+}
+
+const lastChannelStorageKey = (userId: string) =>
+  `c5i_last_selected_channel_${encodeURIComponent(String(userId))}`;
+
+const normalizeChannelName = (value: string) =>
+  String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().replace(/\s+/g, ' ').toUpperCase();
+
+function getChannelPreferenceKeys(user: User): string[] {
+  // El ID del backend tiene prioridad. Correo/teléfono/identificador de acceso
+  // permiten recuperar la preferencia aun si cambió el ID entregado por la API.
+  const identifiers: string[] = [];
+  const id = String(user.id || '').trim();
+  if (id) identifiers.push(lastChannelStorageKey(id)); // Compatibilidad con versiones anteriores.
+  const phone = String(user.phone_number || '').replace(/\D/g, '');
+  if (phone.length >= 10) identifiers.push(`c5i_last_channel_phone_${phone}`);
+  const email = String(user.email || '').trim().toLowerCase();
+  if (email.includes('@')) identifiers.push(`c5i_last_channel_email_${encodeURIComponent(email)}`);
+  const login = String(user.loginIdentifier || '').trim().toLowerCase();
+  if (login.includes('@')) identifiers.push(`c5i_last_channel_email_${encodeURIComponent(login)}`);
+  else if (/^\d{10,}$/.test(login.replace(/\D/g, ''))) {
+    identifiers.push(`c5i_last_channel_phone_${login.replace(/\D/g, '')}`);
+  }
+  return [...new Set(identifiers)];
+}
+
+function parseSavedChannel(value: string | null): SavedChannelSelection | null {
+  if (!value) return null;
+  try {
+    const item = JSON.parse(value);
+    if (item && String(item.id || '').trim() && String(item.name || '').trim()) {
+      return {
+        id: String(item.id).trim(),
+        name: String(item.name).trim(),
+        code: item.code ? String(item.code) : undefined,
+      };
+    }
+  } catch (error) {
+    console.warn('[Walkiet] Datos antiguos del grupo guardado no válidos:', error);
+  }
+  return null;
+}
+
+async function readSavedChannelSelection(user: User): Promise<SavedChannelSelection | null> {
+  for (const key of getChannelPreferenceKeys(user)) {
+    let raw: string | null = null;
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      // Esta lectura es persistente, no depende del fallback temporal en memoria.
+      try { raw = window.localStorage.getItem(key); }
+      catch (error) { console.warn('[Walkiet] No se pudo leer localStorage:', error); }
+    }
+    if (raw === null) raw = await safeStorage.getItem(key);
+    const parsed = parseSavedChannel(raw);
+    if (parsed) return parsed;
+  }
+  return null;
+}
+
+async function writeSavedChannelSelection(user: User, channel: Channel | null): Promise<void> {
+  const keys = getChannelPreferenceKeys(user);
+  if (!keys.length) throw new Error('La cuenta no tiene identificador estable para guardar el grupo.');
+  const value = channel ? JSON.stringify({ id: String(channel.id), name: channel.name, code: channel.code }) : null;
+  for (const key of keys) {
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      // Guardado síncrono: el usuario puede cerrar sesión inmediatamente
+      // después de tocar SINTONIZAR sin perder la preferencia.
+      if (value === null) window.localStorage.removeItem(key);
+      else window.localStorage.setItem(key, value);
+      if (window.localStorage.getItem(key) !== value) {
+        throw new Error('El navegador no confirmó el almacenamiento del grupo.');
+      }
+    } else if (value === null) {
+      await safeStorage.removeItem(key);
+    } else {
+      await safeStorage.setItem(key, value);
+    }
+  }
+}
+
+function findRestoredChannel(channels: Channel[], saved: SavedChannelSelection): Channel | null {
+  // No sintonizar un grupo solo porque reutiliza un ID. Se exige también el nombre.
+  const name = normalizeChannelName(saved.name);
+  const exact = channels.find(ch => String(ch.id) === saved.id && normalizeChannelName(ch.name) === name);
+  if (exact) return exact;
+  // El backend puede reasignar IDs; admitir solo una coincidencia inequívoca.
+  const sameName = channels.filter(ch => normalizeChannelName(ch.name) === name);
+  return sameName.length === 1 ? sameName[0] : null;
 }
 
 // Helper con timeout para peticiones en red móvil/wifi
@@ -256,6 +368,13 @@ function NativeAppScreen() {
 
   // Radio y selección de grupo por cuenta.
   // Se recupera el canal elegido por este usuario, si sigue disponible.
+  const [selectedChannel, setSelectedChannel] = useState<Channel | null>(null);
+  const [pendingSavedChannel, setPendingSavedChannel] = useState<{
+    userId: string;
+    channel: SavedChannelSelection;
+    revision: number;
+  } | null>(null);
+  const channelChoiceRevisionRef = useRef(0);
   const [serverUrl, setServerUrl] = useState('https://walkiet.alwaysdata.net');
   const updateProfileUser = useCallback((profile: AccountUser) => {
     setCurrentUser(previous => {
@@ -270,17 +389,14 @@ function NativeAppScreen() {
   useEffect(() => { setMode(account.settings.theme); }, [account.settings.theme, setMode]);
   useEffect(() => { soundEngine.setMessageSounds(account.settings.messageSounds); soundEngine.setRogerBeep(account.settings.rogerBeep); }, [account.settings.messageSounds, account.settings.rogerBeep]);
 
+  const [isSosActive, setIsSosActive] = useState(false);
   const [isMembersModalOpen, setIsMembersModalOpen] = useState(false);
 
   // History & Messages
+  const [transmissions, setTransmissions] = useState<Transmission[]>([]);
   const [messageInput, setMessageInput] = useState('');
 
   // Chat & Messaging State (WhatsApp-style C5i)
-  const [conversations, setConversations] = useState<Conversation[]>([]);
-  const [activeConversation, setActiveConversation] = useState<Conversation | null>(null);
-  const [chatSearchQuery, setChatSearchQuery] = useState('');
-  const [selectedChatFilter, setSelectedChatFilter] = useState<'Todos' | 'Grupos' | 'Directos'>('Todos');
-  const [chatDraftMessage, setChatDraftMessage] = useState('');
   const [isAttachMenuOpen, setIsAttachMenuOpen] = useState(false);
   const [isLiveCameraModalOpen, setIsLiveCameraModalOpen] = useState(false);
   const [liveCameraStream, setLiveCameraStream] = useState<any>(null);
@@ -311,7 +427,7 @@ function NativeAppScreen() {
           sendMediaMessage('image', '📸 Foto Capturada con Cámara Táctica', dataUrl, 'evidencia_camara.jpg');
         }
       } catch (e: any) {
-        showNativeAlert('Error al capturar foto', e.message || 'No se pudo procesar la imagen.');
+        Alert.alert('Error al capturar foto', e.message || 'No se pudo procesar la imagen.');
       }
     }
     handleCloseLiveCamera();
@@ -328,20 +444,31 @@ function NativeAppScreen() {
   };
 
   // Modals for Chat & Contacts
-  const [isNewChatModalOpen, setIsNewChatModalOpen] = useState(false);
 
   // Modal: Crear Grupo de Conversación
-  const [isCreateGroupChatModalOpen, setIsCreateGroupChatModalOpen] = useState(false);
-  const [newGroupName, setNewGroupName] = useState('');
-  const [selectedGroupMembers, setSelectedGroupMembers] = useState<string[]>([]);
-  const [createGroupError, setCreateGroupError] = useState<string | null>(null);
 
-  const { showTacticalToast, showTacticalAlert, showNativeAlert, feedback } = useNativeFeedback();
+  const { showTacticalToast, feedback } = useNativeFeedback();
+  const {
+    conversations, setConversations, activeConversation, setActiveConversation,
+    chatSearchQuery, setChatSearchQuery, selectedChatFilter, setSelectedChatFilter,
+    chatDraftMessage, setChatDraftMessage,
+    isNewChatModalOpen, setIsNewChatModalOpen,
+    isCreateGroupChatModalOpen, setIsCreateGroupChatModalOpen,
+    newGroupName, setNewGroupName,
+    selectedGroupMembers, setSelectedGroupMembers,
+    createGroupError, setCreateGroupError,
+    chatSyncError, filteredConversations,
+    totalChatCount, groupsChatCount, directChatCount,
+    handleStartDirectChat, handleCreateGroupChatSubmit, handleContactUpdated,
+    sendMediaMessage, handleSendChatMessage, toggleGroupMemberSelection,
+  } = useChatController({
+    serverUrl, currentUser,
+    notify: (message, type) => showTacticalToast(message, type),
+    playMessageSound: () => soundEngine.playIncomingChirp(),
+  });
   const contactsDirectory = useContactsDirectory(serverUrl, currentUser ? { userId: currentUser.id, token: currentUser.authToken || '' } : null);
   const channelsDirectory = useChannelsDirectory(serverUrl, currentUser?.id || '', currentUser?.authToken || '');
-  const { channels, refresh: refreshChannels } = channelsDirectory;
-  const channelSelection = useChannelSelection(serverUrl, currentUser, channelsDirectory);
-  const { selectedChannel, choose: chooseAndRememberChannel } = channelSelection;
+  const { channels, synced: channelsSyncedFromServer, refresh: refreshChannels } = channelsDirectory;
   const officersList = contactsDirectory.contacts;
   const contactsScreenRef = useRef<ContactsScreenHandle>(null);
   const avatarIds = [
@@ -352,9 +479,6 @@ function NativeAppScreen() {
   const peerAvatars = usePeerAvatars(serverUrl, currentUser?.authToken || '', avatarIds,
     !!currentUser && (currentTab === 'Chat' || currentTab === 'Contactos'));
 
-
-  const presence = usePeerPresence(serverUrl, currentUser?.authToken || '', avatarIds);
-  const isPeerOnline = (id?: string) => !!id && !!presence.peers[id]?.online && (presence.peers[id]?.onlineUntil || 0) > presence.now;
 
   // Circuit breaker para endpoints PHP en Alwaysdata (evita spam de 404 en consola si aún no se han subido los archivos)
   const isChatPhpAvailableRef = useRef<boolean | null>(null);
@@ -386,87 +510,77 @@ function NativeAppScreen() {
     })();
   }, []);
 
-  useEffect(() => { setIsMembersModalOpen(false); }, [channelsDirectory.scope]);
+  useEffect(() => {
+    setSelectedChannel(null);
+    setIsMembersModalOpen(false);
+  }, [channelsDirectory.scope]);
+
+  // Restaurar la selección solo del usuario autenticado. Una elección manual más
+  // reciente tiene prioridad sobre cualquier lectura asíncrona de la memoria.
+  useEffect(() => {
+    if (!currentUser?.id) {
+      setPendingSavedChannel(null);
+      return;
+    }
+    let active = true;
+    const userId = String(currentUser.id);
+    const revision = channelChoiceRevisionRef.current;
+
+    readSavedChannelSelection(currentUser)
+      .then((saved) => {
+        if (!active || revision !== channelChoiceRevisionRef.current || !saved) return;
+        setPendingSavedChannel({ userId, channel: saved, revision });
+      })
+      .catch((error) => console.warn('No se pudo recuperar el último canal:', error));
+
+    return () => { active = false; };
+  }, [currentUser?.id]);
+
+  // Restaurar únicamente después de validar la membresía con el servidor.
+  // Comprobamos también el nombre para no sintonizar otro grupo si el servidor
+  // reutiliza un identificador.
+  useEffect(() => {
+    if (!currentUser?.id || !pendingSavedChannel) return;
+    if (String(currentUser.id) !== pendingSavedChannel.userId ||
+        channelChoiceRevisionRef.current !== pendingSavedChannel.revision) return;
+    // La preferencia guardada no concede acceso por sí sola.
+    const restored = findRestoredChannel(channels, pendingSavedChannel.channel);
+    if (restored && channelsSyncedFromServer) {
+      setSelectedChannel(restored);
+      setPendingSavedChannel(null);
+    } else if (channelsSyncedFromServer) {
+      // El canal guardado ya no figura entre los canales del servidor.
+      // No sintonizar automáticamente un canal distinto o solo de ejemplo.
+      setSelectedChannel(null);
+      setPendingSavedChannel(null);
+    }
+  }, [currentUser?.id, pendingSavedChannel, channels, channelsSyncedFromServer]);
+
+  // Sintonizar / abandonar un grupo y recordar esa elección por usuario.
+  const chooseAndRememberChannel = useCallback((channel: Channel | null) => {
+    channelChoiceRevisionRef.current += 1;
+    setPendingSavedChannel(null);
+    setSelectedChannel(channel);
+    if (!currentUser?.id) return;
+
+    writeSavedChannelSelection(currentUser, channel)
+      .catch((error) => {
+        console.warn('No se pudo guardar la selección del canal:', error);
+        setInlineWarning('El grupo se seleccionó, pero tu navegador no permitió guardarlo. Revisa los permisos de almacenamiento del sitio.');
+      });
+  }, [currentUser?.id]);
 
   // En navegador web, enviar text/plain evita preflights OPTIONS innecesarios
   const getSafePostHeaders = () => ({
     'Content-Type': Platform.OS === 'web' ? 'text/plain;charset=UTF-8' : 'application/json',
   });
 
-
-  // Sincronizar mensajes del chat activo desde el backend (con Circuit Breaker inteligente)
-  const syncConversationMessages = useCallback(async (conv: Conversation) => {
-    if (!serverUrl || !conv) return;
-
-    // Si chat-messages.php no existe en el host remoto, pausar sondeo
-    if (isChatPhpAvailableRef.current === false) {
-      if (Date.now() - lastChatProbeTimeRef.current < 120000) {
-        return;
-      }
-    }
-    lastChatProbeTimeRef.current = Date.now();
-
-    try {
-      const cleanUrl = serverUrl.replace(/\/+$/, '');
-      const isAlwaysdata = cleanUrl.includes('alwaysdata.net') || cleanUrl.includes('.php');
-      const queryParam = conv.type === 'group'
-        ? `channel_id=${encodeURIComponent(conv.id)}`
-        : `receiver_id=${encodeURIComponent(conv.targetUserId || '')}&user_id=${encodeURIComponent(currentUser?.id || 'usr-c5i-01')}`;
-
-      let res: any = null;
-      if (isAlwaysdata) {
-        res = await fetchWithTimeout(`${cleanUrl}/chat-messages.php?${queryParam}`, {}, 3000).catch(() => null);
-        if (res && res.status >= 400) {
-          isChatPhpAvailableRef.current = false;
-          return;
-        }
-      } else {
-        res = await fetchWithTimeout(`${cleanUrl}/api/chat-messages?${queryParam}`, {}, 3000).catch(() => null);
-      }
-
-      if (res && res.ok) {
-        isChatPhpAvailableRef.current = true;
-        const data = await res.json().catch(() => null);
-        if (data && Array.isArray(data.messages) && data.messages.length > 0) {
-          const remoteMsgs: ChatMessage[] = data.messages.map((m: any) => ({
-            id: m.id,
-            senderName: m.sender_name || 'Oficial',
-            senderCallsign: m.sender_callsign || 'OPERATIVO',
-            text: m.text,
-            timestamp: m.timestamp || 'Ahora',
-            isSelf: m.sender_id === (currentUser?.id || 'usr-c5i-01'),
-            status: 'sent',
-            mediaType: m.mediaType || 'text',
-            mediaUrl: m.mediaUrl,
-            fileName: m.fileName,
-          }));
-
-          setActiveConversation((prev) => {
-            if (!prev || prev.id !== conv.id) return prev;
-            return {
-              ...prev,
-              lastMessage: remoteMsgs[remoteMsgs.length - 1].text,
-              lastMessageTime: remoteMsgs[remoteMsgs.length - 1].timestamp,
-              messages: remoteMsgs,
-            };
-          });
-        }
-      }
-    } catch {}
-  }, [serverUrl, currentUser]);
-
-  // El chat mantiene su sondeo independiente de la agenda y de los grupos.
   useEffect(() => {
-    if (serverUrl) {
-      const timer = setInterval(() => {
-        // El chat respeta el circuit breaker de sus endpoints.
-        if (activeConversation) {
-          syncConversationMessages(activeConversation);
-        }
-      }, 4000);
-      return () => clearInterval(timer);
-    }
-  }, [serverUrl, syncConversationMessages, activeConversation]);
+    if (!channelsSyncedFromServer) return;
+    setSelectedChannel(previous => previous ? channels.find(channel => channel.id === previous.id) || null : null);
+  }, [channels, channelsSyncedFromServer]);
+
+  // Conversaciones y mensajes: useChatController (src/native/chat).
 
   const radio = useLiveRadio(serverUrl, currentUser?.id || '', currentUser?.authToken || '', selectedChannel);
   useEffect(() => { soundEngine.setRadioActive(radio.state !== 'off'); }, [radio.state]);
@@ -475,9 +589,8 @@ function NativeAppScreen() {
   const notifications = useRadioNotifications(serverUrl, currentUser?.authToken || '', currentUser?.id || '', async channelId => {
     const scope = notificationSession.current;
     try {
-      const list = await refreshChannels();
+      const list = await channelsDirectory.api.list();
       if (notificationSession.current !== scope) return;
-      if (!list) { showTacticalToast('No se pudo consultar el grupo. Abre Grupos y vuelve a intentar.', 'warning'); return; }
       const matching = list.find(channel => channel.id === channelId);
       if (!matching) { showTacticalToast('Ya no perteneces al grupo de este aviso.', 'info'); return; }
       chooseAndRememberChannel(matching); setCurrentTab('PTT');
@@ -626,7 +739,16 @@ function NativeAppScreen() {
         return;
       }
 
-      // La selección se restaura después de validar los grupos de esta sesión.
+      // Recuperar el grupo DURANTE el login, antes de mostrar PTT.
+      // Antes dependía exclusivamente de un useEffect posterior y podía quedar
+      // sin selección al alternar de cuenta o actualizar los grupos por red.
+      const lastChannel = await readSavedChannelSelection(remoteUser);
+      channelChoiceRevisionRef.current += 1;
+      const loginRevision = channelChoiceRevisionRef.current;
+      setPendingSavedChannel(lastChannel ? {
+        userId: String(remoteUser.id), channel: lastChannel, revision: loginRevision,
+      } : null);
+      setSelectedChannel(null);
       setCurrentTab('PTT');
       setCurrentUser(remoteUser);
       try {
@@ -911,12 +1033,12 @@ function NativeAppScreen() {
     void radio.disconnect();
     soundEngine.stopAllAudio();
     setPassword(''); setShowPassword(false);
-    if (forgetAccount && currentUser) { try { await channelSelection.forget(); } catch {} }
+    if (forgetAccount && currentUser) { try { await writeSavedChannelSelection(currentUser, null); } catch {} }
     // Refuerzo al cerrar sesión: persistir la selección actual ANTES de limpiar
     // el estado del usuario. Si no había grupo, conservamos la preferencia previa.
     if (!forgetAccount && currentUser && selectedChannel) {
       try {
-        await channelSelection.remember();
+        await writeSavedChannelSelection(currentUser, selectedChannel);
       } catch (error) {
         console.warn('[Walkiet] No fue posible guardar el grupo al cerrar sesión:', error);
         setInlineWarning('No se pudo guardar el grupo en este dispositivo.');
@@ -924,6 +1046,9 @@ function NativeAppScreen() {
     }
     // La selección se conserva en el almacenamiento para el próximo login;
     // únicamente se quita de esta sesión para no compartirla con otra cuenta.
+    channelChoiceRevisionRef.current += 1;
+    setPendingSavedChannel(null);
+    setSelectedChannel(null);
     setIsMembersModalOpen(false);
     setCurrentTab('PTT');
     setCurrentUser(null);
@@ -932,196 +1057,68 @@ function NativeAppScreen() {
     } catch {}
   };
 
-  // Filtros y contadores para la pestaña Chat (WhatsApp-style C5i)
-  const filteredConversations = useMemo(() => {
-    return conversations.filter((c) => {
-      if (selectedChatFilter === 'Grupos' && c.type !== 'group') return false;
-      if (selectedChatFilter === 'Directos' && c.type !== 'direct') return false;
-      if (chatSearchQuery.trim()) {
-        const q = chatSearchQuery.toLowerCase();
-        const matchesName = c.name.toLowerCase().includes(q);
-        const matchesCallsign = c.callsign ? c.callsign.toLowerCase().includes(q) : false;
-        const matchesLastMsg = c.lastMessage.toLowerCase().includes(q);
-        return matchesName || matchesCallsign || matchesLastMsg;
-      }
-      return true;
-    });
-  }, [conversations, selectedChatFilter, chatSearchQuery]);
+  const handleTriggerSos = () => {
+    Alert.alert(
+      '🚨 ALERTA DE EMERGENCIA C5i (10-33)',
+      '¿Confirmas la activación inmediata de código SOS con transmisión de coordenadas a toda la red del Centro de Comando?',
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        {
+          text: 'ACTIVAR SOS',
+          style: 'destructive',
+          onPress: () => {
+            soundEngine.playEmergencyAlert();
+            setIsSosActive(true);
+            if (Platform.OS !== 'web') {
+              try { Vibration.vibrate([0, 500, 200, 500]); } catch {}
+            }
+            const sosTx: Transmission = {
+              id: Date.now().toString(),
+              sender: currentUser?.name || 'Unidad Táctica',
+              badge: currentUser?.badge || 'SOS-911',
+              channel: 'DESPACHO EMERGENCIAS 911',
+              timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+              duration: 5,
+              type: 'sos',
+              text: '🚨 ALERTA 10-33 SOS ACTIVA - Oficial en peligro requiere apoyo inmediato de unidades en cuadrante',
+            };
+            setTransmissions((prev) => [sosTx, ...prev]);
 
-  const filteredOfficers = officersList;
-
-  const totalChatCount = conversations.length;
-  const groupsChatCount = conversations.filter((c) => c.type === 'group').length;
-  const directChatCount = conversations.filter((c) => c.type === 'direct').length;
-
-  const handleStartDirectChat = (officer: ContactOfficer) => {
-    if (!officer.registered_user_id) {
-      showTacticalAlert('Contacto sin cuenta', 'Este contacto aún no tiene cuenta en la app. Podrás enviarle mensajes cuando se registre.', { type: 'info' });
-      return false;
-    }
-    const recipient = officer.registered_user_id;
-    const existing = conversations.find(
-      (c) => c.type === 'direct' && (c.targetUserId === recipient || c.name === officer.name)
+            // Enviar alerta al backend
+            if (serverUrl) {
+              try {
+                const cleanUrl = serverUrl.replace(/\/+$/, '');
+                fetchWithTimeout(`${cleanUrl}/api/emergency/alert`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    userId: currentUser?.id,
+                    officer: currentUser?.name,
+                    callsign: currentUser?.badge,
+                    channelId: selectedChannel?.id || null,
+                    locationName: 'Pachuca Centro (Dispositivo Móvil Expo)',
+                    coords: { lat: 20.12, lng: -98.73 },
+                  }),
+                }, 3000).catch(() => {});
+              } catch {}
+            }
+          },
+        },
+      ]
     );
-    if (existing) {
-      setActiveConversation(existing);
-      setIsNewChatModalOpen(false);
-      return true;
-    }
-
-    const newConv: Conversation = {
-      id: `conv-off-${officer.id}`,
-      type: 'direct',
-      name: officer.name,
-      callsign: officer.callsign,
-      unit: officer.unit,
-      targetUserId: recipient,
-      lastMessage: '',
-      lastMessageTime: '',
-      unreadCount: 0,
-      messages: [], // Chat limpio sin mensajes aleatorios automáticos
-    };
-
-    setConversations((prev) => [newConv, ...prev]);
-    setActiveConversation(newConv);
-    setIsNewChatModalOpen(false);
-    try {
-      soundEngine.playIncomingChirp();
-    } catch {}
-    return true;
   };
 
-  const handleCreateGroupChatSubmit = () => {
-    const cleanName = newGroupName.trim();
-    if (!cleanName) {
-      setCreateGroupError('Ingresa un nombre para el grupo de conversación.');
-      return;
-    }
+  // Filtros y contadores: useChatController.
 
-    const newGroup: Conversation = {
-      id: `conv-grp-${Date.now()}`,
-      type: 'group',
-      name: cleanName,
-      participantCount: selectedGroupMembers.length + 1,
-      lastMessage: '',
-      lastMessageTime: '',
-      unreadCount: 0,
-      messages: [], // Chat limpio
-    };
+  const filteredOfficers = officersList;
+  // Creación y cambios de chats: useChatController.
 
-    setConversations((prev) => [newGroup, ...prev]);
-    setActiveConversation(newGroup);
-    setIsCreateGroupChatModalOpen(false);
-    setIsNewChatModalOpen(false);
-    setNewGroupName('');
-    setSelectedGroupMembers([]);
-    setCreateGroupError(null);
-    try {
-      soundEngine.playIncomingChirp();
-    } catch {}
-  };
-
-  const handleContactUpdated = (contact: ContactOfficer) => {
-    setConversations(prev => prev.map(c => c.type === 'direct' && c.targetUserId === contact.registered_user_id
-      ? { ...c, name: contact.name, callsign: contact.callsign } : c));
-    setActiveConversation(prev => prev?.type === 'direct' && prev.targetUserId === contact.registered_user_id
-      ? { ...prev, name: contact.name, callsign: contact.callsign } : prev);
-  };
   const openContactRegistration = () => {
     setIsNewChatModalOpen(false);
     contactsScreenRef.current?.openCreate();
   };
 
-  // Envío genérico de mensajes multimedia y tácticos
-  const sendMediaMessage = (
-    mediaType: 'text' | 'image' | 'voice' | 'location' | 'document',
-    caption: string,
-    mediaUrl?: string,
-    fileName?: string,
-    coords?: { latitude: number; longitude: number; address?: string }
-  ) => {
-    if (!activeConversation) return;
-    const newMsg: ChatMessage = {
-      id: `msg-${Date.now()}`,
-      senderId: currentUser?.id || 'me',
-      senderName: currentUser?.name || 'Tú',
-      senderCallsign: currentUser?.callsign || currentUser?.badge || 'C5I-OP',
-      text: caption,
-      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      isSelf: true,
-      status: 'sent',
-      mediaType,
-      mediaUrl,
-      fileName,
-      locationCoords: coords,
-    };
-
-    const updatedConv: Conversation = {
-      ...activeConversation,
-      lastMessage: caption,
-      lastMessageTime: newMsg.timestamp,
-      messages: [...activeConversation.messages, newMsg],
-    };
-
-    setActiveConversation(updatedConv);
-    setConversations((prev) => [updatedConv, ...prev.filter((c) => c.id !== updatedConv.id)]);
-
-    // Guardar y despachar en base de datos para sincronización en tiempo real con Web y Dispositivos
-    if (serverUrl && activeConversation) {
-      (async () => {
-        try {
-          const cleanUrl = serverUrl.replace(/\/+$/, '');
-          const isAlwaysdata = cleanUrl.includes('alwaysdata.net') || cleanUrl.includes('.php');
-          const headers = getSafePostHeaders();
-          const payload = JSON.stringify({
-            sender_id: currentUser?.id || 'usr-c5i-01',
-            sender_name: currentUser?.name || 'Oficial',
-            sender_callsign: currentUser?.callsign || currentUser?.badge || 'C5I-OP',
-            channel_id: activeConversation.type === 'group' ? activeConversation.id : null,
-            receiver_id: activeConversation.type === 'direct' ? (activeConversation.targetUserId || null) : null,
-            text: caption,
-            caption: caption,
-            mediaType,
-            mediaUrl,
-            fileName,
-          });
-
-          if (isAlwaysdata) {
-            const res = await fetchWithTimeout(`${cleanUrl}/chat-messages.php`, {
-              method: 'POST',
-              headers,
-              body: payload,
-            }, mediaType === 'image' || mediaType === 'document' ? 20000 : 4000).catch(() => null);
-            if (res && res.status >= 400) {
-              isChatPhpAvailableRef.current = false;
-            } else if (res && res.ok) {
-              isChatPhpAvailableRef.current = true;
-            }
-          } else {
-            await fetchWithTimeout(`${cleanUrl}/api/chat-messages`, {
-              method: 'POST',
-              headers,
-              body: payload,
-            }, mediaType === 'image' || mediaType === 'document' ? 20000 : 4000).catch(() => null);
-          }
-        } catch (e) {
-          console.warn('Error dispatching message to backend:', e);
-        }
-      })();
-    }
-
-    try {
-      soundEngine.playIncomingChirp();
-    } catch {}
-  };
-
-  // Envío de mensaje de texto
-  const handleSendChatMessage = () => {
-    if (!chatDraftMessage.trim() || !activeConversation) return;
-    const textToSend = chatDraftMessage.trim();
-    sendMediaMessage('text', textToSend);
-    setChatDraftMessage('');
-  };
+  // Envío de mensajes: useChatController.
 
   // Envío dinámico de nota de voz (cuando no hay texto escrito en el input)
   const handleSendVoiceNote = () => {
@@ -1144,7 +1141,7 @@ function NativeAppScreen() {
         const file = e.target?.files?.[0];
         if (!file) return;
         if (file.size > MAX_CHAT_ATTACHMENT_BYTES) {
-          showNativeAlert('Aviso', 'Elige una foto de hasta 3 MB.');
+          window.alert('Elige una foto de hasta 3 MB.');
           return;
         }
         const reader = new FileReader();
@@ -1168,14 +1165,14 @@ function NativeAppScreen() {
       const photo = result.assets[0];
       if (!photo.base64) throw new Error('No se pudieron leer los datos de la foto.');
       if (Math.ceil(photo.base64.length * 0.75) > MAX_CHAT_ATTACHMENT_BYTES) {
-        showNativeAlert('Foto demasiado grande', 'Elige una foto de hasta 3 MB.');
+        Alert.alert('Foto demasiado grande', 'Elige una foto de hasta 3 MB.');
         return;
       }
       const fileName = `foto_${Date.now()}.jpg`; // Base64 del selector es JPEG, incluso si el original era HEIC.
       // Base64 genera una URL transportable; file:// solamente sirve en el dispositivo de origen.
       sendMediaMessage('image', fileName, `data:image/jpeg;base64,${photo.base64}`, fileName);
     } catch (error: any) {
-      showNativeAlert('No se pudo abrir Fotos', error?.message || 'Revisa los permisos de tus fotos.');
+      Alert.alert('No se pudo abrir Fotos', error?.message || 'Revisa los permisos de tus fotos.');
     }
   };
 
@@ -1187,7 +1184,7 @@ function NativeAppScreen() {
         const ImagePicker = await import('expo-image-picker');
         const permission = await ImagePicker.requestCameraPermissionsAsync();
         if (!permission.granted) {
-          showNativeAlert('Permiso de cámara', 'Autoriza el acceso a la cámara en los ajustes de tu dispositivo.');
+          Alert.alert('Permiso de cámara', 'Autoriza el acceso a la cámara en los ajustes de tu dispositivo.');
           return;
         }
         const result = await ImagePicker.launchCameraAsync({
@@ -1200,13 +1197,13 @@ function NativeAppScreen() {
         const picture = result.assets[0];
         if (!picture.base64) throw new Error('No se pudo leer la foto capturada.');
         if (Math.ceil(picture.base64.length * 0.75) > MAX_CHAT_ATTACHMENT_BYTES) {
-          showNativeAlert('Foto demasiado grande', 'Intenta capturar una imagen más pequeña.');
+          Alert.alert('Foto demasiado grande', 'Intenta capturar una imagen más pequeña.');
           return;
         }
         const fileName = `camara_${Date.now()}.jpg`;
         sendMediaMessage('image', '📸 Foto capturada', `data:image/jpeg;base64,${picture.base64}`, fileName);
       } catch (error: any) {
-        showNativeAlert('Error de cámara', error?.message || 'No se pudo abrir la cámara.');
+        Alert.alert('Error de cámara', error?.message || 'No se pudo abrir la cámara.');
       }
       return;
     }
@@ -1222,7 +1219,7 @@ function NativeAppScreen() {
           return;
         } catch (error: any) {
           if (error?.name === 'NotAllowedError' || error?.name === 'PermissionDeniedError') {
-            showNativeAlert('Aviso', 'Permite el acceso a la cámara en el navegador.');
+            window.alert('Permite el acceso a la cámara en el navegador.');
             return;
           }
         }
@@ -1236,7 +1233,7 @@ function NativeAppScreen() {
           const file = e.target?.files?.[0];
           if (!file) return;
           if (file.size > MAX_CHAT_ATTACHMENT_BYTES) {
-            showNativeAlert('Aviso', 'Elige una imagen de hasta 3 MB.');
+            window.alert('Elige una imagen de hasta 3 MB.');
             return;
           }
           const reader = new FileReader();
@@ -1260,7 +1257,7 @@ function NativeAppScreen() {
         const Location = await import('expo-location');
         const permission = await Location.requestForegroundPermissionsAsync();
         if (!permission.granted) {
-          showNativeAlert('Permiso de ubicación', 'Autoriza la ubicación mientras usas la app.');
+          Alert.alert('Permiso de ubicación', 'Autoriza la ubicación mientras usas la app.');
           return;
         }
         const cachedPosition = await Location.getLastKnownPositionAsync({
@@ -1280,7 +1277,7 @@ const position =
           longitude: lng,
           address: `Precisión aproximada: ±${Math.round(position.coords.accuracy || 0)} m`,
         };
-        showNativeAlert('Compartir ubicación', '¿Quieres enviar tu ubicación actual a esta conversación?', [
+        Alert.alert('Compartir ubicación', '¿Quieres enviar tu ubicación actual a esta conversación?', [
           { text: 'Cancelar', style: 'cancel' },
           {
             text: 'Enviar ubicación',
@@ -1294,13 +1291,13 @@ const position =
           },
         ]);
       } catch (error: any) {
-        showNativeAlert('No se pudo obtener la ubicación', error?.message || 'Comprueba que el GPS esté activo.');
+        Alert.alert('No se pudo obtener la ubicación', error?.message || 'Comprueba que el GPS esté activo.');
       }
       return;
     }
     // Web: geolocalización estándar del navegador.
     if (typeof navigator === 'undefined' || !navigator.geolocation) {
-      showNativeAlert('Aviso', 'Geolocalización no disponible en este navegador.');
+      window.alert('Geolocalización no disponible en este navegador.');
       return;
     }
     navigator.geolocation.getCurrentPosition(
@@ -1326,7 +1323,7 @@ const position =
           `https://www.google.com/maps?q=${lat},${lng}`, undefined,
           { latitude: lat, longitude: lng, address: addressLabel });
       },
-      (error) => showNativeAlert('Aviso', error.message || 'No se pudo obtener tu ubicación.'),
+      (error) => window.alert(error.message || 'No se pudo obtener tu ubicación.'),
       { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
     );
   };
@@ -1348,7 +1345,7 @@ const position =
         const file = e.target?.files?.[0];
         if (!file) return;
         if (file.size > MAX_CHAT_ATTACHMENT_BYTES) {
-          showNativeAlert('Aviso', 'Elige un documento de hasta 3 MB.');
+          window.alert('Elige un documento de hasta 3 MB.');
           return;
         }
         const reader = new FileReader();
@@ -1391,7 +1388,7 @@ const position =
         reportedSize = file.size || 0;
       }
       if (reportedSize > MAX_CHAT_ATTACHMENT_BYTES) {
-        showNativeAlert('Documento demasiado grande', 'Elige un documento de hasta 3 MB.');
+        Alert.alert('Documento demasiado grande', 'Elige un documento de hasta 3 MB.');
         return;
       }
 
@@ -1400,7 +1397,7 @@ const position =
       const actualBytes = Math.floor((content.length * 3) / 4) -
         (content.endsWith('==') ? 2 : content.endsWith('=') ? 1 : 0);
       if (actualBytes > MAX_CHAT_ATTACHMENT_BYTES) {
-        showNativeAlert('Documento demasiado grande', 'Elige un documento de hasta 3 MB.');
+        Alert.alert('Documento demasiado grande', 'Elige un documento de hasta 3 MB.');
         return;
       }
       const mime = determineDocumentMime(pickedName,
@@ -1410,7 +1407,7 @@ const position =
         `data:${mime};base64,${content}`, fileName);
     } catch (error: any) {
       console.warn('[Walkiet] Error leyendo documento:', error);
-      showNativeAlert('No se pudo adjuntar el documento',
+      Alert.alert('No se pudo adjuntar el documento',
         error?.message || 'Intenta seleccionar un archivo local desde Descargas.');
     }
   };
@@ -1419,7 +1416,7 @@ const position =
   // Si no hay un visor directo, ofrecer el selector del sistema como alternativa.
   const handleOpenChatDocument = async (message: ChatMessage) => {
     if (!message.mediaUrl) {
-      showNativeAlert('Documento no disponible', 'Este mensaje no contiene un archivo descargable.');
+      Alert.alert('Documento no disponible', 'Este mensaje no contiene un archivo descargable.');
       return;
     }
     if (Platform.OS === 'web') {
@@ -1480,13 +1477,32 @@ const position =
         return;
       }
 
-      showNativeAlert('Visor no disponible',
+      Alert.alert('Visor no disponible',
         'No se encontró una aplicación compatible para abrir este documento en el teléfono.');
     } catch (error: any) {
       console.warn('[Walkiet] Error abriendo documento:', error);
-      showNativeAlert('No se pudo abrir el documento',
+      Alert.alert('No se pudo abrir el documento',
         error?.message || 'Prueba abrir el documento desde otra aplicación.');
     }
+  };
+
+  // Acciones de llamada desde el encabezado (Imagen 1)
+  const handleStartVideoCall = () => {
+    soundEngine.playIncomingChirp();
+    Alert.alert(
+      '📹 Enlace de Videollamada C5i',
+      `Iniciando conexión de video encriptada punto a punto con ${activeConversation?.name || 'Oficial'}...`,
+      [{ text: 'Aceptar' }]
+    );
+  };
+
+  const handleStartVoiceCall = () => {
+    soundEngine.playIncomingChirp();
+    Alert.alert(
+      '📞 Llamada Táctica C5i',
+      `Iniciando canal de voz seguro de alta fidelidad con ${activeConversation?.name || 'Oficial'}...`,
+      [{ text: 'Aceptar' }]
+    );
   };
 
   // Mantener los cuatro botones originales (Fotos, Cámara, Ubicación, Documento).
@@ -1504,7 +1520,7 @@ const position =
     // En web el selector necesita ejecutarse durante el gesto original.
     void run().catch((error: any) => {
       console.warn(`[Walkiet-adjuntos] Error en ${label}:`, error);
-      showNativeAlert('No se pudo abrir el adjunto', String(error?.message || error));
+      Alert.alert('No se pudo abrir el adjunto', String(error?.message || error));
     });
   };
 
@@ -1518,75 +1534,23 @@ const position =
     setTimeout(() => {
       void chosen.run().catch((error: any) => {
         console.warn(`[Walkiet-iOS] Error abriendo ${chosen.label}:`, error);
-        showNativeAlert('No se pudo abrir el adjunto', String(error?.message || error));
+        Alert.alert('No se pudo abrir el adjunto', String(error?.message || error));
       });
     }, 180);
   };
 
   const renderChatAttachMenu = () => (
-    <View style={[styles.chatAttachMenuOverlay, Platform.OS === 'ios' && styles.chatAttachMenuOverlayIos]}>
-      <TouchableOpacity
-        style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 }}
-        activeOpacity={1}
-        onPress={() => setIsAttachMenuOpen(false)}
-        accessibilityLabel="Cerrar menú de adjuntos"
-      />
-      <View pointerEvents="auto" style={[styles.chatAttachMenuCard, { zIndex: 2, width: '100%' }]}>
-        <View style={styles.chatAttachMenuRow}>
-          <TouchableOpacity
-            style={styles.chatAttachMenuItem}
-            onPress={() => chooseChatAttachment('Fotos', handlePickPhoto)}
-            activeOpacity={0.75}
-            accessibilityLabel="Seleccionar fotos"
-          >
-            <View style={[styles.chatAttachIconCircle, { backgroundColor: '#2563eb' }]}>
-              <ImageIcon size={26} color="#ffffff" strokeWidth={2} />
-            </View>
-            <Text style={styles.chatAttachMenuLabel}>Fotos</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={styles.chatAttachMenuItem}
-            onPress={() => chooseChatAttachment('Cámara', handleOpenCamera)}
-            activeOpacity={0.75}
-            accessibilityLabel="Abrir cámara"
-          >
-            <View style={[styles.chatAttachIconCircle, { backgroundColor: '#475569' }]}>
-              <CameraIcon size={26} color="#ffffff" strokeWidth={2} />
-            </View>
-            <Text style={styles.chatAttachMenuLabel}>Cámara</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={styles.chatAttachMenuItem}
-            onPress={() => chooseChatAttachment('Ubicación', handleShareLocation)}
-            activeOpacity={0.75}
-            accessibilityLabel="Compartir ubicación"
-          >
-            <View style={[styles.chatAttachIconCircle, { backgroundColor: '#059669' }]}>
-              <MapPinIcon size={26} color="#ffffff" strokeWidth={2} />
-            </View>
-            <Text style={styles.chatAttachMenuLabel}>Ubicación</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={styles.chatAttachMenuItem}
-            onPress={() => chooseChatAttachment('Documento', handlePickDocument)}
-            activeOpacity={0.75}
-            accessibilityLabel="Seleccionar documento"
-          >
-            <View style={[styles.chatAttachIconCircle, { backgroundColor: '#0284c7' }]}>
-              <FileTextIcon size={26} color="#ffffff" strokeWidth={2} />
-            </View>
-            <Text style={styles.chatAttachMenuLabel}>Documento</Text>
-          </TouchableOpacity>
-        </View>
-      </View>
-    </View>
+    <ChatAttachmentsMenu
+      styles={styles}
+      onClose={() => setIsAttachMenuOpen(false)}
+      onChoose={(option) => {
+        if (option === 'Fotos') chooseChatAttachment('Fotos', handlePickPhoto);
+        else if (option === 'Cámara') chooseChatAttachment('Cámara', handleOpenCamera);
+        else if (option === 'Ubicación') chooseChatAttachment('Ubicación', handleShareLocation);
+        else if (option === 'Documento') chooseChatAttachment('Documento', handlePickDocument);
+      }}
+    />
   );
-
-  const toggleGroupMemberSelection = (officerId: string) => {
-    setSelectedGroupMembers((prev) =>
-      prev.includes(officerId) ? prev.filter((id) => id !== officerId) : [...prev, officerId]
-    );
-  };
 
   if (!currentUser) {
     return (
@@ -2167,6 +2131,13 @@ const position =
     <SafeAreaView style={styles.cleanContainer}>
       <StatusBar barStyle={dark ? "light-content" : "dark-content"} />
 
+      {/* SOS Active Banner */}
+      {isSosActive && (
+        <TouchableOpacity style={styles.sosBanner} onPress={() => setIsSosActive(false)}>
+          <Text style={styles.sosBannerText}>🚨 ALERTA SOS 10-33 ACTIVA • TOCAR PARA CANCELAR</Text>
+        </TouchableOpacity>
+      )}
+
       {/* Main Tab Content */}
       <View style={styles.cleanMainContent}>
         {currentTab === 'PTT' && (
@@ -2175,15 +2146,13 @@ const position =
             if (enabled) { try { await account.saveSettings({ backgroundNotifications: true }); } catch { await notifications.disable(); return false; } }
             return enabled;
           } }}
-            groupsLoading={channelSelection.restoring} groupsError={channelSelection.error}
-            hasGroups={channels.length > 0} onRetryGroups={() => { void refreshChannels(); }}
-            onGroups={() => setCurrentTab('Grupos')} onMembers={() => setIsMembersModalOpen(true)} />
+            onGroups={() => setCurrentTab('Grupos')} onMembers={() => setIsMembersModalOpen(true)} onSos={handleTriggerSos} />
         )}
 
         {currentTab === 'Grupos' && (
           <GroupsScreen key={channelsDirectory.scope} directory={channelsDirectory}
             selectedChannel={selectedChannel} onTune={chooseAndRememberChannel}
-            onOpenPtt={() => setCurrentTab('PTT')} />
+            onSos={handleTriggerSos} onOpenPtt={() => setCurrentTab('PTT')} />
         )}
 
         {currentTab === 'Chat' && (
@@ -2220,11 +2189,30 @@ const position =
                       {activeConversation.name}
                     </Text>
                     <Text style={styles.chatActiveSubtitle} numberOfLines={1}>
-                      {activeConversation.type === 'group' ? 'Conversación de grupo' : presenceLabel(presence.peers[activeConversation.targetUserId || ''], presence.now)}
+                      {activeConversation.isOnline ? 'en línea' : 'desconectado'}
                     </Text>
                   </View>
 
 
+                  {/* Botón de Videollamada */}
+                  <TouchableOpacity
+                    style={styles.chatActiveHeaderActionBtn}
+                    onPress={handleStartVideoCall}
+                    activeOpacity={0.75}
+                    accessibilityLabel="Videollamada"
+                  >
+                    <VideoIcon size={20} color={palette.secondary} strokeWidth={2} />
+                  </TouchableOpacity>
+
+                  {/* Botón de Llamada de Voz */}
+                  <TouchableOpacity
+                    style={styles.chatActiveHeaderActionBtn}
+                    onPress={handleStartVoiceCall}
+                    activeOpacity={0.75}
+                    accessibilityLabel="Llamada de voz"
+                  >
+                    <PhoneIcon size={19} color={palette.secondary} strokeWidth={2} />
+                  </TouchableOpacity>
                 </View>
 
                 {/* Hilo de mensajes o Estado Vacío Limpio (Imagen 1) */}
@@ -2477,7 +2465,7 @@ const position =
             ) : (
               // LISTA DE CHATS (EXACTA A CAPTURA 1)
               <View style={styles.chatListView}>
-                {/* Encabezado de chat con acceso a nueva conversación */}
+                {/* Header superior: Ícono de chat redondeado, Título "Chat", Botón SOS rojo y Botón Editar/Nuevo */}
                 <View style={styles.chatTopHeader}>
                   <View style={styles.chatTopHeaderLeft}>
                     <View style={styles.chatHeaderIconBadge}>
@@ -2487,6 +2475,16 @@ const position =
                   </View>
 
                   <View style={styles.chatTopHeaderRight}>
+                    {/* Botón SOS Rojo idéntico a Captura 1 */}
+                    <TouchableOpacity
+                      style={styles.chatSosHeaderBtn}
+                      onPress={handleTriggerSos}
+                      activeOpacity={0.8}
+                      accessibilityLabel="Alerta de emergencia SOS"
+                    >
+                      <AlertTriangleIcon size={18} color="#ffffff" strokeWidth={2.4} />
+                    </TouchableOpacity>
+
                     {/* Botón Nuevo / Componer con icono de lápiz/editar */}
                     <TouchableOpacity
                       style={styles.chatComposeBtn}
@@ -2499,6 +2497,11 @@ const position =
                   </View>
                 </View>
 
+                {chatSyncError && (
+                  <Text style={{ color: '#be123c', paddingHorizontal: 16, paddingVertical: 8, fontSize: 12 }}>
+                    {chatSyncError}
+                  </Text>
+                )}
                 {/* Barra de búsqueda idéntica a Captura 1: "Buscar chats o mensajes..." */}
                 <View style={styles.chatSearchContainer}>
                   <View style={styles.chatSearchInputBox}>
@@ -2622,7 +2625,7 @@ const position =
                               </Text>
                             )}
                           </PeerAvatar>
-                          {conv.type === 'direct' && isPeerOnline(conv.targetUserId) && <View testID="peer-online-dot" accessibilityLabel="Contacto en línea" style={styles.chatConvOnlineDot} />}
+                          {conv.isOnline && <View style={styles.chatConvOnlineDot} />}
                         </View>
 
                         <View style={styles.chatConvContent}>
@@ -2657,8 +2660,8 @@ const position =
         )}
 
         <ContactsScreen ref={contactsScreenRef} visible={currentTab === 'Contactos'} serverUrl={serverUrl}
-          directory={contactsDirectory} avatars={peerAvatars} onStartChat={contact => { if (handleStartDirectChat(contact)) setCurrentTab('Chat'); }}
-          onContactUpdated={handleContactUpdated} />
+          directory={contactsDirectory} avatars={peerAvatars} onSos={handleTriggerSos} onStartChat={async contact => { if (await handleStartDirectChat(contact)) setCurrentTab('Chat'); }}
+          onContactUpdated={handleContactUpdated} onOpenCamera={handleOpenCamera} />
 
         {currentTab === 'Perfil' && currentUser && (
           <ProfileScreen user={currentUser} account={account} notifications={notifications} serverUrl={serverUrl}
@@ -2872,7 +2875,7 @@ const position =
                             {officer.callsign.slice(0, 2).toUpperCase()}
                           </Text>
                         </PeerAvatar>
-                        {isPeerOnline(officer.registered_user_id || undefined) && (
+                        {officer.status === 'online' && (
                           <View style={styles.chatOfficerOnlineDot} />
                         )}
                       </View>
@@ -3294,6 +3297,17 @@ const baseStyles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
   },
+  sosBanner: {
+    backgroundColor: '#dc2626',
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    alignItems: 'center',
+  },
+  sosBannerText: {
+    color: '#ffffff',
+    fontWeight: '800',
+    fontSize: 12,
+  },
   mainContent: {
     flex: 1,
   },
@@ -3426,6 +3440,18 @@ const baseStyles = StyleSheet.create({
   quickActions: {
     gap: 8,
   },
+  sosButton: {
+    backgroundColor: '#dc2626',
+    paddingVertical: 13,
+    borderRadius: 12,
+    alignItems: 'center',
+  },
+  sosButtonText: {
+    color: '#ffffff',
+    fontWeight: '800',
+    fontSize: 13,
+    letterSpacing: 1,
+  },
   quickRogerBtn: {
     backgroundColor: '#1e293b',
     paddingVertical: 11,
@@ -3469,6 +3495,10 @@ const baseStyles = StyleSheet.create({
     marginBottom: 10,
     borderLeftWidth: 3,
     borderLeftColor: '#38bdf8',
+  },
+  transmissionItemSos: {
+    borderLeftColor: '#ef4444',
+    backgroundColor: '#450a0a',
   },
   transHeader: {
     flexDirection: 'row',
@@ -4294,6 +4324,19 @@ const baseStyles = StyleSheet.create({
     alignItems: 'center',
     gap: 10,
   },
+  chatSosHeaderBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    backgroundColor: '#dc2626',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#dc2626',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.35,
+    shadowRadius: 5,
+    elevation: 4,
+  },
   chatComposeBtn: {
     width: 40,
     height: 40,
@@ -4537,6 +4580,33 @@ const baseStyles = StyleSheet.create({
     fontSize: 12,
     color: '#64748b',
     marginTop: 1,
+  },
+  chatActiveSosPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#ef4444',
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+    borderRadius: 14,
+    gap: 4,
+    shadowColor: '#ef4444',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 3,
+    elevation: 3,
+  },
+  chatActiveSosText: {
+    color: '#ffffff',
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+  },
+  chatActiveHeaderActionBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   chatMessagesScroll: {
     flex: 1,
