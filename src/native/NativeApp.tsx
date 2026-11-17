@@ -23,6 +23,8 @@ import { ContactsScreen, type ContactsScreenHandle } from './contacts/ContactsSc
 import { useContactsDirectory } from './contacts/useContactsDirectory';
 import { useChannelSelection } from './groups/useChannelSelection';
 import { PeerAvatar } from './profile/PeerAvatar';
+import { usePeerPresence } from './profile/usePeerPresence';
+import { presenceLabel } from '../services/presence';
 import { usePeerAvatars } from './profile/usePeerAvatars';
 import { useNativeFeedback } from './components/NativeFeedback';
 import c5iLogoImg from '../../assets/c5i-logo.png';
@@ -191,7 +193,6 @@ export interface Conversation {
   lastMessage: string;
   lastMessageTime: string;
   unreadCount: number;
-  isOnline: boolean;
   messages: ChatMessage[];
 }
 
@@ -351,6 +352,9 @@ function NativeAppScreen() {
   const peerAvatars = usePeerAvatars(serverUrl, currentUser?.authToken || '', avatarIds,
     !!currentUser && (currentTab === 'Chat' || currentTab === 'Contactos'));
 
+
+  const presence = usePeerPresence(serverUrl, currentUser?.authToken || '', avatarIds);
+  const isPeerOnline = (id?: string) => !!id && !!presence.peers[id]?.online && (presence.peers[id]?.onlineUntil || 0) > presence.now;
 
   // Circuit breaker para endpoints PHP en Alwaysdata (evita spam de 404 en consola si aún no se han subido los archivos)
   const isChatPhpAvailableRef = useRef<boolean | null>(null);
@@ -975,7 +979,6 @@ function NativeAppScreen() {
       lastMessage: '',
       lastMessageTime: '',
       unreadCount: 0,
-      isOnline: officer.status === 'online',
       messages: [], // Chat limpio sin mensajes aleatorios automáticos
     };
 
@@ -1003,7 +1006,6 @@ function NativeAppScreen() {
       lastMessage: '',
       lastMessageTime: '',
       unreadCount: 0,
-      isOnline: true,
       messages: [], // Chat limpio
     };
 
@@ -2218,7 +2220,7 @@ const position =
                       {activeConversation.name}
                     </Text>
                     <Text style={styles.chatActiveSubtitle} numberOfLines={1}>
-                      {activeConversation.isOnline ? 'en línea' : 'desconectado'}
+                      {activeConversation.type === 'group' ? 'Conversación de grupo' : presenceLabel(presence.peers[activeConversation.targetUserId || ''], presence.now)}
                     </Text>
                   </View>
 
@@ -2620,7 +2622,7 @@ const position =
                               </Text>
                             )}
                           </PeerAvatar>
-                          {conv.isOnline && <View style={styles.chatConvOnlineDot} />}
+                          {conv.type === 'direct' && isPeerOnline(conv.targetUserId) && <View testID="peer-online-dot" accessibilityLabel="Contacto en línea" style={styles.chatConvOnlineDot} />}
                         </View>
 
                         <View style={styles.chatConvContent}>
@@ -2870,7 +2872,7 @@ const position =
                             {officer.callsign.slice(0, 2).toUpperCase()}
                           </Text>
                         </PeerAvatar>
-                        {officer.status === 'online' && (
+                        {isPeerOnline(officer.registered_user_id || undefined) && (
                           <View style={styles.chatOfficerOnlineDot} />
                         )}
                       </View>

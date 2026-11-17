@@ -13,10 +13,10 @@ try {
         echo json_encode(['success'=>true,'service'=>'walkiet-account','database'=>true]); exit;
     }
     $owner=authenticateContactOwner($pdo,contactsBearerToken($_SERVER));
-    echo json_encode(handleAccount($pdo,$data,$owner),JSON_UNESCAPED_UNICODE);
+    echo json_encode(handleAccount($pdo,$data,$owner,contactsBearerToken($_SERVER)),JSON_UNESCAPED_UNICODE);
 } catch (AccountRequestError $error) {
     http_response_code($error->status); echo json_encode(['success'=>false,'message'=>$error->getMessage()],JSON_UNESCAPED_UNICODE);
 } catch (Throwable $error) {
     error_log('Account API: '.$error->getMessage()); http_response_code(503);
-    echo json_encode(['success'=>false,'message'=>'No se pudo acceder a tu perfil. Verifica el servidor y la migración 005_account_profile.sql.']);
+    echo json_encode(['success'=>false,'message'=>'No se pudo acceder a tu perfil. Verifica el servidor y las migraciones 005_account_profile.sql y 007_chat_presence.sql.']);
 }

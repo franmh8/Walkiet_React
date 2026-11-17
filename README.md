@@ -10,6 +10,11 @@ PTT, los mensajes, los adjuntos y los datos de contacto. Este cambio solo requie
 actualizar la app; no necesita cambios en PHP ni SQL. Los APK ya instalados deben
 recompilarse e instalarse de nuevo para reflejarlo.
 
+La actividad de los chats usa presencia autenticada y permite ocultar la última
+conexión desde Ajustes. Para instalar esta actualización, seguir la
+[guía de presencia y privacidad](backend-alwaysdata/PRESENCIA_CHAT_DESPLIEGUE.md):
+requiere la migración 007 y actualizar tres archivos PHP además de la app.
+
 ## Actualizar un equipo existente
 
 Desde la carpeta `Walkiet_React`, detener Expo con **Ctrl+C** y revisar primero:

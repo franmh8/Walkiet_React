@@ -7,7 +7,9 @@ foreach (['users','auth_sessions','contactos','channels','channel_members','user
 $db->exec('ALTER TABLE users ADD COLUMN IF NOT EXISTS locked_until DATETIME NULL, ADD COLUMN IF NOT EXISTS failed_login_attempts INT NOT NULL DEFAULT 0');
 $sql=file_get_contents(__DIR__.'/../../backend-alwaysdata/migrations/006_email_security.sql');
 foreach(explode(';',$sql) as $statement) if(trim($statement)!=='') $db->exec($statement);
-foreach(['security_challenges','security_rate_limits','account_avatars','user_settings','channel_members','channels','auth_sessions','contactos','users'] as $table) $db->exec('DELETE FROM '.$table);
+$presenceSql=file_get_contents(__DIR__.'/../../backend-alwaysdata/migrations/007_chat_presence.sql');
+foreach(explode(';',$presenceSql) as $statement) if(trim($statement)!=='') $db->exec($statement);
+foreach(['account_presence','account_privacy','security_challenges','security_rate_limits','account_avatars','user_settings','channel_members','channels','auth_sessions','contactos','users'] as $table) $db->exec('DELETE FROM '.$table);
 foreach([['security-a','7710000401','Seguridad A'],['security-b','7710000402','Seguridad B'],['security-c','7710000403','Seguridad C']] as $user) {
     $db->prepare('INSERT INTO users(id,phone_number,name,password_hash,correo,role) VALUES(?,?,?,?,?,?)')->execute([$user[0],$user[1],$user[2],password_hash('security-test-password',PASSWORD_BCRYPT,['cost'=>4]),$user[0].'@example.test','Pruebas']);
 }

@@ -1,0 +1,13 @@
+import assert from 'node:assert/strict';
+import {presenceLabel, type PeerPresence} from '../src/services/presence';
+const now=new Date(2026,10,17,15,30).getTime();
+const peer:PeerPresence={id:'synthetic-peer',online:true,onlineUntil:now+1000,lastSeen:new Date(now-10000).toISOString()};
+assert.equal(presenceLabel(undefined,now),'Estado no disponible');
+assert.equal(presenceLabel(peer,now),'en línea');
+assert.match(presenceLabel(peer,now+1001),/^últ\. vez hoy a las /,'Caduca sin una nueva consulta.');
+assert.equal(presenceLabel({...peer,online:false,lastSeen:null},now),'desconectado','La privacidad no inventa una fecha.');
+const yesterday=new Date(now);yesterday.setDate(yesterday.getDate()-1);
+assert.match(presenceLabel({...peer,online:false,lastSeen:yesterday.toISOString()},now),/^últ\. vez ayer a las /);
+const older=new Date(now);older.setDate(older.getDate()-4);
+assert.match(presenceLabel({...peer,online:false,lastSeen:older.toISOString()},now),/^últ\. vez .*2026 a las /);
+console.log('OK formato presencia: estado desconocido, activo, caducidad local, fecha oculta, hoy, ayer y fecha anterior.');

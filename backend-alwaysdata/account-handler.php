@@ -1,4 +1,5 @@
 <?php
+require_once __DIR__.'/account-presence.php';
 class AccountRequestError extends RuntimeException {
     public $status;
     public function __construct($status, $message) { parent::__construct($message); $this->status = $status; }
@@ -14,6 +15,8 @@ function accountSnapshot(PDO $db, $owner) {
     $stmt=$db->prepare('SELECT image_data FROM account_avatars WHERE user_id=?'); $stmt->execute([$owner]);
     $avatar=$stmt->fetchColumn() ?: null;
     if (!$avatar && preg_match('#^https://#i', $user['avatar_url'] ?? '')) $avatar=$user['avatar_url'];
+    $stmt=$db->prepare('SELECT show_last_seen FROM account_privacy WHERE user_id=?'); $stmt->execute([$owner]);
+    $privacy=$stmt->fetchColumn();
     return ['success'=>true, 'user'=>[
         'id'=>(string)$user['id'], 'name'=>$user['name'], 'phone_number'=>$user['phone_number'],
         'correo'=>$user['correo'] ?? null, 'unit'=>$user['unit'] ?? '', 'role'=>$user['role'] ?? '',
@@ -23,6 +26,7 @@ function accountSnapshot(PDO $db, $owner) {
         'messageSounds'=>!isset($prefs['channel_message_sounds']) || (bool)$prefs['channel_message_sounds'],
         'rogerBeep'=>!isset($prefs['roger_beep']) || (bool)$prefs['roger_beep'],
         'backgroundNotifications'=>!empty($prefs['push_notifications']),
+        'showLastSeen'=>$privacy===false || (bool)$privacy,
     ]];
 }
 function accountText($value, $label, $max, $allowEmpty=false) {
@@ -58,9 +62,10 @@ function accountPeerAvatars(PDO $db, array $data, $owner) {
     }
     return ['success'=>true,'avatars'=>$result];
 }
-function handleAccount(PDO $db, array $data, $owner) {
+function handleAccount(PDO $db, array $data, $owner, $token=null) {
     if (!$owner) throw new AccountRequestError(401, 'Tu sesión venció. Inicia sesión de nuevo.');
     $action=$data['action'] ?? 'get';
+    if ($action==='presence') return accountPresence($db,$data,$owner,$token);
     if ($action==='get') return accountSnapshot($db, $owner);
     if ($action==='avatars') return accountPeerAvatars($db,$data,$owner);
     if (!in_array($action,['update','settings','avatar','delete'],true)) throw new AccountRequestError(400, 'Operación de cuenta no disponible.');
@@ -83,6 +88,8 @@ function handleAccount(PDO $db, array $data, $owner) {
             $db->prepare('DELETE FROM channel_members WHERE user_id=?')->execute([$owner]);
             $db->prepare('DELETE FROM contactos WHERE owner_user_id=?')->execute([$owner]);
             $db->prepare('DELETE FROM auth_sessions WHERE user_id=?')->execute([$owner]);
+            $db->prepare('DELETE FROM account_presence WHERE user_id=?')->execute([$owner]);
+            $db->prepare('DELETE FROM account_privacy WHERE user_id=?')->execute([$owner]);
             $db->prepare('DELETE FROM user_settings WHERE user_id=?')->execute([$owner]);
             $db->prepare('DELETE FROM account_avatars WHERE user_id=?')->execute([$owner]);
             if (accountTableExists($db,'sms_otps')) $db->prepare('DELETE FROM sms_otps WHERE phone_number=?')->execute([$user['phone_number']]);
@@ -119,14 +126,15 @@ function handleAccount(PDO $db, array $data, $owner) {
             } else {
                 $db->prepare('INSERT IGNORE INTO user_settings (user_id,push_notifications) VALUES (?,0)')->execute([$owner]);
                 $patch=$data['settings'] ?? null;
-                $map=['theme'=>'theme_mode','pttMode'=>'ptt_mode','messageSounds'=>'channel_message_sounds','rogerBeep'=>'roger_beep','backgroundNotifications'=>'push_notifications'];
+                $map=['theme'=>'theme_mode','pttMode'=>'ptt_mode','messageSounds'=>'channel_message_sounds','rogerBeep'=>'roger_beep','backgroundNotifications'=>'push_notifications','showLastSeen'=>'show_last_seen'];
                 if (!is_array($patch) || !$patch || array_diff(array_keys($patch),array_keys($map))) throw new AccountRequestError(400,'Revisa las preferencias enviadas.');
                 $sets=[]; $args=[];
                 foreach ($patch as $key=>$value) {
-                    if ($key==='theme' && !in_array($value,['light','dark','system'],true) || $key==='pttMode' && !in_array($value,['hold','toggle'],true) || in_array($key,['messageSounds','rogerBeep','backgroundNotifications'],true) && !is_bool($value)) throw new AccountRequestError(400,'Valor de preferencia no válido.');
+                    if ($key==='theme' && !in_array($value,['light','dark','system'],true) || $key==='pttMode' && !in_array($value,['hold','toggle'],true) || in_array($key,['messageSounds','rogerBeep','backgroundNotifications','showLastSeen'],true) && !is_bool($value)) throw new AccountRequestError(400,'Valor de preferencia no válido.');
+                    if ($key==='showLastSeen') { $db->prepare('INSERT INTO account_privacy(user_id,show_last_seen) VALUES(?,?) ON DUPLICATE KEY UPDATE show_last_seen=VALUES(show_last_seen)')->execute([$owner,(int)$value]); continue; }
                     $sets[]=$map[$key].'=?'; $args[]=is_bool($value)?(int)$value:$value;
                 }
-                $args[]=$owner; $db->prepare('UPDATE user_settings SET '.implode(',',$sets).' WHERE user_id=?')->execute($args);
+                if ($sets) { $args[]=$owner; $db->prepare('UPDATE user_settings SET '.implode(',',$sets).' WHERE user_id=?')->execute($args); }
                 if (isset($patch['backgroundNotifications']) && !$patch['backgroundNotifications'] && accountTableExists($db,'ptt_devices')) $db->prepare('DELETE FROM ptt_devices WHERE user_id=?')->execute([$owner]);
             }
         }

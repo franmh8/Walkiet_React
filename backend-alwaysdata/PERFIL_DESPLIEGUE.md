@@ -40,9 +40,13 @@ están en [CORREO_SEGURIDAD_DESPLIEGUE.md](CORREO_SEGURIDAD_DESPLIEGUE.md).
    [005_account_profile.sql](migrations/005_account_profile.sql). Requiere la
    migración 002 para las sesiones. Puede repetirse y no importa usuarios ni
    restablece sus preferencias. No requiere `PREPARE` ni variables SQL.
+   Aplicar después [007_chat_presence.sql](migrations/007_chat_presence.sql) para
+   la privacidad y actividad de la versión actual; ver la
+   [guía de presencia](PRESENCIA_CHAT_DESPLIEGUE.md).
 2. Subir junto a `conexion.php` y `auth-session.php`:
    - [account.php](account.php)
    - [account-handler.php](account-handler.php)
+   - [account-presence.php](account-presence.php)
    - [channels-handler.php](channels-handler.php) actualizado, para coordinar
      cambios de grupo con la eliminación de una cuenta.
    - [ptt-handler.php](ptt-handler.php) actualizado, para respetar los sonidos
