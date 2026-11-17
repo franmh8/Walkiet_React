@@ -23,6 +23,7 @@ import { safeStorage } from './storage';
 import { logoutContactSession, type DirectoryContact as ContactOfficer } from '../services/contactsApi';
 import { ContactsScreen, type ContactsScreenHandle } from './contacts/ContactsScreen';
 import { useContactsDirectory } from './contacts/useContactsDirectory';
+import { useChannelSelection } from './groups/useChannelSelection';
 import { PeerAvatar } from './profile/PeerAvatar';
 import { usePeerAvatars } from './profile/usePeerAvatars';
 import { useNativeFeedback } from './components/NativeFeedback';
@@ -208,101 +209,6 @@ export interface Conversation {
   messages: ChatMessage[];
 }
 
-// Preferencia de grupo por cuenta. No guardar un canal en una clave global:
-// una cuenta diferente no debe heredar el grupo de otro usuario.
-interface SavedChannelSelection {
-  id: string;
-  name: string;
-  code?: string;
-}
-
-const lastChannelStorageKey = (userId: string) =>
-  `c5i_last_selected_channel_${encodeURIComponent(String(userId))}`;
-
-const normalizeChannelName = (value: string) =>
-  String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().replace(/\s+/g, ' ').toUpperCase();
-
-function getChannelPreferenceKeys(user: User): string[] {
-  // El ID del backend tiene prioridad. Correo/teléfono/identificador de acceso
-  // permiten recuperar la preferencia aun si cambió el ID entregado por la API.
-  const identifiers: string[] = [];
-  const id = String(user.id || '').trim();
-  if (id) identifiers.push(lastChannelStorageKey(id)); // Compatibilidad con versiones anteriores.
-  const phone = String(user.phone_number || '').replace(/\D/g, '');
-  if (phone.length >= 10) identifiers.push(`c5i_last_channel_phone_${phone}`);
-  const email = String(user.email || '').trim().toLowerCase();
-  if (email.includes('@')) identifiers.push(`c5i_last_channel_email_${encodeURIComponent(email)}`);
-  const login = String(user.loginIdentifier || '').trim().toLowerCase();
-  if (login.includes('@')) identifiers.push(`c5i_last_channel_email_${encodeURIComponent(login)}`);
-  else if (/^\d{10,}$/.test(login.replace(/\D/g, ''))) {
-    identifiers.push(`c5i_last_channel_phone_${login.replace(/\D/g, '')}`);
-  }
-  return [...new Set(identifiers)];
-}
-
-function parseSavedChannel(value: string | null): SavedChannelSelection | null {
-  if (!value) return null;
-  try {
-    const item = JSON.parse(value);
-    if (item && String(item.id || '').trim() && String(item.name || '').trim()) {
-      return {
-        id: String(item.id).trim(),
-        name: String(item.name).trim(),
-        code: item.code ? String(item.code) : undefined,
-      };
-    }
-  } catch (error) {
-    console.warn('[Walkiet] Datos antiguos del grupo guardado no válidos:', error);
-  }
-  return null;
-}
-
-async function readSavedChannelSelection(user: User): Promise<SavedChannelSelection | null> {
-  for (const key of getChannelPreferenceKeys(user)) {
-    let raw: string | null = null;
-    if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      // Esta lectura es persistente, no depende del fallback temporal en memoria.
-      try { raw = window.localStorage.getItem(key); }
-      catch (error) { console.warn('[Walkiet] No se pudo leer localStorage:', error); }
-    }
-    if (raw === null) raw = await safeStorage.getItem(key);
-    const parsed = parseSavedChannel(raw);
-    if (parsed) return parsed;
-  }
-  return null;
-}
-
-async function writeSavedChannelSelection(user: User, channel: Channel | null): Promise<void> {
-  const keys = getChannelPreferenceKeys(user);
-  if (!keys.length) throw new Error('La cuenta no tiene identificador estable para guardar el grupo.');
-  const value = channel ? JSON.stringify({ id: String(channel.id), name: channel.name, code: channel.code }) : null;
-  for (const key of keys) {
-    if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      // Guardado síncrono: el usuario puede cerrar sesión inmediatamente
-      // después de tocar SINTONIZAR sin perder la preferencia.
-      if (value === null) window.localStorage.removeItem(key);
-      else window.localStorage.setItem(key, value);
-      if (window.localStorage.getItem(key) !== value) {
-        throw new Error('El navegador no confirmó el almacenamiento del grupo.');
-      }
-    } else if (value === null) {
-      await safeStorage.removeItem(key);
-    } else {
-      await safeStorage.setItem(key, value);
-    }
-  }
-}
-
-function findRestoredChannel(channels: Channel[], saved: SavedChannelSelection): Channel | null {
-  // No sintonizar un grupo solo porque reutiliza un ID. Se exige también el nombre.
-  const name = normalizeChannelName(saved.name);
-  const exact = channels.find(ch => String(ch.id) === saved.id && normalizeChannelName(ch.name) === name);
-  if (exact) return exact;
-  // El backend puede reasignar IDs; admitir solo una coincidencia inequívoca.
-  const sameName = channels.filter(ch => normalizeChannelName(ch.name) === name);
-  return sameName.length === 1 ? sameName[0] : null;
-}
-
 // Helper con timeout para peticiones en red móvil/wifi
 async function fetchWithTimeout(url: string, options: any = {}, timeoutMs = 3500) {
   const controller = new AbortController();
@@ -363,13 +269,6 @@ function NativeAppScreen() {
 
   // Radio y selección de grupo por cuenta.
   // Se recupera el canal elegido por este usuario, si sigue disponible.
-  const [selectedChannel, setSelectedChannel] = useState<Channel | null>(null);
-  const [pendingSavedChannel, setPendingSavedChannel] = useState<{
-    userId: string;
-    channel: SavedChannelSelection;
-    revision: number;
-  } | null>(null);
-  const channelChoiceRevisionRef = useRef(0);
   const [serverUrl, setServerUrl] = useState('https://walkiet.alwaysdata.net');
   const updateProfileUser = useCallback((profile: AccountUser) => {
     setCurrentUser(previous => {
@@ -455,7 +354,9 @@ function NativeAppScreen() {
   const { showTacticalToast, feedback } = useNativeFeedback();
   const contactsDirectory = useContactsDirectory(serverUrl, currentUser ? { userId: currentUser.id, token: currentUser.authToken || '' } : null);
   const channelsDirectory = useChannelsDirectory(serverUrl, currentUser?.id || '', currentUser?.authToken || '');
-  const { channels, synced: channelsSyncedFromServer, refresh: refreshChannels } = channelsDirectory;
+  const { channels, refresh: refreshChannels } = channelsDirectory;
+  const channelSelection = useChannelSelection(serverUrl, currentUser, channelsDirectory);
+  const { selectedChannel, choose: chooseAndRememberChannel } = channelSelection;
   const officersList = contactsDirectory.contacts;
   const contactsScreenRef = useRef<ContactsScreenHandle>(null);
   const avatarIds = [
@@ -497,75 +398,13 @@ function NativeAppScreen() {
     })();
   }, []);
 
-  useEffect(() => {
-    setSelectedChannel(null);
-    setIsMembersModalOpen(false);
-  }, [channelsDirectory.scope]);
-
-  // Restaurar la selección solo del usuario autenticado. Una elección manual más
-  // reciente tiene prioridad sobre cualquier lectura asíncrona de la memoria.
-  useEffect(() => {
-    if (!currentUser?.id) {
-      setPendingSavedChannel(null);
-      return;
-    }
-    let active = true;
-    const userId = String(currentUser.id);
-    const revision = channelChoiceRevisionRef.current;
-
-    readSavedChannelSelection(currentUser)
-      .then((saved) => {
-        if (!active || revision !== channelChoiceRevisionRef.current || !saved) return;
-        setPendingSavedChannel({ userId, channel: saved, revision });
-      })
-      .catch((error) => console.warn('No se pudo recuperar el último canal:', error));
-
-    return () => { active = false; };
-  }, [currentUser?.id]);
-
-  // Restaurar únicamente después de validar la membresía con el servidor.
-  // Comprobamos también el nombre para no sintonizar otro grupo si el servidor
-  // reutiliza un identificador.
-  useEffect(() => {
-    if (!currentUser?.id || !pendingSavedChannel) return;
-    if (String(currentUser.id) !== pendingSavedChannel.userId ||
-        channelChoiceRevisionRef.current !== pendingSavedChannel.revision) return;
-    // La preferencia guardada no concede acceso por sí sola.
-    const restored = findRestoredChannel(channels, pendingSavedChannel.channel);
-    if (restored && channelsSyncedFromServer) {
-      setSelectedChannel(restored);
-      setPendingSavedChannel(null);
-    } else if (channelsSyncedFromServer) {
-      // El canal guardado ya no figura entre los canales del servidor.
-      // No sintonizar automáticamente un canal distinto o solo de ejemplo.
-      setSelectedChannel(null);
-      setPendingSavedChannel(null);
-    }
-  }, [currentUser?.id, pendingSavedChannel, channels, channelsSyncedFromServer]);
-
-  // Sintonizar / abandonar un grupo y recordar esa elección por usuario.
-  const chooseAndRememberChannel = useCallback((channel: Channel | null) => {
-    channelChoiceRevisionRef.current += 1;
-    setPendingSavedChannel(null);
-    setSelectedChannel(channel);
-    if (!currentUser?.id) return;
-
-    writeSavedChannelSelection(currentUser, channel)
-      .catch((error) => {
-        console.warn('No se pudo guardar la selección del canal:', error);
-        setInlineWarning('El grupo se seleccionó, pero tu navegador no permitió guardarlo. Revisa los permisos de almacenamiento del sitio.');
-      });
-  }, [currentUser?.id]);
+  useEffect(() => { setIsMembersModalOpen(false); }, [channelsDirectory.scope]);
 
   // En navegador web, enviar text/plain evita preflights OPTIONS innecesarios
   const getSafePostHeaders = () => ({
     'Content-Type': Platform.OS === 'web' ? 'text/plain;charset=UTF-8' : 'application/json',
   });
 
-  useEffect(() => {
-    if (!channelsSyncedFromServer) return;
-    setSelectedChannel(previous => previous ? channels.find(channel => channel.id === previous.id) || null : null);
-  }, [channels, channelsSyncedFromServer]);
 
   // Sincronizar mensajes del chat activo desde el backend (con Circuit Breaker inteligente)
   const syncConversationMessages = useCallback(async (conv: Conversation) => {
@@ -648,8 +487,9 @@ function NativeAppScreen() {
   const notifications = useRadioNotifications(serverUrl, currentUser?.authToken || '', currentUser?.id || '', async channelId => {
     const scope = notificationSession.current;
     try {
-      const list = await channelsDirectory.api.list();
+      const list = await refreshChannels();
       if (notificationSession.current !== scope) return;
+      if (!list) { showTacticalToast('No se pudo consultar el grupo. Abre Grupos y vuelve a intentar.', 'warning'); return; }
       const matching = list.find(channel => channel.id === channelId);
       if (!matching) { showTacticalToast('Ya no perteneces al grupo de este aviso.', 'info'); return; }
       chooseAndRememberChannel(matching); setCurrentTab('PTT');
@@ -798,16 +638,7 @@ function NativeAppScreen() {
         return;
       }
 
-      // Recuperar el grupo DURANTE el login, antes de mostrar PTT.
-      // Antes dependía exclusivamente de un useEffect posterior y podía quedar
-      // sin selección al alternar de cuenta o actualizar los grupos por red.
-      const lastChannel = await readSavedChannelSelection(remoteUser);
-      channelChoiceRevisionRef.current += 1;
-      const loginRevision = channelChoiceRevisionRef.current;
-      setPendingSavedChannel(lastChannel ? {
-        userId: String(remoteUser.id), channel: lastChannel, revision: loginRevision,
-      } : null);
-      setSelectedChannel(null);
+      // La selección se restaura después de validar los grupos de esta sesión.
       setCurrentTab('PTT');
       setCurrentUser(remoteUser);
       try {
@@ -1092,12 +923,12 @@ function NativeAppScreen() {
     void radio.disconnect();
     soundEngine.stopAllAudio();
     setPassword(''); setShowPassword(false);
-    if (forgetAccount && currentUser) { try { await writeSavedChannelSelection(currentUser, null); } catch {} }
+    if (forgetAccount && currentUser) { try { await channelSelection.forget(); } catch {} }
     // Refuerzo al cerrar sesión: persistir la selección actual ANTES de limpiar
     // el estado del usuario. Si no había grupo, conservamos la preferencia previa.
     if (!forgetAccount && currentUser && selectedChannel) {
       try {
-        await writeSavedChannelSelection(currentUser, selectedChannel);
+        await channelSelection.remember();
       } catch (error) {
         console.warn('[Walkiet] No fue posible guardar el grupo al cerrar sesión:', error);
         setInlineWarning('No se pudo guardar el grupo en este dispositivo.');
@@ -1105,9 +936,6 @@ function NativeAppScreen() {
     }
     // La selección se conserva en el almacenamiento para el próximo login;
     // únicamente se quita de esta sesión para no compartirla con otra cuenta.
-    channelChoiceRevisionRef.current += 1;
-    setPendingSavedChannel(null);
-    setSelectedChannel(null);
     setIsMembersModalOpen(false);
     setCurrentTab('PTT');
     setCurrentUser(null);
@@ -2438,6 +2266,8 @@ const position =
             if (enabled) { try { await account.saveSettings({ backgroundNotifications: true }); } catch { await notifications.disable(); return false; } }
             return enabled;
           } }}
+            groupsLoading={channelSelection.restoring} groupsError={channelSelection.error}
+            hasGroups={channels.length > 0} onRetryGroups={() => { void refreshChannels(); }}
             onGroups={() => setCurrentTab('Grupos')} onMembers={() => setIsMembersModalOpen(true)} onSos={handleTriggerSos} />
         )}
 

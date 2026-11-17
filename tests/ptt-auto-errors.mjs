@@ -43,6 +43,8 @@ try {
   assert.equal(starts, 0); assert.equal(await page.evaluate(() => window.__microphoneCalls), 0);
   assert.equal(await page.getByText(/Transmitiendo ·/).count(), 0);
   await page.evaluate(() => localStorage.removeItem('c5i_last_selected_channel_' + encodeURIComponent(JSON.parse(localStorage.getItem('c5i_native_user')).id)));
+  // La ausencia de preferencia local ya no equivale a no tener membresías.
+  await page.route('**/api/channels', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true, channels: [] }) }));
   await page.goto((process.env.PTT_UI_URL || 'http://localhost:3000') + '?no_channel=1');
   await page.getByText('Ningún grupo seleccionado', { exact: true }).waitFor();
   assert.equal(await page.getByLabel('Mantén presionado para transmitir al grupo', { exact: true }).isDisabled(), true);

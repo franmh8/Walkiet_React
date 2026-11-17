@@ -13,23 +13,33 @@ export function useChannelsDirectory(serverUrl: string, userId: string, token: s
   const mutationScope = useRef<string | null>(null);
   const mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
-  const refresh = useCallback(async (_baseUrl?: string) => {
-    if (!userId || mutationScope.current === scope) return;
+  const inFlight = useRef<{ scope: string; version: number; request: number; promise: Promise<Channel[] | undefined> } | null>(null);
+  const refresh = useCallback((_baseUrl?: string): Promise<Channel[] | undefined> => {
+    if (!userId || mutationScope.current === scope) return Promise.resolve(undefined);
+    // El sondeo no invalida una lectura lenta todavía vigente.
+    if (inFlight.current?.scope === scope && inFlight.current.version === revision.current) return inFlight.current.promise;
     const version = revision.current; const request = ++sequence.current;
     setLoading(true);
-    try {
-      const channels = await api.list();
-      if (mounted.current && active.current === scope && version === revision.current && request === sequence.current) {
-        setState({ scope, channels, synced: true }); setError(null);
+    const promise = (async () => {
+      try {
+        const channels = await api.list();
+        if (mounted.current && active.current === scope && version === revision.current && request === sequence.current) {
+          setState({ scope, channels, synced: true }); setError(null);
+          return channels;
+        }
+      } catch (cause) {
+        if (mounted.current && active.current === scope && version === revision.current && request === sequence.current) {
+          if (cause instanceof ChannelsApiError && cause.status === 401) setState({ scope, channels: [], synced: false });
+          setError(cause instanceof Error ? cause.message : 'No se pudieron consultar tus grupos.');
+        }
+      } finally {
+        if (inFlight.current?.request === request) inFlight.current = null;
+        if (mounted.current && active.current === scope && request === sequence.current) setLoading(false);
       }
-    } catch (cause) {
-      if (mounted.current && active.current === scope && version === revision.current && request === sequence.current) {
-        if (cause instanceof ChannelsApiError && cause.status === 401) setState({ scope, channels: [], synced: false });
-        setError(cause instanceof Error ? cause.message : 'No se pudieron consultar tus grupos.');
-      }
-    } finally {
-      if (mounted.current && active.current === scope && request === sequence.current) setLoading(false);
-    }
+      return undefined;
+    })();
+    inFlight.current = { scope, version, request, promise };
+    return promise;
   }, [api, scope, userId]);
   const latestRefresh = useRef(refresh); latestRefresh.current = refresh;
   useEffect(() => {
@@ -62,7 +72,7 @@ export function useChannelsDirectory(serverUrl: string, userId: string, token: s
     if (mounted.current && active.current === scope) setState(previous => ({ ...previous, channels: previous.channels.filter(c => c.id !== id) }));
   }, [scope]);
   return { scope, api, channels: state.scope === scope ? state.channels : [], synced: state.scope === scope && state.synced,
-    error, loading, writing, refresh,
+    error, loading: loading || (!!userId && !(state.scope === scope && state.synced) && !error), writing, refresh,
     create: (name: string, pin: string) => mutate(async () => add(await api.create(name, pin))),
     join: (pin: string, id?: string) => mutate(async () => add(await api.join(pin, id))),
     leave: (id: string) => mutate(async () => { await api.leave(id); remove(id); }),

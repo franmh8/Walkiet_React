@@ -58,6 +58,7 @@ archivos privados del servidor y no se comparten mediante Git.
 
 - [Contactos y sesiones](backend-alwaysdata/CONTACTOS_DESPLIEGUE.md)
 - [Grupos](backend-alwaysdata/GRUPOS_DESPLIEGUE.md)
+- [Restaurar el canal al entrar o reabrir la app](backend-alwaysdata/RESTAURAR_CANAL_GUIA.md)
 - [Radio en vivo, notificaciones y proceso continuo](backend-alwaysdata/PTT_DESPLIEGUE.md)
 - [Perfil y ajustes](backend-alwaysdata/PERFIL_DESPLIEGUE.md)
 - [Fotos de perfil visibles en chats y contactos](backend-alwaysdata/FOTOS_CHAT_DESPLIEGUE.md)

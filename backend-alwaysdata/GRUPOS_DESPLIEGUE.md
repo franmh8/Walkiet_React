@@ -79,3 +79,7 @@ simulación. También prueba la unión QR con un adaptador de cámara/decodifica
 controlado y comprueba que se detienen sus pistas al cerrar. La cámara física
 iOS/Android requiere la prueba en el dispositivo. El bundle iOS se verifica con
 `npx expo export --platform ios`.
+
+La recuperación del canal al entrar y los estados de carga/error se describen en
+[RESTAURAR_CANAL_GUIA.md](RESTAURAR_CANAL_GUIA.md). Una preferencia local ausente
+no borra la membresía del servidor.

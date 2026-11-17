@@ -7,8 +7,9 @@ import type { Channel } from '../../services/channelsApi';
 import type { LiveRadio } from './useLiveRadio';
 import type { RadioNotifications } from './useRadioNotifications';
 
-export function PttScreen({ channel, radio, notifications, onGroups, onMembers, onSos, pttMode = 'hold' }: {
+export function PttScreen({ channel, radio, notifications, onGroups, onMembers, onSos, pttMode = 'hold', groupsLoading = false, groupsError = null, hasGroups = false, onRetryGroups }: {
   pttMode?: 'hold'|'toggle'; channel: Channel | null; radio: LiveRadio; notifications: RadioNotifications;
+  groupsLoading?: boolean; groupsError?: string | null; hasGroups?: boolean; onRetryGroups?: () => void;
   onGroups: () => void; onMembers: () => void; onSos: () => void;
 }) {
   const styles = useThemeStyles(baseStyles); const { palette } = useAppTheme();
@@ -26,12 +27,13 @@ export function PttScreen({ channel, radio, notifications, onGroups, onMembers, 
     return () => { window.removeEventListener('keydown', down); window.removeEventListener('keyup', up); if (keyboardDown.current) { keyboardDown.current = false; if (pttMode === 'hold') void radio.stop(); } };
   }, [radio.press, radio.stop, pttMode]);
   const connected = radio.state === 'connected';
+  const channelTitle = channel?.name || (groupsLoading ? 'Recuperando tu canal…' : groupsError ? 'No se pudieron recuperar tus grupos' : hasGroups ? 'Selecciona uno de tus grupos' : 'Ningún grupo seleccionado');
   const stateText = radio.state === 'connecting' ? 'Conectando radio...' : radio.state === 'reconnecting' ? 'Recuperando conexión...' : connected ? 'Radio conectada' : 'Radio desconectada';
   const prompt = radio.starting ? (connected ? 'Preparando micrófono y turno...' : (pttMode === 'hold' ? 'Conectando al canal... Mantén presionado' : 'Conectando al canal... Toca para cancelar')) : radio.transmitting ? `Transmitiendo · ${radio.duration}s` : radio.speakers.length ? `Hablando: ${radio.speakers.join(', ')}` : pttMode === 'hold' ? 'Mantén presionado para hablar' : 'Toca para hablar; vuelve a tocar para terminar';
   return <View style={styles.screen}>
     <View style={styles.header}>
       <TouchableOpacity style={styles.titleArea} onPress={onGroups} accessibilityLabel="Seleccionar grupo de radio">
-        <Text style={styles.eyebrow}>CANAL ACTUAL</Text><Text style={styles.title} numberOfLines={2}>{channel?.name || 'Ningún grupo seleccionado'}</Text>
+        <Text style={styles.eyebrow}>CANAL ACTUAL</Text><Text style={styles.title} numberOfLines={2}>{channelTitle}</Text>
       </TouchableOpacity>
       <TouchableOpacity style={styles.sos} onPress={onSos} accessibilityLabel="Llamada de Emergencia SOS"><AlertTriangleIcon size={22} color="#fff" /></TouchableOpacity>
       <TouchableOpacity style={styles.members} onPress={onMembers} disabled={!channel} accessibilityLabel={channel ? 'Ver usuarios dentro del canal' : 'No hay grupo seleccionado'}>
@@ -39,8 +41,8 @@ export function PttScreen({ channel, radio, notifications, onGroups, onMembers, 
       </TouchableOpacity>
     </View>
     <View style={styles.center}>
-      {(radio.error || notifications.error) && <Text accessibilityRole="alert" style={styles.error}>{radio.error || notifications.error}</Text>}
-      <Text style={[styles.prompt, radio.transmitting && styles.promptOn]} accessibilityLiveRegion="polite">{channel ? prompt : 'Crea un grupo o únete a uno para comunicarte'}</Text>
+      {(groupsError || radio.error || notifications.error) && <Text accessibilityRole="alert" style={styles.error}>{groupsError || radio.error || notifications.error}</Text>}
+      <Text style={[styles.prompt, radio.transmitting && styles.promptOn]} accessibilityLiveRegion="polite">{channel ? prompt : groupsLoading ? 'Consultando tus grupos y restaurando la selección…' : groupsError ? 'Reintenta la consulta para recuperar tu canal.' : hasGroups ? 'Tus grupos están disponibles en la sección Grupos.' : 'Crea un grupo o únete a uno para comunicarte'}</Text>
       <View style={[styles.circle, radio.transmitting && styles.circleOn]}>
         <TouchableOpacity style={[styles.button, radio.transmitting && styles.buttonOn]}
           disabled={!channel} onPressIn={() => { if (pttMode === 'hold') void radio.press(); }} onPressOut={() => { if (pttMode === 'hold') void radio.stop(); }} onPress={() => { if (pttMode === 'toggle') void (radio.pressed ? radio.stop() : radio.press()); }}
@@ -48,8 +50,10 @@ export function PttScreen({ channel, radio, notifications, onGroups, onMembers, 
           {radio.starting ? <ActivityIndicator size="large" color="#691c32" /> : <MicIcon size={52} color={radio.transmitting ? '#fff' : palette.text} strokeWidth={2} />}
         </TouchableOpacity>
       </View>
-      <View style={[styles.status, connected && styles.statusOn]}><View style={[styles.dot, connected && styles.dotOn]} /><Text style={styles.statusText}>{stateText}</Text></View>
-      {!channel && <TouchableOpacity style={styles.action} onPress={onGroups}><Text style={styles.actionText}>Seleccionar grupo</Text></TouchableOpacity>}
+      <View style={[styles.status, connected && styles.statusOn]}><View style={[styles.dot, connected && styles.dotOn]} /><Text style={styles.statusText}>{groupsLoading ? 'Recuperando grupos…' : stateText}</Text></View>
+      {!channel && groupsLoading && <ActivityIndicator color={palette.accent} accessibilityLabel="Recuperando grupos de la cuenta" />}
+      {groupsError && onRetryGroups && <TouchableOpacity style={styles.action} onPress={onRetryGroups}><Text style={styles.actionText}>Reintentar grupos</Text></TouchableOpacity>}
+      {!channel && !groupsLoading && !groupsError && <TouchableOpacity style={styles.action} onPress={onGroups}><Text style={styles.actionText}>Seleccionar grupo</Text></TouchableOpacity>}
       {connected && !radio.audioEnabled && <TouchableOpacity style={styles.action} onPress={() => { void radio.enableAudio(); }}><Text style={styles.actionText}>Activar audio</Text></TouchableOpacity>}
       {notifications.available && <TouchableOpacity style={styles.noticeButton} disabled={notifications.enabled || notifications.busy} onPress={() => { void notifications.enable(); }}>
         <Text style={styles.noticeText}>{notifications.busy ? 'Activando avisos...' : notifications.enabled ? 'Avisos activados en este teléfono' : 'Activar avisos de los grupos'}</Text>
