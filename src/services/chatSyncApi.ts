@@ -8,7 +8,6 @@ export interface ChatThreadDto {
   callsign?: string | null;
   unit?: string | null;
   participantCount?: number;
-  isOnline?: boolean;
   lastMessage?: string;
   lastMessageTime?: string;
 }
@@ -29,7 +28,10 @@ export function createChatSyncApi(baseUrl: string, token: string) {
   const base = baseUrl.trim().replace(/\/+$/, '');
   const endpoint = `${base}/chat-sync.php`;
   async function request<T>(action: string, fields: Record<string, unknown> = {}, method: 'GET' | 'POST' = 'GET'): Promise<T> {
-    if (!base || !/^https:\/\//.test(base)) throw new Error('El chat requiere un servidor HTTPS configurado.');
+    let server: URL;
+    try { server = new URL(base); } catch { throw new Error('Configura una dirección válida para el servidor de chat.'); }
+    const local = /^(localhost|127\.0\.0\.1|10\.[\d.]+|192\.168\.[\d.]+|172\.(1[6-9]|2\d|3[01])\.[\d.]+)$/.test(server.hostname);
+    if (server.username || server.password || server.search || server.hash || server.protocol !== 'https:' && !(server.protocol === 'http:' && local)) throw new Error('El chat requiere HTTPS. HTTP solo está permitido en la red local.');
     if (!token) throw new Error('Inicia sesión nuevamente para sincronizar tus chats.');
     const params = new URLSearchParams({ action });
     const body = method === 'POST' ? JSON.stringify({ ...fields, action }) : undefined;

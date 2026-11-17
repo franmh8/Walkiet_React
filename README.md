@@ -15,6 +15,9 @@ conexión desde Ajustes. Para instalar esta actualización, seguir la
 [guía de presencia y privacidad](backend-alwaysdata/PRESENCIA_CHAT_DESPLIEGUE.md):
 requiere la migración 007 y actualizar tres archivos PHP además de la app.
 
+La [guía de reintegración del chat modular](REINTEGRACION_CHAT.md) explica cómo
+actualizar conservando la sincronización y recuperar los ajustes de V1.
+
 ## Actualizar un equipo existente
 
 Desde la carpeta `Walkiet_React`, detener Expo con **Ctrl+C** y revisar primero:

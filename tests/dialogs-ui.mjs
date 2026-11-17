@@ -1,14 +1,17 @@
+import {createChatSyncBrowserFixture} from './fixtures/chat-sync-browser.mjs';
 import assert from 'node:assert/strict';
 import {createRequire} from 'node:module';
 const {chromium}=createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODULE||'playwright');
 const backend=process.env.ACCOUNT_TEST_BACKEND,url=process.env.ACCOUNT_UI_URL||'http://localhost:3002';
 if(backend!=='http://127.0.0.1:8103')throw Error('Usa exclusivamente contacts_test_account local.');
 const browser=await chromium.launch({executablePath:process.env.CHROMIUM_PATH,headless:true,args:['--no-sandbox']});
+const chatFixture=createChatSyncBrowserFixture(backend);
 const errors=[];
 try{
  const context=await browser.newContext({viewport:{width:430,height:932},colorScheme:'light'});
  await context.route('**/walkiet.alwaysdata.net/**',r=>r.abort());
  await context.route('**/api/ptt',r=>r.fulfill({status:503,contentType:'application/json',body:JSON.stringify({success:false,message:'Radio detenida en prueba visual'})}));
+ await chatFixture.install(context);
  await context.addInitScript(server=>localStorage.setItem('c5i_native_server_url',server),backend);
  const page=await context.newPage();page.on('pageerror',e=>errors.push(e.message));let emergency=0;
  await page.route('**/api/emergency/alert',async r=>{emergency++;await r.fulfill({status:200,body:'{"success":true}'});});

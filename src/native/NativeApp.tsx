@@ -7,8 +7,6 @@ import {
   TextInput,
   ScrollView,
   StatusBar,
-  Alert,
-  Vibration,
   Platform,
   ActivityIndicator,
   Image,
@@ -29,6 +27,8 @@ import { logoutContactSession, type DirectoryContact as ContactOfficer } from '.
 import { ContactsScreen, type ContactsScreenHandle } from './contacts/ContactsScreen';
 import { useContactsDirectory } from './contacts/useContactsDirectory';
 import { PeerAvatar } from './profile/PeerAvatar';
+import { usePeerPresence } from './profile/usePeerPresence';
+import { presenceLabel } from '../services/presence';
 import { usePeerAvatars } from './profile/usePeerAvatars';
 import { useNativeFeedback } from './components/NativeFeedback';
 import c5iLogoImg from '../../assets/c5i-logo.png';
@@ -56,13 +56,13 @@ import {
   SendIcon,
   PaperclipIcon,
   DoubleCheckIcon,
-  VideoIcon,
   ImageIcon,
   MapPinIcon,
   FileTextIcon,
 } from './icons';
 import type { Channel } from '../services/channelsApi';
 import { GroupsScreen } from './groups/GroupsScreen';
+import { useChannelSelection } from './groups/useChannelSelection';
 import { useChannelsDirectory } from './groups/useChannelsDirectory';
 import { ChannelMembersModal } from './groups/ChannelMembersModal';
 import { soundEngine } from '../services/soundEngine';
@@ -172,17 +172,6 @@ interface User {
   authToken?: string;
 }
 
-interface Transmission {
-  id: string;
-  sender: string;
-  badge: string;
-  channel: string;
-  timestamp: string;
-  duration: number;
-  type: 'voice' | 'sos' | 'text';
-  text?: string;
-}
-
 export interface ChatMessage {
   id: string;
   senderId: string;
@@ -209,103 +198,7 @@ export interface Conversation {
   lastMessage: string;
   lastMessageTime: string;
   unreadCount: number;
-  isOnline: boolean;
   messages: ChatMessage[];
-}
-
-// Preferencia de grupo por cuenta. No guardar un canal en una clave global:
-// una cuenta diferente no debe heredar el grupo de otro usuario.
-interface SavedChannelSelection {
-  id: string;
-  name: string;
-  code?: string;
-}
-
-const lastChannelStorageKey = (userId: string) =>
-  `c5i_last_selected_channel_${encodeURIComponent(String(userId))}`;
-
-const normalizeChannelName = (value: string) =>
-  String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().replace(/\s+/g, ' ').toUpperCase();
-
-function getChannelPreferenceKeys(user: User): string[] {
-  // El ID del backend tiene prioridad. Correo/teléfono/identificador de acceso
-  // permiten recuperar la preferencia aun si cambió el ID entregado por la API.
-  const identifiers: string[] = [];
-  const id = String(user.id || '').trim();
-  if (id) identifiers.push(lastChannelStorageKey(id)); // Compatibilidad con versiones anteriores.
-  const phone = String(user.phone_number || '').replace(/\D/g, '');
-  if (phone.length >= 10) identifiers.push(`c5i_last_channel_phone_${phone}`);
-  const email = String(user.email || '').trim().toLowerCase();
-  if (email.includes('@')) identifiers.push(`c5i_last_channel_email_${encodeURIComponent(email)}`);
-  const login = String(user.loginIdentifier || '').trim().toLowerCase();
-  if (login.includes('@')) identifiers.push(`c5i_last_channel_email_${encodeURIComponent(login)}`);
-  else if (/^\d{10,}$/.test(login.replace(/\D/g, ''))) {
-    identifiers.push(`c5i_last_channel_phone_${login.replace(/\D/g, '')}`);
-  }
-  return [...new Set(identifiers)];
-}
-
-function parseSavedChannel(value: string | null): SavedChannelSelection | null {
-  if (!value) return null;
-  try {
-    const item = JSON.parse(value);
-    if (item && String(item.id || '').trim() && String(item.name || '').trim()) {
-      return {
-        id: String(item.id).trim(),
-        name: String(item.name).trim(),
-        code: item.code ? String(item.code) : undefined,
-      };
-    }
-  } catch (error) {
-    console.warn('[Walkiet] Datos antiguos del grupo guardado no válidos:', error);
-  }
-  return null;
-}
-
-async function readSavedChannelSelection(user: User): Promise<SavedChannelSelection | null> {
-  for (const key of getChannelPreferenceKeys(user)) {
-    let raw: string | null = null;
-    if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      // Esta lectura es persistente, no depende del fallback temporal en memoria.
-      try { raw = window.localStorage.getItem(key); }
-      catch (error) { console.warn('[Walkiet] No se pudo leer localStorage:', error); }
-    }
-    if (raw === null) raw = await safeStorage.getItem(key);
-    const parsed = parseSavedChannel(raw);
-    if (parsed) return parsed;
-  }
-  return null;
-}
-
-async function writeSavedChannelSelection(user: User, channel: Channel | null): Promise<void> {
-  const keys = getChannelPreferenceKeys(user);
-  if (!keys.length) throw new Error('La cuenta no tiene identificador estable para guardar el grupo.');
-  const value = channel ? JSON.stringify({ id: String(channel.id), name: channel.name, code: channel.code }) : null;
-  for (const key of keys) {
-    if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      // Guardado síncrono: el usuario puede cerrar sesión inmediatamente
-      // después de tocar SINTONIZAR sin perder la preferencia.
-      if (value === null) window.localStorage.removeItem(key);
-      else window.localStorage.setItem(key, value);
-      if (window.localStorage.getItem(key) !== value) {
-        throw new Error('El navegador no confirmó el almacenamiento del grupo.');
-      }
-    } else if (value === null) {
-      await safeStorage.removeItem(key);
-    } else {
-      await safeStorage.setItem(key, value);
-    }
-  }
-}
-
-function findRestoredChannel(channels: Channel[], saved: SavedChannelSelection): Channel | null {
-  // No sintonizar un grupo solo porque reutiliza un ID. Se exige también el nombre.
-  const name = normalizeChannelName(saved.name);
-  const exact = channels.find(ch => String(ch.id) === saved.id && normalizeChannelName(ch.name) === name);
-  if (exact) return exact;
-  // El backend puede reasignar IDs; admitir solo una coincidencia inequívoca.
-  const sameName = channels.filter(ch => normalizeChannelName(ch.name) === name);
-  return sameName.length === 1 ? sameName[0] : null;
 }
 
 // Helper con timeout para peticiones en red móvil/wifi
@@ -366,15 +259,6 @@ function NativeAppScreen() {
 
   const [currentTab, setCurrentTab] = useState<'PTT' | 'Grupos' | 'Chat' | 'Contactos' | 'Perfil'>('PTT');
 
-  // Radio y selección de grupo por cuenta.
-  // Se recupera el canal elegido por este usuario, si sigue disponible.
-  const [selectedChannel, setSelectedChannel] = useState<Channel | null>(null);
-  const [pendingSavedChannel, setPendingSavedChannel] = useState<{
-    userId: string;
-    channel: SavedChannelSelection;
-    revision: number;
-  } | null>(null);
-  const channelChoiceRevisionRef = useRef(0);
   const [serverUrl, setServerUrl] = useState('https://walkiet.alwaysdata.net');
   const updateProfileUser = useCallback((profile: AccountUser) => {
     setCurrentUser(previous => {
@@ -389,11 +273,9 @@ function NativeAppScreen() {
   useEffect(() => { setMode(account.settings.theme); }, [account.settings.theme, setMode]);
   useEffect(() => { soundEngine.setMessageSounds(account.settings.messageSounds); soundEngine.setRogerBeep(account.settings.rogerBeep); }, [account.settings.messageSounds, account.settings.rogerBeep]);
 
-  const [isSosActive, setIsSosActive] = useState(false);
   const [isMembersModalOpen, setIsMembersModalOpen] = useState(false);
 
   // History & Messages
-  const [transmissions, setTransmissions] = useState<Transmission[]>([]);
   const [messageInput, setMessageInput] = useState('');
 
   // Chat & Messaging State (WhatsApp-style C5i)
@@ -427,7 +309,7 @@ function NativeAppScreen() {
           sendMediaMessage('image', '📸 Foto Capturada con Cámara Táctica', dataUrl, 'evidencia_camara.jpg');
         }
       } catch (e: any) {
-        Alert.alert('Error al capturar foto', e.message || 'No se pudo procesar la imagen.');
+        showNativeAlert('Error al capturar foto', e.message || 'No se pudo procesar la imagen.');
       }
     }
     handleCloseLiveCamera();
@@ -447,7 +329,7 @@ function NativeAppScreen() {
 
   // Modal: Crear Grupo de Conversación
 
-  const { showTacticalToast, feedback } = useNativeFeedback();
+  const { showNativeAlert, showTacticalToast, feedback } = useNativeFeedback();
   const {
     conversations, setConversations, activeConversation, setActiveConversation,
     chatSearchQuery, setChatSearchQuery, selectedChatFilter, setSelectedChatFilter,
@@ -463,12 +345,14 @@ function NativeAppScreen() {
     sendMediaMessage, handleSendChatMessage, toggleGroupMemberSelection,
   } = useChatController({
     serverUrl, currentUser,
-    notify: (message, type) => showTacticalToast(message, type),
+    showAlert: showNativeAlert,
     playMessageSound: () => soundEngine.playIncomingChirp(),
   });
   const contactsDirectory = useContactsDirectory(serverUrl, currentUser ? { userId: currentUser.id, token: currentUser.authToken || '' } : null);
   const channelsDirectory = useChannelsDirectory(serverUrl, currentUser?.id || '', currentUser?.authToken || '');
-  const { channels, synced: channelsSyncedFromServer, refresh: refreshChannels } = channelsDirectory;
+  const { channels, refresh: refreshChannels } = channelsDirectory;
+  const channelSelection = useChannelSelection(serverUrl, currentUser, channelsDirectory);
+  const { selectedChannel, choose: chooseAndRememberChannel } = channelSelection;
   const officersList = contactsDirectory.contacts;
   const contactsScreenRef = useRef<ContactsScreenHandle>(null);
   const avatarIds = [
@@ -479,6 +363,9 @@ function NativeAppScreen() {
   const peerAvatars = usePeerAvatars(serverUrl, currentUser?.authToken || '', avatarIds,
     !!currentUser && (currentTab === 'Chat' || currentTab === 'Contactos'));
 
+
+  const presence = usePeerPresence(serverUrl, currentUser?.authToken || '', avatarIds);
+  const isPeerOnline = (id?: string) => !!id && !!presence.peers[id]?.online && (presence.peers[id]?.onlineUntil || 0) > presence.now;
 
   // Circuit breaker para endpoints PHP en Alwaysdata (evita spam de 404 en consola si aún no se han subido los archivos)
   const isChatPhpAvailableRef = useRef<boolean | null>(null);
@@ -510,75 +397,12 @@ function NativeAppScreen() {
     })();
   }, []);
 
-  useEffect(() => {
-    setSelectedChannel(null);
-    setIsMembersModalOpen(false);
-  }, [channelsDirectory.scope]);
-
-  // Restaurar la selección solo del usuario autenticado. Una elección manual más
-  // reciente tiene prioridad sobre cualquier lectura asíncrona de la memoria.
-  useEffect(() => {
-    if (!currentUser?.id) {
-      setPendingSavedChannel(null);
-      return;
-    }
-    let active = true;
-    const userId = String(currentUser.id);
-    const revision = channelChoiceRevisionRef.current;
-
-    readSavedChannelSelection(currentUser)
-      .then((saved) => {
-        if (!active || revision !== channelChoiceRevisionRef.current || !saved) return;
-        setPendingSavedChannel({ userId, channel: saved, revision });
-      })
-      .catch((error) => console.warn('No se pudo recuperar el último canal:', error));
-
-    return () => { active = false; };
-  }, [currentUser?.id]);
-
-  // Restaurar únicamente después de validar la membresía con el servidor.
-  // Comprobamos también el nombre para no sintonizar otro grupo si el servidor
-  // reutiliza un identificador.
-  useEffect(() => {
-    if (!currentUser?.id || !pendingSavedChannel) return;
-    if (String(currentUser.id) !== pendingSavedChannel.userId ||
-        channelChoiceRevisionRef.current !== pendingSavedChannel.revision) return;
-    // La preferencia guardada no concede acceso por sí sola.
-    const restored = findRestoredChannel(channels, pendingSavedChannel.channel);
-    if (restored && channelsSyncedFromServer) {
-      setSelectedChannel(restored);
-      setPendingSavedChannel(null);
-    } else if (channelsSyncedFromServer) {
-      // El canal guardado ya no figura entre los canales del servidor.
-      // No sintonizar automáticamente un canal distinto o solo de ejemplo.
-      setSelectedChannel(null);
-      setPendingSavedChannel(null);
-    }
-  }, [currentUser?.id, pendingSavedChannel, channels, channelsSyncedFromServer]);
-
-  // Sintonizar / abandonar un grupo y recordar esa elección por usuario.
-  const chooseAndRememberChannel = useCallback((channel: Channel | null) => {
-    channelChoiceRevisionRef.current += 1;
-    setPendingSavedChannel(null);
-    setSelectedChannel(channel);
-    if (!currentUser?.id) return;
-
-    writeSavedChannelSelection(currentUser, channel)
-      .catch((error) => {
-        console.warn('No se pudo guardar la selección del canal:', error);
-        setInlineWarning('El grupo se seleccionó, pero tu navegador no permitió guardarlo. Revisa los permisos de almacenamiento del sitio.');
-      });
-  }, [currentUser?.id]);
+  useEffect(() => { setIsMembersModalOpen(false); }, [channelsDirectory.scope]);
 
   // En navegador web, enviar text/plain evita preflights OPTIONS innecesarios
   const getSafePostHeaders = () => ({
     'Content-Type': Platform.OS === 'web' ? 'text/plain;charset=UTF-8' : 'application/json',
   });
-
-  useEffect(() => {
-    if (!channelsSyncedFromServer) return;
-    setSelectedChannel(previous => previous ? channels.find(channel => channel.id === previous.id) || null : null);
-  }, [channels, channelsSyncedFromServer]);
 
   // Conversaciones y mensajes: useChatController (src/native/chat).
 
@@ -739,16 +563,6 @@ function NativeAppScreen() {
         return;
       }
 
-      // Recuperar el grupo DURANTE el login, antes de mostrar PTT.
-      // Antes dependía exclusivamente de un useEffect posterior y podía quedar
-      // sin selección al alternar de cuenta o actualizar los grupos por red.
-      const lastChannel = await readSavedChannelSelection(remoteUser);
-      channelChoiceRevisionRef.current += 1;
-      const loginRevision = channelChoiceRevisionRef.current;
-      setPendingSavedChannel(lastChannel ? {
-        userId: String(remoteUser.id), channel: lastChannel, revision: loginRevision,
-      } : null);
-      setSelectedChannel(null);
       setCurrentTab('PTT');
       setCurrentUser(remoteUser);
       try {
@@ -1033,79 +847,15 @@ function NativeAppScreen() {
     void radio.disconnect();
     soundEngine.stopAllAudio();
     setPassword(''); setShowPassword(false);
-    if (forgetAccount && currentUser) { try { await writeSavedChannelSelection(currentUser, null); } catch {} }
-    // Refuerzo al cerrar sesión: persistir la selección actual ANTES de limpiar
-    // el estado del usuario. Si no había grupo, conservamos la preferencia previa.
-    if (!forgetAccount && currentUser && selectedChannel) {
-      try {
-        await writeSavedChannelSelection(currentUser, selectedChannel);
-      } catch (error) {
-        console.warn('[Walkiet] No fue posible guardar el grupo al cerrar sesión:', error);
-        setInlineWarning('No se pudo guardar el grupo en este dispositivo.');
-      }
-    }
-    // La selección se conserva en el almacenamiento para el próximo login;
-    // únicamente se quita de esta sesión para no compartirla con otra cuenta.
-    channelChoiceRevisionRef.current += 1;
-    setPendingSavedChannel(null);
-    setSelectedChannel(null);
+    if (forgetAccount) { try { await channelSelection.forget(); } catch {} }
+    else { try { await channelSelection.remember(); } catch {} }
+    // La selección persiste por cuenta/servidor y se valida en el próximo login.
     setIsMembersModalOpen(false);
     setCurrentTab('PTT');
     setCurrentUser(null);
     try {
       await safeStorage.removeItem('c5i_native_user');
     } catch {}
-  };
-
-  const handleTriggerSos = () => {
-    Alert.alert(
-      '🚨 ALERTA DE EMERGENCIA C5i (10-33)',
-      '¿Confirmas la activación inmediata de código SOS con transmisión de coordenadas a toda la red del Centro de Comando?',
-      [
-        { text: 'Cancelar', style: 'cancel' },
-        {
-          text: 'ACTIVAR SOS',
-          style: 'destructive',
-          onPress: () => {
-            soundEngine.playPttStart();
-            setIsSosActive(true);
-            if (Platform.OS !== 'web') {
-              try { Vibration.vibrate([0, 500, 200, 500]); } catch {}
-            }
-            const sosTx: Transmission = {
-              id: Date.now().toString(),
-              sender: currentUser?.name || 'Unidad Táctica',
-              badge: currentUser?.badge || 'SOS-911',
-              channel: 'DESPACHO EMERGENCIAS 911',
-              timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-              duration: 5,
-              type: 'sos',
-              text: '🚨 ALERTA 10-33 SOS ACTIVA - Oficial en peligro requiere apoyo inmediato de unidades en cuadrante',
-            };
-            setTransmissions((prev) => [sosTx, ...prev]);
-
-            // Enviar alerta al backend
-            if (serverUrl) {
-              try {
-                const cleanUrl = serverUrl.replace(/\/+$/, '');
-                fetchWithTimeout(`${cleanUrl}/api/emergency/alert`, {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({
-                    userId: currentUser?.id,
-                    officer: currentUser?.name,
-                    callsign: currentUser?.badge,
-                    channelId: selectedChannel?.id || null,
-                    locationName: 'Pachuca Centro (Dispositivo Móvil Expo)',
-                    coords: { lat: 20.12, lng: -98.73 },
-                  }),
-                }, 3000).catch(() => {});
-              } catch {}
-            }
-          },
-        },
-      ]
-    );
   };
 
   // Filtros y contadores: useChatController.
@@ -1142,7 +892,7 @@ function NativeAppScreen() {
         const file = e.target?.files?.[0];
         if (!file) return;
         if (file.size > MAX_CHAT_ATTACHMENT_BYTES) {
-          window.alert('Elige una foto de hasta 3 MB.');
+          showNativeAlert('Aviso', 'Elige una foto de hasta 3 MB.');
           return;
         }
         const reader = new FileReader();
@@ -1166,14 +916,14 @@ function NativeAppScreen() {
       const photo = result.assets[0];
       if (!photo.base64) throw new Error('No se pudieron leer los datos de la foto.');
       if (Math.ceil(photo.base64.length * 0.75) > MAX_CHAT_ATTACHMENT_BYTES) {
-        Alert.alert('Foto demasiado grande', 'Elige una foto de hasta 3 MB.');
+        showNativeAlert('Foto demasiado grande', 'Elige una foto de hasta 3 MB.');
         return;
       }
       const fileName = `foto_${Date.now()}.jpg`; // Base64 del selector es JPEG, incluso si el original era HEIC.
       // Base64 genera una URL transportable; file:// solamente sirve en el dispositivo de origen.
       sendMediaMessage('image', fileName, `data:image/jpeg;base64,${photo.base64}`, fileName);
     } catch (error: any) {
-      Alert.alert('No se pudo abrir Fotos', error?.message || 'Revisa los permisos de tus fotos.');
+      showNativeAlert('No se pudo abrir Fotos', error?.message || 'Revisa los permisos de tus fotos.');
     }
   };
 
@@ -1185,7 +935,7 @@ function NativeAppScreen() {
         const ImagePicker = await import('expo-image-picker');
         const permission = await ImagePicker.requestCameraPermissionsAsync();
         if (!permission.granted) {
-          Alert.alert('Permiso de cámara', 'Autoriza el acceso a la cámara en los ajustes de tu dispositivo.');
+          showNativeAlert('Permiso de cámara', 'Autoriza el acceso a la cámara en los ajustes de tu dispositivo.');
           return;
         }
         const result = await ImagePicker.launchCameraAsync({
@@ -1198,13 +948,13 @@ function NativeAppScreen() {
         const picture = result.assets[0];
         if (!picture.base64) throw new Error('No se pudo leer la foto capturada.');
         if (Math.ceil(picture.base64.length * 0.75) > MAX_CHAT_ATTACHMENT_BYTES) {
-          Alert.alert('Foto demasiado grande', 'Intenta capturar una imagen más pequeña.');
+          showNativeAlert('Foto demasiado grande', 'Intenta capturar una imagen más pequeña.');
           return;
         }
         const fileName = `camara_${Date.now()}.jpg`;
         sendMediaMessage('image', '📸 Foto capturada', `data:image/jpeg;base64,${picture.base64}`, fileName);
       } catch (error: any) {
-        Alert.alert('Error de cámara', error?.message || 'No se pudo abrir la cámara.');
+        showNativeAlert('Error de cámara', error?.message || 'No se pudo abrir la cámara.');
       }
       return;
     }
@@ -1220,7 +970,7 @@ function NativeAppScreen() {
           return;
         } catch (error: any) {
           if (error?.name === 'NotAllowedError' || error?.name === 'PermissionDeniedError') {
-            window.alert('Permite el acceso a la cámara en el navegador.');
+            showNativeAlert('Aviso', 'Permite el acceso a la cámara en el navegador.');
             return;
           }
         }
@@ -1234,7 +984,7 @@ function NativeAppScreen() {
           const file = e.target?.files?.[0];
           if (!file) return;
           if (file.size > MAX_CHAT_ATTACHMENT_BYTES) {
-            window.alert('Elige una imagen de hasta 3 MB.');
+            showNativeAlert('Aviso', 'Elige una imagen de hasta 3 MB.');
             return;
           }
           const reader = new FileReader();
@@ -1258,7 +1008,7 @@ function NativeAppScreen() {
         const Location = await import('expo-location');
         const permission = await Location.requestForegroundPermissionsAsync();
         if (!permission.granted) {
-          Alert.alert('Permiso de ubicación', 'Autoriza la ubicación mientras usas la app.');
+          showNativeAlert('Permiso de ubicación', 'Autoriza la ubicación mientras usas la app.');
           return;
         }
         const cachedPosition = await Location.getLastKnownPositionAsync({
@@ -1278,7 +1028,7 @@ const position =
           longitude: lng,
           address: `Precisión aproximada: ±${Math.round(position.coords.accuracy || 0)} m`,
         };
-        Alert.alert('Compartir ubicación', '¿Quieres enviar tu ubicación actual a esta conversación?', [
+        showNativeAlert('Compartir ubicación', '¿Quieres enviar tu ubicación actual a esta conversación?', [
           { text: 'Cancelar', style: 'cancel' },
           {
             text: 'Enviar ubicación',
@@ -1292,13 +1042,13 @@ const position =
           },
         ]);
       } catch (error: any) {
-        Alert.alert('No se pudo obtener la ubicación', error?.message || 'Comprueba que el GPS esté activo.');
+        showNativeAlert('No se pudo obtener la ubicación', error?.message || 'Comprueba que el GPS esté activo.');
       }
       return;
     }
     // Web: geolocalización estándar del navegador.
     if (typeof navigator === 'undefined' || !navigator.geolocation) {
-      window.alert('Geolocalización no disponible en este navegador.');
+      showNativeAlert('Aviso', 'Geolocalización no disponible en este navegador.');
       return;
     }
     navigator.geolocation.getCurrentPosition(
@@ -1324,7 +1074,7 @@ const position =
           `https://www.google.com/maps?q=${lat},${lng}`, undefined,
           { latitude: lat, longitude: lng, address: addressLabel });
       },
-      (error) => window.alert(error.message || 'No se pudo obtener tu ubicación.'),
+      (error) => showNativeAlert('Aviso', error.message || 'No se pudo obtener tu ubicación.'),
       { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
     );
   };
@@ -1346,7 +1096,7 @@ const position =
         const file = e.target?.files?.[0];
         if (!file) return;
         if (file.size > MAX_CHAT_ATTACHMENT_BYTES) {
-          window.alert('Elige un documento de hasta 3 MB.');
+          showNativeAlert('Aviso', 'Elige un documento de hasta 3 MB.');
           return;
         }
         const reader = new FileReader();
@@ -1389,7 +1139,7 @@ const position =
         reportedSize = file.size || 0;
       }
       if (reportedSize > MAX_CHAT_ATTACHMENT_BYTES) {
-        Alert.alert('Documento demasiado grande', 'Elige un documento de hasta 3 MB.');
+        showNativeAlert('Documento demasiado grande', 'Elige un documento de hasta 3 MB.');
         return;
       }
 
@@ -1398,7 +1148,7 @@ const position =
       const actualBytes = Math.floor((content.length * 3) / 4) -
         (content.endsWith('==') ? 2 : content.endsWith('=') ? 1 : 0);
       if (actualBytes > MAX_CHAT_ATTACHMENT_BYTES) {
-        Alert.alert('Documento demasiado grande', 'Elige un documento de hasta 3 MB.');
+        showNativeAlert('Documento demasiado grande', 'Elige un documento de hasta 3 MB.');
         return;
       }
       const mime = determineDocumentMime(pickedName,
@@ -1408,7 +1158,7 @@ const position =
         `data:${mime};base64,${content}`, fileName);
     } catch (error: any) {
       console.warn('[Walkiet] Error leyendo documento:', error);
-      Alert.alert('No se pudo adjuntar el documento',
+      showNativeAlert('No se pudo adjuntar el documento',
         error?.message || 'Intenta seleccionar un archivo local desde Descargas.');
     }
   };
@@ -1417,7 +1167,7 @@ const position =
   // Si no hay un visor directo, ofrecer el selector del sistema como alternativa.
   const handleOpenChatDocument = async (message: ChatMessage) => {
     if (!message.mediaUrl) {
-      Alert.alert('Documento no disponible', 'Este mensaje no contiene un archivo descargable.');
+      showNativeAlert('Documento no disponible', 'Este mensaje no contiene un archivo descargable.');
       return;
     }
     if (Platform.OS === 'web') {
@@ -1478,32 +1228,13 @@ const position =
         return;
       }
 
-      Alert.alert('Visor no disponible',
+      showNativeAlert('Visor no disponible',
         'No se encontró una aplicación compatible para abrir este documento en el teléfono.');
     } catch (error: any) {
       console.warn('[Walkiet] Error abriendo documento:', error);
-      Alert.alert('No se pudo abrir el documento',
+      showNativeAlert('No se pudo abrir el documento',
         error?.message || 'Prueba abrir el documento desde otra aplicación.');
     }
-  };
-
-  // Acciones de llamada desde el encabezado (Imagen 1)
-  const handleStartVideoCall = () => {
-    soundEngine.playIncomingChirp();
-    Alert.alert(
-      '📹 Enlace de Videollamada C5i',
-      `Iniciando conexión de video encriptada punto a punto con ${activeConversation?.name || 'Oficial'}...`,
-      [{ text: 'Aceptar' }]
-    );
-  };
-
-  const handleStartVoiceCall = () => {
-    soundEngine.playIncomingChirp();
-    Alert.alert(
-      '📞 Llamada Táctica C5i',
-      `Iniciando canal de voz seguro de alta fidelidad con ${activeConversation?.name || 'Oficial'}...`,
-      [{ text: 'Aceptar' }]
-    );
   };
 
   // Mantener los cuatro botones originales (Fotos, Cámara, Ubicación, Documento).
@@ -1521,7 +1252,7 @@ const position =
     // En web el selector necesita ejecutarse durante el gesto original.
     void run().catch((error: any) => {
       console.warn(`[Walkiet-adjuntos] Error en ${label}:`, error);
-      Alert.alert('No se pudo abrir el adjunto', String(error?.message || error));
+      showNativeAlert('No se pudo abrir el adjunto', String(error?.message || error));
     });
   };
 
@@ -1535,7 +1266,7 @@ const position =
     setTimeout(() => {
       void chosen.run().catch((error: any) => {
         console.warn(`[Walkiet-iOS] Error abriendo ${chosen.label}:`, error);
-        Alert.alert('No se pudo abrir el adjunto', String(error?.message || error));
+        showNativeAlert('No se pudo abrir el adjunto', String(error?.message || error));
       });
     }, 180);
   };
@@ -2132,13 +1863,6 @@ const position =
     <SafeAreaView style={styles.cleanContainer}>
       <StatusBar barStyle={dark ? "light-content" : "dark-content"} />
 
-      {/* SOS Active Banner */}
-      {isSosActive && (
-        <TouchableOpacity style={styles.sosBanner} onPress={() => setIsSosActive(false)}>
-          <Text style={styles.sosBannerText}>🚨 ALERTA SOS 10-33 ACTIVA • TOCAR PARA CANCELAR</Text>
-        </TouchableOpacity>
-      )}
-
       {/* Main Tab Content */}
       <View style={styles.cleanMainContent}>
         {currentTab === 'PTT' && (
@@ -2147,6 +1871,8 @@ const position =
             if (enabled) { try { await account.saveSettings({ backgroundNotifications: true }); } catch { await notifications.disable(); return false; } }
             return enabled;
           } }}
+            groupsLoading={channelSelection.restoring} groupsError={channelSelection.error}
+            hasGroups={channels.length > 0} onRetryGroups={() => { void refreshChannels(); }}
             onGroups={() => setCurrentTab('Grupos')} onMembers={() => setIsMembersModalOpen(true)} />
         )}
 
@@ -2190,30 +1916,11 @@ const position =
                       {activeConversation.name}
                     </Text>
                     <Text style={styles.chatActiveSubtitle} numberOfLines={1}>
-                      {activeConversation.isOnline ? 'en línea' : 'desconectado'}
+                      {activeConversation.type === 'group' ? 'Conversación de grupo' : presenceLabel(presence.peers[activeConversation.targetUserId || ''], presence.now)}
                     </Text>
                   </View>
 
 
-                  {/* Botón de Videollamada */}
-                  <TouchableOpacity
-                    style={styles.chatActiveHeaderActionBtn}
-                    onPress={handleStartVideoCall}
-                    activeOpacity={0.75}
-                    accessibilityLabel="Videollamada"
-                  >
-                    <VideoIcon size={20} color={palette.secondary} strokeWidth={2} />
-                  </TouchableOpacity>
-
-                  {/* Botón de Llamada de Voz */}
-                  <TouchableOpacity
-                    style={styles.chatActiveHeaderActionBtn}
-                    onPress={handleStartVoiceCall}
-                    activeOpacity={0.75}
-                    accessibilityLabel="Llamada de voz"
-                  >
-                    <PhoneIcon size={19} color={palette.secondary} strokeWidth={2} />
-                  </TouchableOpacity>
                 </View>
 
                 {/* Hilo de mensajes o Estado Vacío Limpio (Imagen 1) */}
@@ -2466,7 +2173,7 @@ const position =
             ) : (
               // LISTA DE CHATS (EXACTA A CAPTURA 1)
               <View style={styles.chatListView}>
-                {/* Header superior: Ícono de chat redondeado, Título "Chat", Botón SOS rojo y Botón Editar/Nuevo */}
+                {/* Encabezado de chat con acceso a nueva conversación */}
                 <View style={styles.chatTopHeader}>
                   <View style={styles.chatTopHeaderLeft}>
                     <View style={styles.chatHeaderIconBadge}>
@@ -2476,16 +2183,6 @@ const position =
                   </View>
 
                   <View style={styles.chatTopHeaderRight}>
-                    {/* Botón SOS Rojo idéntico a Captura 1 */}
-                    <TouchableOpacity
-                      style={styles.chatSosHeaderBtn}
-                      onPress={handleTriggerSos}
-                      activeOpacity={0.8}
-                      accessibilityLabel="Alerta de emergencia SOS"
-                    >
-                      <AlertTriangleIcon size={18} color="#ffffff" strokeWidth={2.4} />
-                    </TouchableOpacity>
-
                     {/* Botón Nuevo / Componer con icono de lápiz/editar */}
                     <TouchableOpacity
                       style={styles.chatComposeBtn}
@@ -2626,7 +2323,7 @@ const position =
                               </Text>
                             )}
                           </PeerAvatar>
-                          {conv.isOnline && <View style={styles.chatConvOnlineDot} />}
+                          {conv.type === 'direct' && isPeerOnline(conv.targetUserId) && <View testID="peer-online-dot" accessibilityLabel="Contacto en línea" style={styles.chatConvOnlineDot} />}
                         </View>
 
                         <View style={styles.chatConvContent}>
@@ -2876,7 +2573,7 @@ const position =
                             {officer.callsign.slice(0, 2).toUpperCase()}
                           </Text>
                         </PeerAvatar>
-                        {officer.status === 'online' && (
+                        {isPeerOnline(officer.registered_user_id || undefined) && (
                           <View style={styles.chatOfficerOnlineDot} />
                         )}
                       </View>
@@ -3298,17 +2995,6 @@ const baseStyles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
   },
-  sosBanner: {
-    backgroundColor: '#dc2626',
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-    alignItems: 'center',
-  },
-  sosBannerText: {
-    color: '#ffffff',
-    fontWeight: '800',
-    fontSize: 12,
-  },
   mainContent: {
     flex: 1,
   },
@@ -3441,18 +3127,6 @@ const baseStyles = StyleSheet.create({
   quickActions: {
     gap: 8,
   },
-  sosButton: {
-    backgroundColor: '#dc2626',
-    paddingVertical: 13,
-    borderRadius: 12,
-    alignItems: 'center',
-  },
-  sosButtonText: {
-    color: '#ffffff',
-    fontWeight: '800',
-    fontSize: 13,
-    letterSpacing: 1,
-  },
   quickRogerBtn: {
     backgroundColor: '#1e293b',
     paddingVertical: 11,
@@ -3496,10 +3170,6 @@ const baseStyles = StyleSheet.create({
     marginBottom: 10,
     borderLeftWidth: 3,
     borderLeftColor: '#38bdf8',
-  },
-  transmissionItemSos: {
-    borderLeftColor: '#ef4444',
-    backgroundColor: '#450a0a',
   },
   transHeader: {
     flexDirection: 'row',
@@ -4325,19 +3995,6 @@ const baseStyles = StyleSheet.create({
     alignItems: 'center',
     gap: 10,
   },
-  chatSosHeaderBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: 12,
-    backgroundColor: '#dc2626',
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#dc2626',
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.35,
-    shadowRadius: 5,
-    elevation: 4,
-  },
   chatComposeBtn: {
     width: 40,
     height: 40,
@@ -4581,33 +4238,6 @@ const baseStyles = StyleSheet.create({
     fontSize: 12,
     color: '#64748b',
     marginTop: 1,
-  },
-  chatActiveSosPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#ef4444',
-    paddingHorizontal: 9,
-    paddingVertical: 5,
-    borderRadius: 14,
-    gap: 4,
-    shadowColor: '#ef4444',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.3,
-    shadowRadius: 3,
-    elevation: 3,
-  },
-  chatActiveSosText: {
-    color: '#ffffff',
-    fontSize: 11,
-    fontWeight: '800',
-    letterSpacing: 0.5,
-  },
-  chatActiveHeaderActionBtn: {
-    width: 34,
-    height: 34,
-    borderRadius: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
   },
   chatMessagesScroll: {
     flex: 1,
