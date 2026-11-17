@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, Switch, TextInput, Modal, ActivityIndicator, Platform } from 'react-native';
+import { View, Text, ScrollView, TouchableOpacity, Switch, TextInput, ActivityIndicator, Platform } from 'react-native';
+import { DialogAction, TacticalDialog } from '../components/TacticalDialog';
 import { ProfileIcon as Feather } from './ProfileIcon';
 import { useAppTheme } from './AppTheme';
 import { createProfileStyles } from './profileStyles';
@@ -68,6 +69,11 @@ export function SettingsScreen({ account, notifications, serverUrl, onServerChan
     </View>
     <Text style={s.notice}>{account.busy ? 'Guardando preferencias…' : account.loaded ? 'Preferencias guardadas en tu cuenta' : 'Conecta con el servidor para cargar tus preferencias'}</Text>
   </View></ScrollView>
-  <Modal transparent visible={confirm} animationType="fade" onRequestClose={() => setConfirm(false)}><View style={s.overlay}><View style={s.modal}><Text style={s.modalTitle}>Cambiar de servidor</Text><Text style={s.description}>Se cerrará tu sesión actual. Iniciarás sesión de nuevo en:</Text><Text style={s.label}>{draft}</Text><TouchableOpacity style={[s.action, s.primary]} onPress={() => { setConfirm(false); void onServerChange(cleanUrl()).catch(() => setError('No se pudo guardar el nuevo servidor.')); }}><Text style={[s.actionText, s.white]}>Cambiar y cerrar sesión</Text></TouchableOpacity><TouchableOpacity style={s.action} onPress={() => setConfirm(false)}><Text style={s.actionText}>Cancelar</Text></TouchableOpacity></View></View></Modal>
+  <TacticalDialog visible={confirm} title="Cambiar de servidor" icon={<Feather name="server" size={30} color={p.accent}/>}
+    onClose={() => setConfirm(false)} showClose>
+    <Text style={s.description}>Se cerrará tu sesión actual. Iniciarás sesión de nuevo en:</Text><Text style={s.label}>{draft}</Text>
+    <DialogAction label="Cambiar y cerrar sesión" onPress={() => { setConfirm(false); void onServerChange(cleanUrl()).catch(() => setError('No se pudo guardar el nuevo servidor.')); }} />
+    <DialogAction label="Cancelar" secondary onPress={() => setConfirm(false)} />
+  </TacticalDialog>
   </View>;
 }

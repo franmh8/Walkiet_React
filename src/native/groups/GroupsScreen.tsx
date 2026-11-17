@@ -1,4 +1,5 @@
-import { useThemeStyles } from '../profile/AppTheme';
+import { useAppTheme, useThemeStyles } from '../profile/AppTheme';
+import { DialogAction, TacticalDialog } from '../components/TacticalDialog';
 import React, { useState, useRef, useMemo, useCallback } from 'react';
 import { View, Text, TextInput, TouchableOpacity, ScrollView, Modal, KeyboardAvoidingView,
   TouchableWithoutFeedback, Keyboard, Platform, Clipboard, Image, ActivityIndicator, useWindowDimensions } from 'react-native';
@@ -20,6 +21,7 @@ interface Props {
 }
 export function GroupsScreen({ directory, selectedChannel, onTune, onSos, onOpenPtt }: Props) {
   const styles = useThemeStyles(baseStyles);
+  const { palette, dark } = useAppTheme();
   const { channels } = directory;
   const { height: viewportHeight } = useWindowDimensions();
   const [configError, setConfigError] = useState<string | null>(null);
@@ -189,6 +191,12 @@ export function GroupsScreen({ directory, selectedChannel, onTune, onSos, onOpen
     setTimeout(() => setHasCopiedPin(false), 2500);
   };
 
+  const successTitle = scanSuccessModal.customTitle || ({ qr: 'Código QR Detectado', pin: 'Canal Enlazado', leave: 'Has Salido del Grupo', delete: 'Canal Eliminado', create: 'Canal Creado', tune: 'Canal Sintonizado' }[scanSuccessModal.source]);
+  const successDescription = scanSuccessModal.customSubtitle || (scanSuccessModal.source === 'qr'
+    ? 'Canal reconocido y autenticado con éxito en la red táctica C5i.' : scanSuccessModal.source === 'pin'
+    ? 'Te has unido exitosamente al canal táctico en la red C5i.' : scanSuccessModal.source === 'leave'
+    ? 'Te has desconectado de este canal táctico.' : scanSuccessModal.source === 'delete'
+    ? 'El canal táctico ha sido removido de la red C5i.' : `Radio enlazado a ${scanSuccessModal.channel?.name || 'Canal'}.`);
   return <>
           <View style={styles.canalesMainWrapper}>
             <View style={styles.canalesHeader}>
@@ -874,70 +882,10 @@ export function GroupsScreen({ directory, selectedChannel, onTune, onSos, onOpen
         </View>
       </Modal>
 
-      {/* 5. MODAL DE ÉXITO TÁCTICO AL DETECTAR QR O ENLAZAR CANAL (DISEÑO ARMONIOSO C5i) */}
-      <Modal
-        visible={scanSuccessModal.isOpen}
-        animationType="fade"
-        transparent
-        onRequestClose={() => setScanSuccessModal((prev) => ({ ...prev, isOpen: false }))}
-      >
-        <View style={styles.channelModalOverlay}>
-          <View style={styles.scanSuccessCard}>
-            {/* Glow ambient de fondo con tono vino */}
-            <View style={styles.scanSuccessGlow} />
-
-            {/* Ícono de confirmación dinámico según la acción */}
-            <View
-              style={[
-                styles.scanSuccessIconBox,
-                scanSuccessModal.source === 'leave' && {
-                  backgroundColor: '#fffbeb',
-                  borderColor: '#fde68a',
-                  shadowColor: '#d97706',
-                },
-                scanSuccessModal.source === 'delete' && {
-                  backgroundColor: '#fef2f2',
-                  borderColor: '#fecdd3',
-                  shadowColor: '#e11d48',
-                },
-              ]}
-            >
-              {scanSuccessModal.source === 'leave' ? (
-                <LogOutIcon size={30} color="#d97706" strokeWidth={2.2} />
-              ) : scanSuccessModal.source === 'delete' ? (
-                <TrashIcon size={30} color="#e11d48" strokeWidth={2.2} />
-              ) : (
-                <CheckCircleIcon size={34} color="#059669" strokeWidth={2.5} />
-              )}
-            </View>
-
-            <Text style={styles.scanSuccessTitle}>
-              {scanSuccessModal.customTitle ||
-                (scanSuccessModal.source === 'qr'
-                  ? 'Código QR Detectado'
-                  : scanSuccessModal.source === 'pin'
-                  ? 'Canal Enlazado'
-                  : scanSuccessModal.source === 'leave'
-                  ? 'Has Salido del Grupo'
-                  : scanSuccessModal.source === 'delete'
-                  ? 'Canal Eliminado'
-                  : scanSuccessModal.source === 'create'
-                  ? 'Canal Creado'
-                  : 'Canal Sintonizado')}
-            </Text>
-            <Text style={styles.scanSuccessSubtitle}>
-              {scanSuccessModal.customSubtitle ||
-                (scanSuccessModal.source === 'qr'
-                  ? 'Canal reconocido y autenticado con éxito en la red táctica C5i.'
-                  : scanSuccessModal.source === 'pin'
-                  ? 'Te has unido exitosamente al canal táctico en la red C5i.'
-                  : scanSuccessModal.source === 'leave'
-                  ? 'Te has desconectado de este canal táctico.'
-                  : scanSuccessModal.source === 'delete'
-                  ? 'El canal táctico ha sido removido de la red C5i.'
-                  : `Radio enlazado a ${scanSuccessModal.channel?.name || 'Canal'}.`)}
-            </Text>
-
+      <TacticalDialog visible={scanSuccessModal.isOpen} title={successTitle} description={successDescription}
+        tone={scanSuccessModal.source === 'leave' ? 'warning' : scanSuccessModal.source === 'delete' ? 'danger' : 'success'}
+        icon={scanSuccessModal.source === 'leave' ? <LogOutIcon size={30} color={dark ? '#fbbf24' : '#b45309'} /> : scanSuccessModal.source === 'delete' ? <TrashIcon size={30} color={palette.danger} /> : undefined}
+        onClose={() => setScanSuccessModal(previous => ({ ...previous, isOpen: false }))}>
             {/* Tarjeta con los datos del canal y colorimetría C5i */}
             {scanSuccessModal.channel && (
               <View style={styles.scanSuccessChannelBox}>
@@ -962,31 +910,12 @@ export function GroupsScreen({ directory, selectedChannel, onTune, onSos, onOpen
               </View>
             )}
 
-            {/* Botón de acción con estilo vino institucional */}
-            <TouchableOpacity
-              style={styles.scanSuccessActionBtn}
-              onPress={() => {
-                setScanSuccessModal((prev) => ({ ...prev, isOpen: false }));
-                if (
-                  scanSuccessModal.source === 'tune' ||
-                  scanSuccessModal.source === 'qr' ||
-                  scanSuccessModal.source === 'pin' ||
-                  scanSuccessModal.source === 'create'
-                ) {
-                  onOpenPtt();
-                }
-              }}
-              activeOpacity={0.88}
-            >
-              <Text style={styles.scanSuccessActionBtnText}>
-                {scanSuccessModal.source === 'leave' || scanSuccessModal.source === 'delete'
-                  ? 'ENTENDIDO'
-                  : 'COMENZAR A TRANSMITIR'}
-              </Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
+        <DialogAction label={scanSuccessModal.source === 'leave' || scanSuccessModal.source === 'delete' ? 'ENTENDIDO' : 'COMENZAR A TRANSMITIR'}
+          onPress={() => {
+            setScanSuccessModal(previous => ({ ...previous, isOpen: false }));
+            if (['tune', 'qr', 'pin', 'create'].includes(scanSuccessModal.source)) onOpenPtt();
+          }} />
+      </TacticalDialog>
 
   </>;
 }

@@ -34,12 +34,12 @@ try{
   await a.getByText('No se pudo guardar el perfil de prueba',{exact:true}).waitFor();
   assert.equal(await a.getByLabel('Nombre',{exact:true}).inputValue(),'Nombre conservado en formulario');
   await a.unroute('**/api/account');await a.getByLabel('Nombre',{exact:true}).fill('Perfil actualizado A');
-  await a.getByLabel('Guardar cambios del perfil',{exact:true}).click();await a.getByText('Perfil actualizado A',{exact:true}).first().waitFor();
+  await a.getByLabel('Guardar cambios del perfil',{exact:true}).click();await a.getByText('Cambios guardados en tu cuenta.',{exact:true}).waitFor();await a.getByLabel('Entendido',{exact:true}).click();await a.getByText('Perfil actualizado A',{exact:true}).first().waitFor();
   await a.reload();await a.getByText('Perfil',{exact:true}).click();await a.getByText('Perfil actualizado A',{exact:true}).first().waitFor();
   await a.getByLabel('Cambiar foto de perfil',{exact:true}).click();
   const chooser=a.waitForEvent('filechooser');await a.getByText('Elegir de mis fotos',{exact:true}).click();
   await(await chooser).setFiles({name:'profile-test.png',mimeType:'image/png',buffer:Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aL1sAAAAASUVORK5CYII=','base64')});
-  await a.getByText('Foto guardada en tu cuenta.',{exact:true}).waitFor();await a.getByLabel('Foto de perfil',{exact:true}).waitFor();
+  await a.getByText('Foto guardada en tu cuenta.',{exact:true}).waitFor();await a.getByLabel('Entendido',{exact:true}).click();await a.getByLabel('Foto de perfil',{exact:true}).waitFor();
   await a.reload();await a.getByText('Perfil',{exact:true}).click();await a.getByLabel('Foto de perfil',{exact:true}).waitFor();
   await a.getByLabel('Configuración y ajustes',{exact:true}).click();
   await a.getByText('Tema de la aplicación',{exact:true}).waitFor();

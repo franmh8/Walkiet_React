@@ -1,10 +1,11 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { View, Text, TextInput, Modal, KeyboardAvoidingView, ScrollView, TouchableOpacity, ActivityIndicator, Platform } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity } from 'react-native';
 import { createSecurityApi } from '../../services/securityApi';
 import { createProfileStyles } from './profileStyles';
 import { useAppTheme } from './AppTheme';
 import { ProfileIcon } from './ProfileIcon';
 import { VerificationCodeInput } from './VerificationCodeInput';
+import { DialogAction, TacticalDialog } from '../components/TacticalDialog';
 
 export function SecurityCodeModal({ visible, mode, server, token = '', onClose, onComplete }: {
   visible: boolean; mode: 'email'|'recovery'; server: string; token?: string;
@@ -35,9 +36,10 @@ export function SecurityCodeModal({ visible, mode, server, token = '', onClose, 
     if(nextPassword!==confirm){setError('Las contraseñas no coinciden.');return;}
     void perform(()=>api.recoveryReset(challenge,proof,nextPassword),()=>{setProof('');setNextPassword('');setConfirm('');setStep('success');});
   };
-  const action=(label:string,fn:()=>void,disabled=false)=><TouchableOpacity accessibilityRole="button" accessibilityLabel={label} accessibilityState={{disabled:busy||disabled}} disabled={busy||disabled} style={[s.action,s.primary,(busy||disabled)&&s.disabled]} onPress={fn}>{busy&&<ActivityIndicator color="#fff"/>}<Text style={[s.actionText,s.white]}>{label}</Text></TouchableOpacity>;
-  return <Modal transparent visible={visible} animationType="fade" onRequestClose={()=>{if(!busy)onClose();}}><KeyboardAvoidingView style={s.overlay} behavior={Platform.OS==='ios'?'padding':undefined}><View style={[s.modal,{maxHeight:'94%'}]}><ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{gap:18}}>
-    <View style={s.modalHeader}><View style={s.securityBadge}><ProfileIcon name="mail" color={p.accent} size={22}/></View><Text style={[s.modalTitle,{fontSize:20}]}>{mode==='email'?'Verificar nuevo correo':'Recuperar contraseña'}</Text><TouchableOpacity accessibilityLabel="Cerrar verificación" disabled={busy} onPress={onClose}><ProfileIcon name="x" color={p.muted} size={22}/></TouchableOpacity></View>
+  const action=(label:string,fn:()=>void,disabled=false)=><DialogAction label={label} onPress={fn} disabled={disabled} busy={busy} />;
+  return <TacticalDialog visible={visible} title={step==='success' ? (mode==='email'?'Correo verificado':'Contraseña actualizada') : mode==='email'?'Verificar nuevo correo':'Recuperar contraseña'}
+    tone={step==='success'?'success':'info'} icon={step==='success'?undefined:<ProfileIcon name="mail" color={p.accent} size={30}/>}
+    busy={busy} showClose={step!=='success'} closeLabel="Cerrar verificación" onClose={onClose}>
     {error&&<Text style={s.error} accessibilityRole="alert">{error}</Text>}
     {step==='identify'&&<>
       <Text style={s.description}>{mode==='email'?'Enviaremos un código al nuevo correo para verificarlo antes de actualizar tu cuenta.':'Ingresa tu teléfono o correo. El código se enviará al correo guardado en tu cuenta; no se enviará por SMS.'}</Text>
@@ -50,7 +52,10 @@ export function SecurityCodeModal({ visible, mode, server, token = '', onClose, 
       <VerificationCodeInput key={challenge} disabled={busy} invalid={!!error} onChange={value=>{setCode(value);setError(null);}} />
       <Text style={s.codeHint}>Caduca en 3 minutos · Máximo 5 intentos</Text>
       <TouchableOpacity accessibilityRole="link" accessibilityLabel="Reenviar código" accessibilityState={{disabled:busy||cooldown>0}} style={s.resendLink} disabled={busy||cooldown>0} onPress={()=>{void send();}}><ProfileIcon name="refresh-cw" color={cooldown>0?p.muted:p.accent} size={13}/><Text style={[s.resendLabel,{color:cooldown>0?p.muted:p.accent}]}>{cooldown>0?`Reenviar en ${cooldown}s`:'Reenviar código'}</Text></TouchableOpacity>
-      <View style={s.codeActions}><TouchableOpacity accessibilityRole="button" accessibilityLabel="Cancelar verificación" disabled={busy} style={[s.action,s.codeCancel,{flex:1}]} onPress={onClose}><Text style={s.actionText}>Cancelar</Text></TouchableOpacity><TouchableOpacity accessibilityRole="button" accessibilityLabel="Verificar código" accessibilityState={{disabled:busy||code.length!==6}} disabled={busy||code.length!==6} style={[s.action,s.primary,{flex:1},(busy||code.length!==6)&&s.disabled]} onPress={()=>{void verify();}}>{busy&&<ActivityIndicator color="#fff"/>}<Text style={[s.actionText,s.white]}>Validar</Text></TouchableOpacity></View>
+      <View style={s.codeActions}>
+        <View style={{flex:1}}><DialogAction label="Cancelar" accessibilityLabel="Cancelar verificación" secondary disabled={busy} onPress={onClose}/></View>
+        <View style={{flex:1}}><DialogAction label="Validar" accessibilityLabel="Verificar código" busy={busy} disabled={code.length!==6} onPress={()=>{void verify();}}/></View>
+      </View>
     </>}
     {step==='password'&&<>
       <Text style={s.description}>Código verificado. Tienes 5 minutos para guardar una contraseña nueva. Se cerrarán las sesiones anteriores.</Text>
@@ -58,7 +63,7 @@ export function SecurityCodeModal({ visible, mode, server, token = '', onClose, 
       <TextInput accessibilityLabel="Confirmar contraseña de recuperación" placeholder="Repite la contraseña" placeholderTextColor={p.muted} style={s.input} secureTextEntry value={confirm} onChangeText={setConfirm} autoCapitalize="none" editable={!busy}/>
       {action('Guardar nueva contraseña',reset,nextPassword.length<8||!confirm)}
     </>}
-    {step==='success'&&<><Text style={s.label}>{mode==='email'?'Correo verificado y actualizado.':'Contraseña actualizada. Ya puedes iniciar sesión.'}</Text>{action('Entendido',()=>{if(mode==='recovery')void onComplete();onClose();})}</>}
-    {step!=='success'&&step!=='code'&&<TouchableOpacity disabled={busy} style={s.action} onPress={onClose}><Text style={s.actionText}>Cancelar</Text></TouchableOpacity>}
-  </ScrollView></View></KeyboardAvoidingView></Modal>;
+    {step==='success'&&<><Text style={[s.label,{textAlign:'center',lineHeight:21}]}>{mode==='email'?'Correo verificado y actualizado.':'Contraseña actualizada. Ya puedes iniciar sesión.'}</Text>{action('Entendido',()=>{if(mode==='recovery')void onComplete();onClose();})}</>}
+    {step!=='success'&&step!=='code'&&<DialogAction label="Cancelar" accessibilityLabel="Cancelar verificación" secondary disabled={busy} onPress={onClose}/>}
+  </TacticalDialog>;
 }
