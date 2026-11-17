@@ -7,7 +7,6 @@ import {
   TextInput,
   ScrollView,
   StatusBar,
-  Alert,
   Vibration,
   Platform,
   ActivityIndicator,
@@ -326,7 +325,7 @@ function NativeAppScreen() {
           sendMediaMessage('image', '📸 Foto Capturada con Cámara Táctica', dataUrl, 'evidencia_camara.jpg');
         }
       } catch (e: any) {
-        Alert.alert('Error al capturar foto', e.message || 'No se pudo procesar la imagen.');
+        showNativeAlert('Error al capturar foto', e.message || 'No se pudo procesar la imagen.');
       }
     }
     handleCloseLiveCamera();
@@ -351,7 +350,7 @@ function NativeAppScreen() {
   const [selectedGroupMembers, setSelectedGroupMembers] = useState<string[]>([]);
   const [createGroupError, setCreateGroupError] = useState<string | null>(null);
 
-  const { showTacticalToast, feedback } = useNativeFeedback();
+  const { showTacticalToast, showTacticalAlert, showNativeAlert, feedback } = useNativeFeedback();
   const contactsDirectory = useContactsDirectory(serverUrl, currentUser ? { userId: currentUser.id, token: currentUser.authToken || '' } : null);
   const channelsDirectory = useChannelsDirectory(serverUrl, currentUser?.id || '', currentUser?.authToken || '');
   const { channels, refresh: refreshChannels } = channelsDirectory;
@@ -945,7 +944,7 @@ function NativeAppScreen() {
   };
 
   const handleTriggerSos = () => {
-    Alert.alert(
+    showNativeAlert(
       '🚨 ALERTA DE EMERGENCIA C5i (10-33)',
       '¿Confirmas la activación inmediata de código SOS con transmisión de coordenadas a toda la red del Centro de Comando?',
       [
@@ -1019,7 +1018,7 @@ function NativeAppScreen() {
 
   const handleStartDirectChat = (officer: ContactOfficer) => {
     if (!officer.registered_user_id) {
-      showTacticalToast('Este contacto aún no tiene cuenta en la app. Puedes llamarle por teléfono.', 'info');
+      showTacticalAlert('Contacto sin cuenta', 'Este contacto aún no tiene cuenta en la app. Puedes llamarle por teléfono.', { type: 'info' });
       return false;
     }
     const recipient = officer.registered_user_id;
@@ -1209,7 +1208,7 @@ function NativeAppScreen() {
         const file = e.target?.files?.[0];
         if (!file) return;
         if (file.size > MAX_CHAT_ATTACHMENT_BYTES) {
-          window.alert('Elige una foto de hasta 3 MB.');
+          showNativeAlert('Aviso', 'Elige una foto de hasta 3 MB.');
           return;
         }
         const reader = new FileReader();
@@ -1233,14 +1232,14 @@ function NativeAppScreen() {
       const photo = result.assets[0];
       if (!photo.base64) throw new Error('No se pudieron leer los datos de la foto.');
       if (Math.ceil(photo.base64.length * 0.75) > MAX_CHAT_ATTACHMENT_BYTES) {
-        Alert.alert('Foto demasiado grande', 'Elige una foto de hasta 3 MB.');
+        showNativeAlert('Foto demasiado grande', 'Elige una foto de hasta 3 MB.');
         return;
       }
       const fileName = `foto_${Date.now()}.jpg`; // Base64 del selector es JPEG, incluso si el original era HEIC.
       // Base64 genera una URL transportable; file:// solamente sirve en el dispositivo de origen.
       sendMediaMessage('image', fileName, `data:image/jpeg;base64,${photo.base64}`, fileName);
     } catch (error: any) {
-      Alert.alert('No se pudo abrir Fotos', error?.message || 'Revisa los permisos de tus fotos.');
+      showNativeAlert('No se pudo abrir Fotos', error?.message || 'Revisa los permisos de tus fotos.');
     }
   };
 
@@ -1252,7 +1251,7 @@ function NativeAppScreen() {
         const ImagePicker = await import('expo-image-picker');
         const permission = await ImagePicker.requestCameraPermissionsAsync();
         if (!permission.granted) {
-          Alert.alert('Permiso de cámara', 'Autoriza el acceso a la cámara en los ajustes de tu dispositivo.');
+          showNativeAlert('Permiso de cámara', 'Autoriza el acceso a la cámara en los ajustes de tu dispositivo.');
           return;
         }
         const result = await ImagePicker.launchCameraAsync({
@@ -1265,13 +1264,13 @@ function NativeAppScreen() {
         const picture = result.assets[0];
         if (!picture.base64) throw new Error('No se pudo leer la foto capturada.');
         if (Math.ceil(picture.base64.length * 0.75) > MAX_CHAT_ATTACHMENT_BYTES) {
-          Alert.alert('Foto demasiado grande', 'Intenta capturar una imagen más pequeña.');
+          showNativeAlert('Foto demasiado grande', 'Intenta capturar una imagen más pequeña.');
           return;
         }
         const fileName = `camara_${Date.now()}.jpg`;
         sendMediaMessage('image', '📸 Foto capturada', `data:image/jpeg;base64,${picture.base64}`, fileName);
       } catch (error: any) {
-        Alert.alert('Error de cámara', error?.message || 'No se pudo abrir la cámara.');
+        showNativeAlert('Error de cámara', error?.message || 'No se pudo abrir la cámara.');
       }
       return;
     }
@@ -1287,7 +1286,7 @@ function NativeAppScreen() {
           return;
         } catch (error: any) {
           if (error?.name === 'NotAllowedError' || error?.name === 'PermissionDeniedError') {
-            window.alert('Permite el acceso a la cámara en el navegador.');
+            showNativeAlert('Aviso', 'Permite el acceso a la cámara en el navegador.');
             return;
           }
         }
@@ -1301,7 +1300,7 @@ function NativeAppScreen() {
           const file = e.target?.files?.[0];
           if (!file) return;
           if (file.size > MAX_CHAT_ATTACHMENT_BYTES) {
-            window.alert('Elige una imagen de hasta 3 MB.');
+            showNativeAlert('Aviso', 'Elige una imagen de hasta 3 MB.');
             return;
           }
           const reader = new FileReader();
@@ -1325,7 +1324,7 @@ function NativeAppScreen() {
         const Location = await import('expo-location');
         const permission = await Location.requestForegroundPermissionsAsync();
         if (!permission.granted) {
-          Alert.alert('Permiso de ubicación', 'Autoriza la ubicación mientras usas la app.');
+          showNativeAlert('Permiso de ubicación', 'Autoriza la ubicación mientras usas la app.');
           return;
         }
         const cachedPosition = await Location.getLastKnownPositionAsync({
@@ -1345,7 +1344,7 @@ const position =
           longitude: lng,
           address: `Precisión aproximada: ±${Math.round(position.coords.accuracy || 0)} m`,
         };
-        Alert.alert('Compartir ubicación', '¿Quieres enviar tu ubicación actual a esta conversación?', [
+        showNativeAlert('Compartir ubicación', '¿Quieres enviar tu ubicación actual a esta conversación?', [
           { text: 'Cancelar', style: 'cancel' },
           {
             text: 'Enviar ubicación',
@@ -1359,13 +1358,13 @@ const position =
           },
         ]);
       } catch (error: any) {
-        Alert.alert('No se pudo obtener la ubicación', error?.message || 'Comprueba que el GPS esté activo.');
+        showNativeAlert('No se pudo obtener la ubicación', error?.message || 'Comprueba que el GPS esté activo.');
       }
       return;
     }
     // Web: geolocalización estándar del navegador.
     if (typeof navigator === 'undefined' || !navigator.geolocation) {
-      window.alert('Geolocalización no disponible en este navegador.');
+      showNativeAlert('Aviso', 'Geolocalización no disponible en este navegador.');
       return;
     }
     navigator.geolocation.getCurrentPosition(
@@ -1391,7 +1390,7 @@ const position =
           `https://www.google.com/maps?q=${lat},${lng}`, undefined,
           { latitude: lat, longitude: lng, address: addressLabel });
       },
-      (error) => window.alert(error.message || 'No se pudo obtener tu ubicación.'),
+      (error) => showNativeAlert('Aviso', error.message || 'No se pudo obtener tu ubicación.'),
       { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
     );
   };
@@ -1413,7 +1412,7 @@ const position =
         const file = e.target?.files?.[0];
         if (!file) return;
         if (file.size > MAX_CHAT_ATTACHMENT_BYTES) {
-          window.alert('Elige un documento de hasta 3 MB.');
+          showNativeAlert('Aviso', 'Elige un documento de hasta 3 MB.');
           return;
         }
         const reader = new FileReader();
@@ -1456,7 +1455,7 @@ const position =
         reportedSize = file.size || 0;
       }
       if (reportedSize > MAX_CHAT_ATTACHMENT_BYTES) {
-        Alert.alert('Documento demasiado grande', 'Elige un documento de hasta 3 MB.');
+        showNativeAlert('Documento demasiado grande', 'Elige un documento de hasta 3 MB.');
         return;
       }
 
@@ -1465,7 +1464,7 @@ const position =
       const actualBytes = Math.floor((content.length * 3) / 4) -
         (content.endsWith('==') ? 2 : content.endsWith('=') ? 1 : 0);
       if (actualBytes > MAX_CHAT_ATTACHMENT_BYTES) {
-        Alert.alert('Documento demasiado grande', 'Elige un documento de hasta 3 MB.');
+        showNativeAlert('Documento demasiado grande', 'Elige un documento de hasta 3 MB.');
         return;
       }
       const mime = determineDocumentMime(pickedName,
@@ -1475,7 +1474,7 @@ const position =
         `data:${mime};base64,${content}`, fileName);
     } catch (error: any) {
       console.warn('[Walkiet] Error leyendo documento:', error);
-      Alert.alert('No se pudo adjuntar el documento',
+      showNativeAlert('No se pudo adjuntar el documento',
         error?.message || 'Intenta seleccionar un archivo local desde Descargas.');
     }
   };
@@ -1484,7 +1483,7 @@ const position =
   // Si no hay un visor directo, ofrecer el selector del sistema como alternativa.
   const handleOpenChatDocument = async (message: ChatMessage) => {
     if (!message.mediaUrl) {
-      Alert.alert('Documento no disponible', 'Este mensaje no contiene un archivo descargable.');
+      showNativeAlert('Documento no disponible', 'Este mensaje no contiene un archivo descargable.');
       return;
     }
     if (Platform.OS === 'web') {
@@ -1545,11 +1544,11 @@ const position =
         return;
       }
 
-      Alert.alert('Visor no disponible',
+      showNativeAlert('Visor no disponible',
         'No se encontró una aplicación compatible para abrir este documento en el teléfono.');
     } catch (error: any) {
       console.warn('[Walkiet] Error abriendo documento:', error);
-      Alert.alert('No se pudo abrir el documento',
+      showNativeAlert('No se pudo abrir el documento',
         error?.message || 'Prueba abrir el documento desde otra aplicación.');
     }
   };
@@ -1557,7 +1556,7 @@ const position =
   // Acciones de llamada desde el encabezado (Imagen 1)
   const handleStartVideoCall = () => {
     soundEngine.playIncomingChirp();
-    Alert.alert(
+    showNativeAlert(
       '📹 Enlace de Videollamada C5i',
       `Iniciando conexión de video encriptada punto a punto con ${activeConversation?.name || 'Oficial'}...`,
       [{ text: 'Aceptar' }]
@@ -1566,7 +1565,7 @@ const position =
 
   const handleStartVoiceCall = () => {
     soundEngine.playIncomingChirp();
-    Alert.alert(
+    showNativeAlert(
       '📞 Llamada Táctica C5i',
       `Iniciando canal de voz seguro de alta fidelidad con ${activeConversation?.name || 'Oficial'}...`,
       [{ text: 'Aceptar' }]
@@ -1588,7 +1587,7 @@ const position =
     // En web el selector necesita ejecutarse durante el gesto original.
     void run().catch((error: any) => {
       console.warn(`[Walkiet-adjuntos] Error en ${label}:`, error);
-      Alert.alert('No se pudo abrir el adjunto', String(error?.message || error));
+      showNativeAlert('No se pudo abrir el adjunto', String(error?.message || error));
     });
   };
 
@@ -1602,7 +1601,7 @@ const position =
     setTimeout(() => {
       void chosen.run().catch((error: any) => {
         console.warn(`[Walkiet-iOS] Error abriendo ${chosen.label}:`, error);
-        Alert.alert('No se pudo abrir el adjunto', String(error?.message || error));
+        showNativeAlert('No se pudo abrir el adjunto', String(error?.message || error));
       });
     }, 180);
   };

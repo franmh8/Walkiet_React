@@ -61,6 +61,7 @@ archivos privados del servidor y no se comparten mediante Git.
 - [Restaurar el canal al entrar o reabrir la app](backend-alwaysdata/RESTAURAR_CANAL_GUIA.md)
 - [Radio en vivo, notificaciones y proceso continuo](backend-alwaysdata/PTT_DESPLIEGUE.md)
 - [Perfil y ajustes](backend-alwaysdata/PERFIL_DESPLIEGUE.md)
+- [Diseño uniforme de avisos y modales](backend-alwaysdata/DIALOGOS_DISENO_GUIA.md)
 - [Fotos de perfil visibles en chats y contactos](backend-alwaysdata/FOTOS_CHAT_DESPLIEGUE.md)
 - [Verificación de correo y recuperación de acceso](backend-alwaysdata/CORREO_SEGURIDAD_DESPLIEGUE.md)
 - [Envío mediante Gmail SMTP](backend-alwaysdata/SMTP_GMAIL_DESPLIEGUE.md)

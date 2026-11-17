@@ -62,6 +62,8 @@ try{
   const recovery=(await latest('verified-a@example.test')).code;await page.getByLabel('Dígito 1 del código',{exact:true}).fill(recovery);await page.getByLabel('Verificar código',{exact:true}).click();await page.getByLabel('Nueva contraseña de recuperación',{exact:true}).waitFor();
   await page.getByLabel('Nueva contraseña de recuperación',{exact:true}).fill('changed-ui-password');await page.getByLabel('Confirmar contraseña de recuperación',{exact:true}).fill('mismatch');await page.getByLabel('Guardar nueva contraseña',{exact:true}).click();await page.getByText('Las contraseñas no coinciden.',{exact:true}).waitFor();
   await page.getByLabel('Confirmar contraseña de recuperación',{exact:true}).fill('changed-ui-password');await page.getByLabel('Guardar nueva contraseña',{exact:true}).click();await page.getByText('Contraseña actualizada. Ya puedes iniciar sesión.',{exact:true}).waitFor();await page.getByLabel('Entendido',{exact:true}).click();
+  // Esperar al cierre completo antes de llenar el formulario que estaba detrás.
+  await page.waitForFunction(()=>!document.querySelector('[role="dialog"]'));
   assert.equal(await page.getByPlaceholder('Ingresa tu contraseña',{exact:true}).inputValue(),'');
   await page.getByPlaceholder('Ingresa tu teléfono o correo',{exact:true}).fill('verified-a@example.test');await page.getByPlaceholder('Ingresa tu contraseña',{exact:true}).fill('changed-ui-password');await page.getByText('Iniciar Sesión',{exact:true}).click();await page.getByText('Perfil',{exact:true}).click();await page.getByText('verified-a@example.test',{exact:true}).waitFor();
   assert.deepEqual(errors,[]);
