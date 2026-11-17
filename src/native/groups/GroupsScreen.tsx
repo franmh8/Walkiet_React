@@ -274,7 +274,7 @@ export function GroupsScreen({ directory, selectedChannel, onTune, onSos, onOpen
                 <TouchableOpacity onPress={() => directory.refresh()} accessibilityLabel="Actualizar grupos"><Text>Reintentar</Text></TouchableOpacity>
               </View>}
               {directory.loading && !directory.synced && <ActivityIndicator color="#691c32" accessibilityLabel="Cargando grupos" />}
-              {(!directory.loading || directory.synced) && !directory.error && filteredChannels.length === 0 ? (
+              {directory.synced && !directory.error && filteredChannels.length === 0 ? (
                 /* ESTADO VACÍO EXACTO A LA IMAGEN 1 */
                 <View style={styles.canalesEmptyContainer}>
                   <View style={styles.canalesEmptyIconBox}>
@@ -398,6 +398,7 @@ export function GroupsScreen({ directory, selectedChannel, onTune, onSos, onOpen
                             isSelected && styles.canalesCardSintonizarBtnActive,
                           ]}
                           onPress={() => handleTuneChannel(ch)}
+                          accessibilityLabel={`Sintonizar ${ch.name}`}
                           activeOpacity={0.8}
                         >
                           <Text
