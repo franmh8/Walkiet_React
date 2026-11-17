@@ -1067,7 +1067,7 @@ function NativeAppScreen() {
           text: 'ACTIVAR SOS',
           style: 'destructive',
           onPress: () => {
-            soundEngine.playEmergencyAlert();
+            soundEngine.playPttStart();
             setIsSosActive(true);
             if (Platform.OS !== 'web') {
               try { Vibration.vibrate([0, 500, 200, 500]); } catch {}
@@ -1110,7 +1110,8 @@ function NativeAppScreen() {
 
   // Filtros y contadores: useChatController.
 
-  const filteredOfficers = officersList;
+  const filteredOfficers = officersList;
+
   // Creación y cambios de chats: useChatController.
 
   const openContactRegistration = () => {
@@ -2146,13 +2147,13 @@ const position =
             if (enabled) { try { await account.saveSettings({ backgroundNotifications: true }); } catch { await notifications.disable(); return false; } }
             return enabled;
           } }}
-            onGroups={() => setCurrentTab('Grupos')} onMembers={() => setIsMembersModalOpen(true)} onSos={handleTriggerSos} />
+            onGroups={() => setCurrentTab('Grupos')} onMembers={() => setIsMembersModalOpen(true)} />
         )}
 
         {currentTab === 'Grupos' && (
           <GroupsScreen key={channelsDirectory.scope} directory={channelsDirectory}
             selectedChannel={selectedChannel} onTune={chooseAndRememberChannel}
-            onSos={handleTriggerSos} onOpenPtt={() => setCurrentTab('PTT')} />
+            onOpenPtt={() => setCurrentTab('PTT')} />
         )}
 
         {currentTab === 'Chat' && (
@@ -2660,8 +2661,8 @@ const position =
         )}
 
         <ContactsScreen ref={contactsScreenRef} visible={currentTab === 'Contactos'} serverUrl={serverUrl}
-          directory={contactsDirectory} avatars={peerAvatars} onSos={handleTriggerSos} onStartChat={async contact => { if (await handleStartDirectChat(contact)) setCurrentTab('Chat'); }}
-          onContactUpdated={handleContactUpdated} onOpenCamera={handleOpenCamera} />
+          directory={contactsDirectory} avatars={peerAvatars} onStartChat={async contact => { if (await handleStartDirectChat(contact)) setCurrentTab('Chat'); }}
+          onContactUpdated={handleContactUpdated} />
 
         {currentTab === 'Perfil' && currentUser && (
           <ProfileScreen user={currentUser} account={account} notifications={notifications} serverUrl={serverUrl}
