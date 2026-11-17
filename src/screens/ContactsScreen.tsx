@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import {
   User,
-  Phone,
   Plus,
   X,
   Search,
@@ -204,7 +203,6 @@ export function ContactsScreen({ onNavigateTab }: ContactsScreenProps) {
                     <div className="flex items-center gap-3 text-xs text-slate-400 mt-0.5">
                       <span className="truncate">{c.unit || 'Sector Operativo Hidalgo'}</span>
                       <span className="font-mono text-[11px] text-slate-500 flex items-center gap-1">
-                        <Phone className="w-3 h-3" />
                         {c.phone_number}
                       </span>
                     </div>

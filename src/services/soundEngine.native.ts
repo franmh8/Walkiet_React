@@ -55,11 +55,6 @@ class NativeSoundEngine {
   }
 
   public playSquelchBurst() {}
-  public playEmergencyAlert() {
-    try {
-      Vibration.vibrate([0, 200, 100, 200]);
-    } catch (_) {}
-  }
   public playIncomingChirp() { if (!this.isMuted && this.messageSounds) this.tone('message', PTT_START_BASE64); }
   public playReconnectedChirp() {}
   public playConnectionLostWarning() {}

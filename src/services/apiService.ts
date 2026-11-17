@@ -234,20 +234,6 @@ export const ApiService = {
       return { success: true };
     }
   },
-
-  async sendSosAlert(alertData: any) {
-    const base = getBackendUrl();
-    try {
-      const res = await fetch(`${base}/api/emergency/alert`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(alertData),
-      });
-      return await res.json();
-    } catch {
-      return { success: true, dispatched: true, code: 'ALERT_BROADCAST_OK' };
-    }
-  },
 };
 
 export const apiService = ApiService;

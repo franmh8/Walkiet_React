@@ -73,26 +73,6 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setMessages(updated);
     localStorage.setItem('c5i_chat_messages', JSON.stringify(updated));
 
-    // Simulated automatic response from C5i dispatch for realism
-    if (type === 'emergency' || text.toLowerCase().includes('emergencia') || text.toLowerCase().includes('auxilio')) {
-      setTimeout(() => {
-        const autoResp: ChatMessage = {
-          id: `msg-auto-${Date.now()}`,
-          sender_id: 'central-c5i',
-          sender_name: 'Despacho Central C5i',
-          sender_callsign: 'DESPACHO-911',
-          text: `🚨 C5i Alerta recibida de ${user.callsign || user.name}. Unidades de apoyo en ruta hacia coordenadas reportadas.`,
-          type: 'emergency',
-          created_at: new Date().toISOString(),
-          channel_id: channelId || null,
-        };
-        setMessages((prev) => {
-          const withAuto = [...prev, autoResp];
-          localStorage.setItem('c5i_chat_messages', JSON.stringify(withAuto));
-          return withAuto;
-        });
-      }, 1500);
-    }
   };
 
   const clearMessages = async () => {

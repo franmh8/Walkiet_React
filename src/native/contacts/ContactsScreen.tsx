@@ -2,7 +2,7 @@ import { useAppTheme } from '../profile/AppTheme';
 import { PeerAvatar } from '../profile/PeerAvatar';
 import React, { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { View, Text, TouchableOpacity, TextInput, ScrollView, SectionList, StyleSheet, Modal, SafeAreaView, ActivityIndicator, Platform, Clipboard, Linking } from 'react-native';
-import { UserIcon, UsersIcon, UserPlusIcon, AlertTriangleIcon, SearchIcon, XIcon, CheckIcon, PhoneIcon, MailIcon, ArrowLeftIcon, MicIcon, MessageSquareIcon, CopyIcon, ShieldIcon, TrashIcon, VideoIcon } from '../icons';
+import { UserIcon, UsersIcon, UserPlusIcon, AlertTriangleIcon, SearchIcon, XIcon, CheckIcon, MailIcon, ArrowLeftIcon, MessageSquareIcon, CopyIcon, ShieldIcon, TrashIcon } from '../icons';
 import type { DirectoryContact as ContactOfficer } from '../../services/contactsApi';
 import type { ContactsDirectory } from './useContactsDirectory';
 import { useNativeFeedback } from '../components/NativeFeedback';
@@ -13,14 +13,12 @@ interface Props {
   serverUrl: string;
   directory: ContactsDirectory;
   avatars: Record<string, string | null>;
-  onSos(): void;
   onStartChat(contact: ContactOfficer): void;
   onContactUpdated(contact: ContactOfficer): void;
-  onOpenCamera(): void;
 }
 
 export const ContactsScreen = forwardRef<ContactsScreenHandle, Props>(function ContactsScreen(
-  { visible, serverUrl, directory, avatars, onSos: handleTriggerSos, onStartChat, onContactUpdated, onOpenCamera }, ref
+  { visible, serverUrl, directory, avatars, onStartChat, onContactUpdated }, ref
 ) {
   const { palette } = useAppTheme();
   const officersList = directory.contacts;
@@ -222,27 +220,6 @@ export const ContactsScreen = forwardRef<ContactsScreenHandle, Props>(function C
               }}>
                 Contactos
               </Text>
-
-              {/* Botón SOS Rojo */}
-              <TouchableOpacity
-                style={{
-                  width: 42,
-                  height: 42,
-                  borderRadius: 12,
-                  backgroundColor: '#dc2626',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  marginRight: 10,
-                  shadowColor: '#dc2626',
-                  shadowOpacity: 0.25,
-                  shadowRadius: 4,
-                  elevation: 2,
-                }}
-                onPress={handleTriggerSos}
-                activeOpacity={0.8}
-              >
-                <AlertTriangleIcon size={20} color="#ffffff" strokeWidth={2.2} />
-              </TouchableOpacity>
 
               {/* Botón Agregar Contacto Granate */}
               <TouchableOpacity
@@ -607,7 +584,6 @@ export const ContactsScreen = forwardRef<ContactsScreenHandle, Props>(function C
                     placeholderTextColor="#94a3b8"
                     keyboardType="phone-pad"
                   />
-                  <PhoneIcon size={18} color="#94a3b8" strokeWidth={1.8} />
                 </View>
               </View>
 
@@ -658,7 +634,7 @@ export const ContactsScreen = forwardRef<ContactsScreenHandle, Props>(function C
         onRequestClose={() => setIsContactDetailModalOpen(false)}
       >
         <SafeAreaView style={{ flex: 1, backgroundColor: palette.card }}>
-          {/* Barra Superior con botón circular <, SOS y botón Editar */}
+          {/* Barra superior con volver y editar */}
           <View style={{
             flexDirection: 'row',
             alignItems: 'center',
@@ -669,7 +645,7 @@ export const ContactsScreen = forwardRef<ContactsScreenHandle, Props>(function C
             borderBottomColor: palette.border,
           }}>
             {/* Botón Circular Izquierdo: Volver atrás */}
-            <TouchableOpacity
+            <TouchableOpacity accessibilityLabel="Cerrar detalle del contacto"
               style={{
                 width: 40,
                 height: 40,
@@ -684,32 +660,8 @@ export const ContactsScreen = forwardRef<ContactsScreenHandle, Props>(function C
               <ArrowLeftIcon size={20} color={palette.secondary} strokeWidth={2.2} />
             </TouchableOpacity>
 
-            {/* Botones Derecha: SOS y Editar */}
+            {/* Acción de editar */}
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-              {/* Botón SOS Pill Rojo */}
-              <TouchableOpacity
-                style={{
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  backgroundColor: '#ef4444',
-                  paddingHorizontal: 12,
-                  paddingVertical: 7,
-                  borderRadius: 20,
-                  gap: 4,
-                  shadowColor: '#ef4444',
-                  shadowOpacity: 0.3,
-                  shadowRadius: 4,
-                  elevation: 2,
-                }}
-                onPress={handleTriggerSos}
-                activeOpacity={0.8}
-              >
-                <AlertTriangleIcon size={16} color="#ffffff" strokeWidth={2.4} />
-                <Text style={{ color: '#ffffff', fontWeight: '800', fontSize: 13, letterSpacing: 0.5 }}>
-                  SOS
-                </Text>
-              </TouchableOpacity>
-
               {/* Botón Editar Pill Granate */}
               <TouchableOpacity
                 style={{
@@ -797,7 +749,7 @@ export const ContactsScreen = forwardRef<ContactsScreenHandle, Props>(function C
               </View>
             </View>
 
-            {/* 4 Botones Circulares de Acción Rápida Granate */}
+            {/* Acciones de mensaje y correo */}
             <View style={{
               flexDirection: 'row',
               alignItems: 'center',
@@ -805,8 +757,8 @@ export const ContactsScreen = forwardRef<ContactsScreenHandle, Props>(function C
               gap: 16,
               marginVertical: 18,
             }}>
-              {/* 1. Chat */}
-              <TouchableOpacity
+              {/* Chat */}
+              <TouchableOpacity accessibilityLabel="Enviar mensaje al contacto"
                 style={{
                   width: 50,
                   height: 50,
@@ -830,64 +782,8 @@ export const ContactsScreen = forwardRef<ContactsScreenHandle, Props>(function C
                 <MessageSquareIcon size={22} color="#ffffff" strokeWidth={2.2} />
               </TouchableOpacity>
 
-              {/* 2. Llamada */}
-              <TouchableOpacity
-                style={{
-                  width: 50,
-                  height: 50,
-                  borderRadius: 25,
-                  backgroundColor: '#6b1d2f',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  shadowColor: '#6b1d2f',
-                  shadowOpacity: 0.35,
-                  shadowRadius: 6,
-                  elevation: 3,
-                }}
-                onPress={() => {
-                  if (selectedContactForDetail?.phone_number) {
-                    if (Platform.OS === 'web') {
-                      window.open(`tel:${selectedContactForDetail.phone_number}`);
-                    } else {
-                      Linking.openURL(`tel:${selectedContactForDetail.phone_number}`).catch(() => {});
-                    }
-                  } else {
-                    showTacticalAlert('Llamada Telefónica', 'Este oficial o contacto no tiene un número celular registrado en la red C5i.', { type: 'warning' });
-                  }
-                }}
-                activeOpacity={0.8}
-              >
-                <PhoneIcon size={22} color="#ffffff" strokeWidth={2.2} />
-              </TouchableOpacity>
-
-              {/* 3. Video */}
-              <TouchableOpacity
-                style={{
-                  width: 50,
-                  height: 50,
-                  borderRadius: 25,
-                  backgroundColor: '#6b1d2f',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  shadowColor: '#6b1d2f',
-                  shadowOpacity: 0.35,
-                  shadowRadius: 6,
-                  elevation: 3,
-                }}
-                onPress={() => {
-                  setIsContactDetailModalOpen(false);
-                  if (selectedContactForDetail) {
-                    onStartChat(selectedContactForDetail);
-                  }
-                  onOpenCamera();
-                }}
-                activeOpacity={0.8}
-              >
-                <VideoIcon size={22} color="#ffffff" strokeWidth={2.2} />
-              </TouchableOpacity>
-
-              {/* 4. Correo */}
-              <TouchableOpacity
+              {/* Correo */}
+              <TouchableOpacity accessibilityLabel="Enviar correo al contacto"
                 style={{
                   width: 50,
                   height: 50,
@@ -975,29 +871,6 @@ export const ContactsScreen = forwardRef<ContactsScreenHandle, Props>(function C
                     )}
                   </TouchableOpacity>
 
-                  {/* Llamar */}
-                  <TouchableOpacity
-                    style={{
-                      width: 36,
-                      height: 36,
-                      borderRadius: 18,
-                      backgroundColor: palette.soft,
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                    }}
-                    onPress={() => {
-                      if (selectedContactForDetail?.phone_number) {
-                        if (Platform.OS === 'web') {
-                          window.open(`tel:${selectedContactForDetail.phone_number}`);
-                        } else {
-                          Linking.openURL(`tel:${selectedContactForDetail.phone_number}`).catch(() => {});
-                        }
-                      }
-                    }}
-                    activeOpacity={0.7}
-                  >
-                    <PhoneIcon size={16} color="#8a1a36" strokeWidth={2} />
-                  </TouchableOpacity>
                 </View>
               </View>
             </View>
@@ -1172,7 +1045,7 @@ export const ContactsScreen = forwardRef<ContactsScreenHandle, Props>(function C
               borderBottomWidth: 1,
               borderBottomColor: palette.border,
             }}>
-              <TouchableOpacity
+              <TouchableOpacity accessibilityLabel="Cancelar edición del contacto"
                 style={{
                   width: 38,
                   height: 38,
@@ -1314,7 +1187,6 @@ export const ContactsScreen = forwardRef<ContactsScreenHandle, Props>(function C
                     placeholderTextColor="#94a3b8"
                     keyboardType="phone-pad"
                   />
-                  <PhoneIcon size={18} color="#94a3b8" strokeWidth={1.8} />
                 </View>
               </View>
 

@@ -4,7 +4,6 @@ import {
   Shield,
   MessageSquare,
   Radio,
-  AlertTriangle,
   Trash2,
   CheckCheck,
 } from 'lucide-react';
@@ -17,7 +16,6 @@ const QUICK_CODES = [
   '10-4 Entendido y copiado',
   'Sector despejado sin novedad',
   '10-20 Ubicación confirmada',
-  '10-33 Emergencia en progreso',
   'Solicito relevo de unidad',
 ];
 
@@ -97,7 +95,6 @@ export function ChatScreen() {
         ) : (
           messages.map((msg) => {
             const isMe = msg.sender_id === user?.id;
-            const isEmergency = msg.type === 'emergency';
 
             return (
               <div
@@ -117,19 +114,11 @@ export function ChatScreen() {
                 {/* Bubble */}
                 <div
                   className={`max-w-[85%] md:max-w-[70%] p-3.5 rounded-2xl text-xs md:text-sm shadow-sm ${
-                    isEmergency
-                      ? 'bg-rose-950/80 border border-rose-700 text-rose-200'
-                      : isMe
+                    isMe
                       ? 'bg-rose-700 text-white rounded-br-xs'
                       : 'bg-slate-800 border border-slate-700 text-slate-200 rounded-bl-xs'
                   }`}
                 >
-                  {isEmergency && (
-                    <div className="flex items-center gap-1.5 text-rose-400 font-bold text-[11px] mb-1 font-mono uppercase">
-                      <AlertTriangle className="w-3.5 h-3.5" />
-                      ALERTA DE EMERGENCIA C5I
-                    </div>
-                  )}
                   <p className="whitespace-pre-wrap leading-relaxed">{msg.text}</p>
 
                   <div className={`mt-1 flex items-center justify-end text-[10px] ${isMe ? 'text-rose-200' : 'text-slate-400'}`}>

@@ -121,31 +121,6 @@ class WebAudioService {
     } catch (_) {}
   }
 
-  // Emergency SOS Siren Pulse
-  playSosAlarm() {
-    this.vibrate([100, 50, 100, 50, 100]);
-    try {
-      const ctx = this.getAudioContext();
-      const t = ctx.currentTime;
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-
-      osc.type = 'sawtooth';
-      osc.frequency.setValueAtTime(900, t);
-      osc.frequency.linearRampToValueAtTime(1500, t + 0.25);
-      osc.frequency.linearRampToValueAtTime(900, t + 0.5);
-
-      gain.gain.setValueAtTime(0.25, t);
-      gain.gain.linearRampToValueAtTime(0.01, t + 0.55);
-
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-
-      osc.start(t);
-      osc.stop(t + 0.55);
-    } catch (_) {}
-  }
-
   async startRecording(): Promise<boolean> {
     this.playPttStartChirp();
     this.recordedChunks = [];
