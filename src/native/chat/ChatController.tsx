@@ -4,7 +4,7 @@
  * La pantalla principal conserva únicamente navegación e integración de adjuntos.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Alert } from 'react-native';
+import type { AlertButton } from 'react-native';
 import { createChatSyncApi, type ChatThreadDto, type ChatMessageDto } from '../../services/chatSyncApi';
 import type { DirectoryContact as ContactOfficer } from '../../services/contactsApi';
 import type { ChatMessage, Conversation } from '../NativeApp';
@@ -19,11 +19,11 @@ interface ChatUser {
 interface ChatControllerOptions {
   serverUrl: string;
   currentUser: ChatUser | null;
-  notify: (message: string, type: 'info') => void;
+  showAlert: (title: string, message?: string, buttons?: AlertButton[]) => void;
   playMessageSound: () => void;
 }
 
-export function useChatController({ serverUrl, currentUser, notify, playMessageSound }: ChatControllerOptions) {
+export function useChatController({ serverUrl, currentUser, showAlert, playMessageSound }: ChatControllerOptions) {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeConversation, setActiveConversation] = useState<Conversation | null>(null);
   const [chatSearchQuery, setChatSearchQuery] = useState('');
@@ -50,7 +50,7 @@ export function useChatController({ serverUrl, currentUser, notify, playMessageS
     targetUserId: t.targetUserId || undefined,
     participantCount: t.participantCount || 0,
     lastMessage: t.lastMessage || '', lastMessageTime: t.lastMessageTime || '',
-    isOnline: Boolean(t.isOnline), unreadCount: 0, messages: [],
+    unreadCount: 0, messages: [],
   }), []);
 
   const fromServerMessage = useCallback((m: ChatMessageDto): ChatMessage => ({
@@ -135,11 +135,11 @@ export function useChatController({ serverUrl, currentUser, notify, playMessageS
 
   const handleStartDirectChat = async (officer: ContactOfficer): Promise<boolean> => {
     if (!officer.registered_user_id) {
-      notify('Este contacto no tiene cuenta registrada en Walkiet.', 'info');
+      showAlert('Contacto sin cuenta', 'Este contacto aún no tiene cuenta en la app. Podrás enviarle mensajes cuando se registre.');
       return false;
     }
     if (!chatApi) {
-      Alert.alert('Chat no disponible', 'Inicia sesión para sincronizar conversaciones.');
+      showAlert('Chat no disponible', 'Inicia sesión para sincronizar conversaciones.');
       return false;
     }
     const scope = chatSessionScopeRef.current;
@@ -151,14 +151,15 @@ export function useChatController({ serverUrl, currentUser, notify, playMessageS
         id, type: 'direct', name: officer.name, callsign: officer.callsign,
         unit: officer.unit, targetUserId: officer.registered_user_id,
         lastMessage: '', lastMessageTime: '', unreadCount: 0,
-        isOnline: officer.status === 'online', messages: [],
+        messages: [],
       };
       setConversations(prev => [conv, ...prev.filter(c => c.id !== id)]);
       setActiveConversation(conv);
       setIsNewChatModalOpen(false);
       return true;
     } catch (error: any) {
-      Alert.alert('No se pudo abrir el chat', error?.message || 'Comprueba la conexión al servidor.');
+      if (chatSessionScopeRef.current !== scope) return false;
+      showAlert('No se pudo abrir el chat', error?.message || 'Comprueba la conexión al servidor.');
       return false;
     }
   };
@@ -176,7 +177,7 @@ export function useChatController({ serverUrl, currentUser, notify, playMessageS
         id, type: 'group', name: cleanName,
         participantCount: selectedGroupMembers.length + 1,
         lastMessage: '', lastMessageTime: '', unreadCount: 0,
-        isOnline: true, messages: [],
+        messages: [],
       };
       setConversations(prev => [group, ...prev.filter(c => c.id !== id)]);
       setActiveConversation(group);
@@ -185,6 +186,7 @@ export function useChatController({ serverUrl, currentUser, notify, playMessageS
       setNewGroupName('');
       setSelectedGroupMembers([]);
     } catch (error: any) {
+      if (chatSessionScopeRef.current !== scope) return;
       setCreateGroupError(error?.message || 'No se pudo guardar el grupo en MySQL.');
     }
   };
@@ -204,13 +206,13 @@ export function useChatController({ serverUrl, currentUser, notify, playMessageS
     const conv = activeConversation;
     const user = currentUser;
     if (!conv || !user || !chatApi) {
-      Alert.alert('Chat no disponible', 'Inicia sesión antes de enviar mensajes.');
+      showAlert('Chat no disponible', 'Inicia sesión antes de enviar mensajes.');
       return false;
     }
     const scope = chatSessionScopeRef.current;
     try {
       const saved = await chatApi.sendMessage(conv.id, mediaType, caption, mediaUrl, fileName);
-      if (chatSessionScopeRef.current !== scope) return true;
+      if (chatSessionScopeRef.current !== scope) return false;
       const newMsg: ChatMessage = {
         id: saved.id, senderId: user.id, senderName: user.name,
         senderCallsign: user.callsign || user.badge, text: caption,
@@ -227,8 +229,9 @@ export function useChatController({ serverUrl, currentUser, notify, playMessageS
       try { playMessageSound(); } catch {}
       return true;
     } catch (error: any) {
+      if (chatSessionScopeRef.current !== scope) return false;
       setChatSyncError(error?.message || 'Error guardando el mensaje.');
-      Alert.alert('No se guardó el mensaje', error?.message || 'Revisa la conexión y vuelve a intentar.');
+      showAlert('No se guardó el mensaje', error?.message || 'Revisa la conexión y vuelve a intentar.');
       return false;
     }
   };
