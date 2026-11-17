@@ -23,6 +23,8 @@ import { safeStorage } from './storage';
 import { logoutContactSession, type DirectoryContact as ContactOfficer } from '../services/contactsApi';
 import { ContactsScreen, type ContactsScreenHandle } from './contacts/ContactsScreen';
 import { useContactsDirectory } from './contacts/useContactsDirectory';
+import { PeerAvatar } from './profile/PeerAvatar';
+import { usePeerAvatars } from './profile/usePeerAvatars';
 import { useNativeFeedback } from './components/NativeFeedback';
 import c5iLogoImg from '../../assets/c5i-logo.png';
 import {
@@ -456,6 +458,14 @@ function NativeAppScreen() {
   const { channels, synced: channelsSyncedFromServer, refresh: refreshChannels } = channelsDirectory;
   const officersList = contactsDirectory.contacts;
   const contactsScreenRef = useRef<ContactsScreenHandle>(null);
+  const avatarIds = [
+    ...conversations.filter(conversation => conversation.type === 'direct').map(conversation => conversation.targetUserId || ''),
+    ...(activeConversation?.type === 'direct' ? [activeConversation.targetUserId || ''] : []),
+    ...(currentTab === 'Contactos' || isNewChatModalOpen ? officersList.map(officer => officer.registered_user_id || '') : []),
+  ];
+  const peerAvatars = usePeerAvatars(serverUrl, currentUser?.authToken || '', avatarIds,
+    !!currentUser && (currentTab === 'Chat' || currentTab === 'Contactos'));
+
 
   // Circuit breaker para endpoints PHP en Alwaysdata (evita spam de 404 en consola si aún no se han subido los archivos)
   const isChatPhpAvailableRef = useRef<boolean | null>(null);
@@ -2446,6 +2456,7 @@ const position =
                 <View style={styles.chatActiveHeader}>
                   <TouchableOpacity
                     style={styles.chatActiveBackBtn}
+                    accessibilityLabel="Volver a los chats"
                     onPress={() => {
                       setActiveConversation(null);
                       setIsAttachMenuOpen(false);
@@ -2456,13 +2467,14 @@ const position =
                     <ArrowLeftIcon size={22} color={palette.text} strokeWidth={2.4} />
                   </TouchableOpacity>
 
-                  <View style={styles.chatActiveAvatarBox}>
+                  <PeerAvatar uri={activeConversation.type === 'direct' ? peerAvatars[activeConversation.targetUserId || ''] : null}
+                    name={activeConversation.name} style={styles.chatActiveAvatarBox}>
                     <Text style={styles.chatActiveAvatarText}>
                       {activeConversation.type === 'group'
                         ? 'G'
                         : (activeConversation.name.charAt(0) || 'K').toLowerCase()}
                     </Text>
-                  </View>
+                  </PeerAvatar>
 
                   <View style={styles.chatActiveInfo}>
                     <Text style={styles.chatActiveTitle} numberOfLines={1}>
@@ -2886,7 +2898,7 @@ const position =
                         activeOpacity={0.75}
                       >
                         <View style={styles.chatConvAvatarWrap}>
-                          <View
+                          <PeerAvatar uri={conv.type === 'direct' ? peerAvatars[conv.targetUserId || ''] : null} name={conv.name}
                             style={[
                               styles.chatConvAvatar,
                               conv.type === 'group' && { backgroundColor: palette.input },
@@ -2899,7 +2911,7 @@ const position =
                                 {(conv.callsign?.slice(0, 2) || conv.name.slice(0, 2)).toUpperCase()}
                               </Text>
                             )}
-                          </View>
+                          </PeerAvatar>
                           {conv.isOnline && <View style={styles.chatConvOnlineDot} />}
                         </View>
 
@@ -2935,7 +2947,7 @@ const position =
         )}
 
         <ContactsScreen ref={contactsScreenRef} visible={currentTab === 'Contactos'} serverUrl={serverUrl}
-          directory={contactsDirectory} onSos={handleTriggerSos} onStartChat={contact => { if (handleStartDirectChat(contact)) setCurrentTab('Chat'); }}
+          directory={contactsDirectory} avatars={peerAvatars} onSos={handleTriggerSos} onStartChat={contact => { if (handleStartDirectChat(contact)) setCurrentTab('Chat'); }}
           onContactUpdated={handleContactUpdated} onOpenCamera={handleOpenCamera} />
 
         {currentTab === 'Perfil' && currentUser && (
@@ -3145,11 +3157,11 @@ const position =
                       activeOpacity={0.7}
                     >
                       <View style={styles.chatOfficerAvatarWrap}>
-                        <View style={styles.chatOfficerAvatar}>
+                        <PeerAvatar uri={peerAvatars[officer.registered_user_id || '']} name={officer.name} style={styles.chatOfficerAvatar}>
                           <Text style={styles.chatOfficerAvatarText}>
                             {officer.callsign.slice(0, 2).toUpperCase()}
                           </Text>
-                        </View>
+                        </PeerAvatar>
                         {officer.status === 'online' && (
                           <View style={styles.chatOfficerOnlineDot} />
                         )}

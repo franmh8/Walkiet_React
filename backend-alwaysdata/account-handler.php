@@ -31,10 +31,38 @@ function accountText($value, $label, $max, $allowEmpty=false) {
     if ((!$allowEmpty && $value==='') || preg_match('//u',$value)!==1 || preg_match('/[\x00-\x1f\x7f]/', $value) || preg_match_all('/./us', $value)>$max || strlen($value)>$max*4) throw new AccountRequestError(400, $label.' debe contener '.($allowEmpty ? 'hasta ' : 'entre 1 y ').$max.' caracteres.');
     return $value;
 }
+// Una consulta acotada para fotos de contactos propios o compañeros de grupo.
+// Nunca devuelve perfil, correo, teléfono ni credenciales de la otra cuenta.
+function accountPeerAvatars(PDO $db, array $data, $owner) {
+    $ids=$data['ids'] ?? null; $known=$data['known'] ?? [];
+    if (!is_array($ids) || array_values($ids)!==$ids || count($ids)>20 || !is_array($known) || count($known)>20) throw new AccountRequestError(400,'Consulta hasta 20 fotos a la vez.');
+    foreach ($ids as $id) if (!is_string($id) || $id==='' || strlen($id)>128 || preg_match('/[\x00-\x1f\x7f]/',$id)) throw new AccountRequestError(400,'Revisa los identificadores de las fotos.');
+    $ids=array_values(array_unique($ids));
+    if (!$ids) return ['success'=>true,'avatars'=>[]];
+    $marks=implode(',',array_fill(0,count($ids),'?'));
+    $sql='SELECT u.id,a.image_data FROM users u LEFT JOIN account_avatars a ON a.user_id=u.id
+        WHERE u.id IN ('.$marks.') AND (u.id=?
+        OR EXISTS (SELECT 1 FROM contactos c WHERE c.owner_user_id=? AND c.phone_number=BINARY u.phone_number)
+        OR EXISTS (SELECT 1 FROM channel_members mine JOIN channel_members peer ON peer.channel_id=mine.channel_id WHERE mine.user_id=? AND peer.user_id=BINARY u.id))';
+    $stmt=$db->prepare($sql); $stmt->execute(array_merge($ids,[$owner,$owner,$owner]));
+    $images=[];
+    foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) $images[(string)$row['id']]=$row['image_data'];
+    $result=[];
+    foreach ($ids as $id) {
+        $image=$images[$id] ?? null;
+        // No imagen e identidad no autorizada tienen la misma respuesta.
+        $revision=$image!==null ? hash('sha256',$image) : null;
+        $entry=['id'=>$id,'revision'=>$revision];
+        if ($revision===null || !is_string($known[$id] ?? null) || !hash_equals($revision,$known[$id])) $entry['image']=$image;
+        $result[]=$entry;
+    }
+    return ['success'=>true,'avatars'=>$result];
+}
 function handleAccount(PDO $db, array $data, $owner) {
     if (!$owner) throw new AccountRequestError(401, 'Tu sesión venció. Inicia sesión de nuevo.');
     $action=$data['action'] ?? 'get';
     if ($action==='get') return accountSnapshot($db, $owner);
+    if ($action==='avatars') return accountPeerAvatars($db,$data,$owner);
     if (!in_array($action,['update','settings','avatar','delete'],true)) throw new AccountRequestError(400, 'Operación de cuenta no disponible.');
     // Ninguna identidad, rol, teléfono, hash o columna SQL procede del cliente.
     $db->beginTransaction();

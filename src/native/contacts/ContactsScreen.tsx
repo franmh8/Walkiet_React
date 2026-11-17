@@ -1,4 +1,5 @@
 import { useAppTheme } from '../profile/AppTheme';
+import { PeerAvatar } from '../profile/PeerAvatar';
 import React, { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { View, Text, TouchableOpacity, TextInput, ScrollView, SectionList, StyleSheet, Modal, SafeAreaView, ActivityIndicator, Platform, Clipboard, Linking } from 'react-native';
 import { UserIcon, UsersIcon, UserPlusIcon, AlertTriangleIcon, SearchIcon, XIcon, CheckIcon, PhoneIcon, MailIcon, ArrowLeftIcon, MicIcon, MessageSquareIcon, CopyIcon, ShieldIcon, TrashIcon, VideoIcon } from '../icons';
@@ -11,6 +12,7 @@ interface Props {
   visible: boolean;
   serverUrl: string;
   directory: ContactsDirectory;
+  avatars: Record<string, string | null>;
   onSos(): void;
   onStartChat(contact: ContactOfficer): void;
   onContactUpdated(contact: ContactOfficer): void;
@@ -18,7 +20,7 @@ interface Props {
 }
 
 export const ContactsScreen = forwardRef<ContactsScreenHandle, Props>(function ContactsScreen(
-  { visible, serverUrl, directory, onSos: handleTriggerSos, onStartChat, onContactUpdated, onOpenCamera }, ref
+  { visible, serverUrl, directory, avatars, onSos: handleTriggerSos, onStartChat, onContactUpdated, onOpenCamera }, ref
 ) {
   const { palette } = useAppTheme();
   const officersList = directory.contacts;
@@ -326,8 +328,12 @@ export const ContactsScreen = forwardRef<ContactsScreenHandle, Props>(function C
                 <Text style={{ fontSize: 15, fontWeight: '800', color: '#6b1d2f' }}>{section.letter}</Text>
               </View>}
               renderItem={({ item }) => <TouchableOpacity onPress={() => handleOpenContactDetail(item)}
-                style={{ paddingHorizontal: 20, paddingVertical: 16, backgroundColor: palette.card }}>
-                <Text style={{ fontSize: 16, fontWeight: '600', color: palette.text }}>{item.name}</Text>
+                style={{ paddingHorizontal: 20, paddingVertical: 16, backgroundColor: palette.card, flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                <PeerAvatar uri={avatars[item.registered_user_id || '']} name={item.name}
+                  style={{ width: 42, height: 42, borderRadius: 21, backgroundColor: palette.soft, alignItems: 'center', justifyContent: 'center' }}>
+                  <Text style={{ color: palette.accent, fontWeight: '700' }}>{item.name.trim().slice(0, 2).toUpperCase()}</Text>
+                </PeerAvatar>
+                <Text style={{ fontSize: 16, fontWeight: '600', color: palette.text, flex: 1 }}>{item.name}</Text>
               </TouchableOpacity>}
               ItemSeparatorComponent={() => <View style={{ height: 1, backgroundColor: palette.input, marginHorizontal: 20 }} />}
               ListEmptyComponent={(<View style={{
@@ -735,9 +741,9 @@ export const ContactsScreen = forwardRef<ContactsScreenHandle, Props>(function C
             contentContainerStyle={{ paddingHorizontal: 20, paddingTop: 20, paddingBottom: 40 }}
             showsVerticalScrollIndicator={false}
           >
-            {/* Avatar Central Grande con Inicial */}
+            {/* Foto de cuenta compartida; inicial cuando no hay foto. */}
             <View style={{ alignItems: 'center', marginBottom: 14 }}>
-              <View style={{
+              <PeerAvatar uri={avatars[selectedContactForDetail?.registered_user_id || '']} name={selectedContactForDetail?.name || 'contacto'} style={{
                 width: 110,
                 height: 110,
                 borderRadius: 55,
@@ -759,7 +765,7 @@ export const ContactsScreen = forwardRef<ContactsScreenHandle, Props>(function C
                 }}>
                   {(selectedContactForDetail?.name.trim()[0] || 'K').toUpperCase()}
                 </Text>
-              </View>
+              </PeerAvatar>
 
               {/* Nombre del Contacto */}
               <Text style={{

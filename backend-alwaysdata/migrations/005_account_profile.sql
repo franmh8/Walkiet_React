@@ -14,7 +14,7 @@ CREATE TABLE IF NOT EXISTS user_settings (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
 AS SELECT id AS user_id FROM users WHERE 1=0;
 
--- Imagen acotada, separada del listado de usuarios y accesible solo mediante la sesión propia.
+-- Imagen acotada, separada del listado de usuarios. Consulta autenticada propia o de contactos/grupo.
 CREATE TABLE IF NOT EXISTS account_avatars (
  image_data MEDIUMTEXT NULL,
  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,

@@ -10,6 +10,7 @@ export interface AccountUser {
   id: string; name: string; phone_number: string; correo: string | null; unit: string; role: string; callsign: string; avatar_url: string | null;
 }
 export interface AccountSnapshot { user: AccountUser; settings: AccountSettings; }
+export interface PeerAvatar { id: string; revision: string | null; image?: string | null; }
 export class AccountApiError extends Error { constructor(message: string, public status: number) { super(message); } }
 export function createAccountApi(baseUrl: string, token: string, fetcher: typeof fetch = fetch) {
   const base = baseUrl.trim().replace(/\/+$/, '');
@@ -35,6 +36,19 @@ export function createAccountApi(baseUrl: string, token: string, fetcher: typeof
   }
   return { get: () => snapshot('get'), update: (fields: Partial<Pick<AccountUser, 'name'|'unit'>>) => snapshot('update', { fields }),
     settings: (settings: Partial<AccountSettings>) => snapshot('settings', { settings }), avatar: (image: string | null) => snapshot('avatar', { image }),
+    async avatars(ids: string[], known: Record<string, string> = {}): Promise<PeerAvatar[]> {
+      const data = await request('avatars', { ids, known });
+      if (!Array.isArray(data.avatars) || data.avatars.length !== ids.length) throw new Error('Respuesta de fotos no válida.');
+      const received = new Set<string>();
+      for (const item of data.avatars) {
+        if (!item || !ids.includes(item.id) || received.has(item.id) ||
+            !(item.revision === null || typeof item.revision === 'string' && /^[a-f0-9]{64}$/.test(item.revision)) ||
+            !(item.image === undefined && item.revision !== null || item.image === null ||
+              typeof item.image === 'string' && item.image.length <= 180000 && /^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(item.image))) throw new Error('Respuesta de fotos no válida.');
+        received.add(item.id);
+      }
+      return data.avatars;
+    },
     delete: (password: string) => request('delete', { password, confirmation: 'ELIMINAR' }),
     async health() { const start = Date.now(); const data = await request('health', {}, false); if (data.service !== 'walkiet-account' || data.database !== true) throw new Error('El servidor no confirmó la conexión con la BD.'); return Date.now() - start; },
   };
