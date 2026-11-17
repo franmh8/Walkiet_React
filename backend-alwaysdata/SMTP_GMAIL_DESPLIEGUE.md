@@ -65,6 +65,10 @@ Si aún no se instaló el flujo de correo, aplicar además la migración **006**
 subir `security.php`, `account-handler.php`, `.htaccess` y el proxy indicado en
 [CORREO_SEGURIDAD_DESPLIEGUE.md](CORREO_SEGURIDAD_DESPLIEGUE.md). Si ya se aplicó 006,
 **cambiar de OAuth a SMTP no requiere otra migración ni cambios de la app**.
+Si se actualiza también el perfil a la versión actual, aplicar la migración 007
+y subir juntos `account.php`, `account-handler.php` y `account-presence.php`,
+como indica [PRESENCIA_CHAT_DESPLIEGUE.md](PRESENCIA_CHAT_DESPLIEGUE.md).
+
 No copiar `security-config.example.php` dentro de `www` con datos reales.
 
 ## Prueba y diagnóstico

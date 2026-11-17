@@ -6,16 +6,18 @@ chats, cabecera de conversación, selector de contacto y agenda/detalle.
 
 ## Actualizar el servidor
 
-Si ya funciona la edición de foto y la migración 005 está instalada, solo hay que
-sustituir **`account-handler.php`** en `/home/walkiet/www/`:
+La versión actual del perfil incluye presencia y privacidad. Aplicar primero
+[007_chat_presence.sql](migrations/007_chat_presence.sql), después de la 005,
+y copiar los tres archivos desde la Terminal del Mac, dentro del proyecto:
 
 ```sh
-scp backend-alwaysdata/account-handler.php walkiet@ssh-walkiet.alwaysdata.net:/home/walkiet/www/
+scp backend-alwaysdata/account-presence.php backend-alwaysdata/account-handler.php backend-alwaysdata/account.php walkiet@ssh-walkiet.alwaysdata.net:/home/walkiet/www/
 ```
 
-Conservar `account.php`, `conexion.php`, archivos privados y fotos actuales. No
-requiere SQL ni volver a cargar la imagen. Si aún no existe `account_avatars`,
-seguir primero [PERFIL_DESPLIEGUE.md](PERFIL_DESPLIEGUE.md).
+Conservar `conexion.php`, archivos privados y fotos actuales. No requiere volver
+a cargar la imagen. Los pasos completos están en
+[PRESENCIA_CHAT_DESPLIEGUE.md](PRESENCIA_CHAT_DESPLIEGUE.md). Si aún no existe
+`account_avatars`, seguir primero [PERFIL_DESPLIEGUE.md](PERFIL_DESPLIEGUE.md).
 
 ## Actualizar ambos dispositivos
 

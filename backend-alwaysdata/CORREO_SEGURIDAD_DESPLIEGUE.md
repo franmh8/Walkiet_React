@@ -94,8 +94,10 @@ con OpenSSL y `allow_url_fopen`. No desactivar la validación TLS.
    - [security-mail.php](security-mail.php) y [security-mail-template.php](security-mail-template.php)
    - Para SMTP: [security-smtp.php](security-smtp.php) y la carpeta `lib/PHPMailer/`
      completa, con clases y licencia.
-   - [account-handler.php](account-handler.php) actualizado: bloquea cambiar el
-     correo con el endpoint antiguo para evitar saltarse la verificación.
+   - [account.php](account.php), [account-handler.php](account-handler.php) y
+     [account-presence.php](account-presence.php) de la versión actual. El handler
+     bloquea el cambio directo de correo y requiere la migración 007, además de
+     005: seguir [PRESENCIA_CHAT_DESPLIEGUE.md](PRESENCIA_CHAT_DESPLIEGUE.md).
    - [.htaccess](.htaccess) actualizado y [api/security.php](api/security.php) si
      se usan los proxies `/api/*.php`.
 3. Conservar `conexion.php`, `auth-session.php` y `cors.php`; no sustituirlos por
