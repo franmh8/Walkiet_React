@@ -10,7 +10,7 @@ try {
     if (!is_array($data)) throw new AccountRequestError(400,'Se requiere un objeto JSON.');
     if (($data['action'] ?? '')==='health') {
         $pdo->query('SELECT 1')->fetchColumn();
-        echo json_encode(['success'=>true,'service'=>'walkiet-account','database'=>true]); exit;
+        echo json_encode(['success'=>true,'service'=>'walkiet-account','database'=>true,'features'=>['avatars','presence','showLastSeen']]); exit;
     }
     $owner=authenticateContactOwner($pdo,contactsBearerToken($_SERVER));
     echo json_encode(handleAccount($pdo,$data,$owner,contactsBearerToken($_SERVER)),JSON_UNESCAPED_UNICODE);

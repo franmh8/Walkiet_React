@@ -1,0 +1,16 @@
+import assert from 'node:assert/strict';
+const base=process.env.ACCOUNT_TEST_BACKEND;if(base!=='http://127.0.0.1:8103')throw Error('Usa solo contacts_test_account local.');
+const post=async(path,token,data)=>{const r=await fetch(base+path,{method:'POST',headers:{'Content-Type':'text/plain',...(token?{Authorization:'Bearer '+token}:{})},body:JSON.stringify(data)});return {status:r.status,body:await r.json()};};
+const login=async phone=>{const r=await post('/login.php',null,{phone_number:phone,password:'profile-test-password'});assert.equal(r.status,200);return r.body.token;};
+const get=async(token,query)=>{const r=await fetch(base+'/chat-sync.php?'+new URLSearchParams(query),{headers:{Authorization:'Bearer '+token}});return {status:r.status,body:await r.json()};};
+const a=await login('7710000301'),b=await login('7710000302'),c=await login('7710000303');
+const unauthed=await fetch(base+'/chat-sync.php');assert.equal(unauthed.status,401);
+let r=await get(a,{action:'messages',thread_id:'timeline-thread'});assert.equal(r.status,200);const item=r.body.messages.find(m=>m.id==='today-b');
+assert.equal(item.created_at,'2026-11-18 17:33:22.637541','No modifica el historial.');assert.equal(item.sent_at,'2026-11-18T16:33:22.637541Z');assert.equal(item.time_zone,'Europe/Paris');
+assert.equal((await get(c,{action:'messages',thread_id:'timeline-thread'})).status,403);
+r=await post('/chat-sync.php',b,{action:'send',thread_id:'timeline-thread',mediaType:'text',text:'Mensaje de HTTP local'});assert.equal(r.status,201);assert.ok(Math.abs(Date.parse(r.body.sent_at)-Date.now())<5000);
+const sent=r.body;const polled=(await get(a,{action:'messages',thread_id:'timeline-thread'})).body.messages.find(m=>m.id===sent.id);assert.equal(sent.sent_at,polled.sent_at,'La confirmación y la lectura usan el mismo instante persistido.');
+const thread=(await get(a,{action:'threads'})).body.threads.find(t=>t.id==='timeline-thread');assert.equal(thread.lastMessageAt,sent.sent_at);
+assert.equal((await post('/chat-sync.php',c,{action:'send',thread_id:'timeline-thread',text:'No autorizado'})).status,403);
+r=await post('/chat-sync.php',a,{action:'direct',target_user_id:'account-b'});assert.equal(r.status,200);const reverse=await post('/chat-sync.php',b,{action:'direct',target_user_id:'account-a'});assert.equal(r.body.thread_id,reverse.body.thread_id,'Conserva el chat directo determinista.');
+console.log('OK chat PHP/MySQL: historial intacto, fecha ISO/UTC con microsegundos, lectura/envío con el mismo instante, lista de chats, membresía y chat directo existente.');

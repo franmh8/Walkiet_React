@@ -1,27 +1,29 @@
 import { useEffect, useRef, useState } from 'react';
 import { AppState, Platform } from 'react-native';
 import { randomUUID } from 'expo-crypto';
-import { createAccountApi } from '../../services/accountApi';
+import { peerIds } from '../../services/peerIds';
+import { AccountApiError, createAccountApi } from '../../services/accountApi';
 import type { PeerPresence } from '../../services/presence';
 
 // La presencia pertenece a la cuenta y a esta ventana, no a una conversación
 // guardada. Nunca se deriva del valor histórico users.status ni de mensajes.
 export function usePeerPresence(server: string, token: string, ids: string[]) {
   const scope = JSON.stringify([server, token]);
-  const key = JSON.stringify([...new Set(ids.filter(Boolean))].sort());
+  const key = JSON.stringify(peerIds(ids).sort());
   const refresh = useRef<() => void>(() => {});
-  const requested = useRef(ids); requested.current = [...new Set(ids.filter(Boolean))];
+  const requested = useRef(ids); requested.current = peerIds(ids);
   const [state, setState] = useState<{ scope: string; peers: Record<string, PeerPresence> }>({ scope, peers: {} });
   const [clock, setClock] = useState(Date.now());
   useEffect(() => {
     setState({ scope, peers: {} });
     if (!server || !token) return;
-    const api = createAccountApi(server, token); const clientId = randomUUID();
-    let closing = false, running = false, pending = false, version = 0;
+    const api = createAccountApi(server, token); const clientId = randomUUID().toLowerCase();
+    let closing = false, running = false, pending = false, version = 0, unavailable = false;
     const foreground = () => (!AppState.currentState || AppState.currentState === 'active') &&
       (Platform.OS !== 'web' || typeof document === 'undefined' || !document.hidden);
     let active = foreground();
     const flush = async () => {
+      if (unavailable) return;
       pending = true;
       if (running) return;
       running = true;
@@ -41,7 +43,8 @@ export function usePeerPresence(server: string, token: string, ids: string[]) {
                 onlineUntil: peer.onlineUntil === null ? null : started + Math.max(0, peer.onlineUntil - snapshot.now) * 1000 };
             }
             if (!closing && current === version) { setClock(Date.now()); setState({ scope, peers }); }
-          } catch {
+          } catch (cause) {
+            if (cause instanceof AccountApiError && cause.status === 400 && /operación.*no disponible/i.test(cause.message)) { unavailable = true; pending = false; }
             // Sin respuesta no se conserva un indicador verde antiguo.
             if (!closing && current === version) setState({ scope, peers: {} });
           }

@@ -18,6 +18,10 @@ requiere la migración 007 y actualizar tres archivos PHP además de la app.
 La [guía de reintegración del chat modular](REINTEGRACION_CHAT.md) explica cómo
 actualizar conservando la sincronización y recuperar los ajustes de V1.
 
+Para separar los mensajes por día, corregir la hora y resolver el 400 de cuenta,
+seguir la [guía de fechas del chat](backend-alwaysdata/CHAT_FECHAS_DESPLIEGUE.md).
+Incluye la publicación coordinada de los PHP actuales sin modificar el historial.
+
 ## Actualizar un equipo existente
 
 Desde la carpeta `Walkiet_React`, detener Expo con **Ctrl+C** y revisar primero:

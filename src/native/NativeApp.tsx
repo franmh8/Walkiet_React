@@ -19,6 +19,9 @@ import {
 import { SafeAreaView, SafeAreaProvider } from 'react-native-safe-area-context';
 import { safeStorage } from './storage';
 import { useChatController } from './chat/ChatController';
+import { ChatDateSeparator } from './chat/ChatDateSeparator';
+import { chatDay } from './chat/chatDates';
+import { useChatScroll } from './chat/useChatScroll';
 import { ChatAttachmentsMenu } from './chat/ChatAttachmentsMenu';
 /* WALKIET_CHAT_MODULAR_V1 */
 
@@ -179,6 +182,7 @@ export interface ChatMessage {
   senderCallsign?: string;
   text: string;
   timestamp: string;
+  sentAt?: string | null;
   isSelf: boolean;
   status: 'sent' | 'delivered' | 'read';
   mediaType?: 'text' | 'image' | 'voice' | 'location' | 'document';
@@ -348,6 +352,7 @@ function NativeAppScreen() {
     showAlert: showNativeAlert,
     playMessageSound: () => soundEngine.playIncomingChirp(),
   });
+  const chatScroll = useChatScroll(activeConversation?.id, activeConversation?.messages || []);
   const contactsDirectory = useContactsDirectory(serverUrl, currentUser ? { userId: currentUser.id, token: currentUser.authToken || '' } : null);
   const channelsDirectory = useChannelsDirectory(serverUrl, currentUser?.id || '', currentUser?.authToken || '');
   const { channels, refresh: refreshChannels } = channelsDirectory;
@@ -1925,6 +1930,10 @@ const position =
 
                 {/* Hilo de mensajes o Estado Vacío Limpio (Imagen 1) */}
                 <ScrollView
+                  ref={chatScroll.ref}
+                  testID="chat-message-scroll"
+                  onScroll={chatScroll.onScroll} scrollEventThrottle={32}
+                  onContentSizeChange={chatScroll.onSize} onLayout={chatScroll.onSize}
                   style={styles.chatMessagesScroll}
                   contentContainerStyle={[
                     styles.chatMessagesScrollContent,
@@ -1954,11 +1963,13 @@ const position =
                         </Text>
                       </View>
 
-                      {activeConversation.messages.map((msg) => {
+                      {activeConversation.messages.map((msg, index) => {
                         const isSelf = msg.isSelf;
                         return (
+                          <React.Fragment key={msg.id}>
+                          {(index === 0 || chatDay(msg.sentAt) !== chatDay(activeConversation.messages[index - 1].sentAt)) && <ChatDateSeparator sentAt={msg.sentAt} />}
                           <View
-                            key={msg.id}
+                            testID={`chat-message-${msg.id}`}
                             style={[
                               styles.chatBubbleRow,
                               isSelf ? styles.chatBubbleRowSelf : styles.chatBubbleRowOther,
@@ -2082,11 +2093,13 @@ const position =
                               </View>
                             </View>
                           </View>
+                          </React.Fragment>
                         );
                       })}
                     </>
                   )}
                 </ScrollView>
+                {chatScroll.unread > 0 && <TouchableOpacity accessibilityLabel="Ir a los mensajes más recientes" onPress={() => chatScroll.toEnd()} style={{ alignSelf: 'center', borderRadius: 16, paddingHorizontal: 16, paddingVertical: 8, margin: 6, backgroundColor: palette.input }}><Text style={{ color: palette.accent, fontSize: 13, fontWeight: '600' }}>↓ Mensajes nuevos ({chatScroll.unread})</Text></TouchableOpacity>}
 
                 {/* Mismo menú de cuatro botones en todas las plataformas.
                     iOS lo presenta en un Modal para que las pulsaciones no queden
