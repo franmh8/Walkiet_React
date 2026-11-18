@@ -14,8 +14,8 @@ export function createChatSyncBrowserFixture(backend) {
    if(!check.ok)return reply(401,{success:false,message:'Sesión de prueba vencida'});
    const owner=account.user.id;const data=req.method()==='POST'?req.postDataJSON():Object.fromEntries(url.searchParams);
    operations.push({owner,action:data.action});
-   const dto=t=>{const peer=t.members.find(id=>id!==owner);const list=messages.get(t.id)||[];return {id:t.id,type:t.type,name:t.type==='direct'?users[peer].name:t.name,targetUserId:t.type==='direct'?peer:null,participantCount:t.members.length,isOnline:true,lastMessage:list.at(-1)?.text||'',lastMessageTime:list.at(-1)?.timestamp||''};};
-   if(data.action==='threads')return reply(200,{success:true,features:['receipts','idempotentSend'],threads:[...threads.values()].filter(t=>t.members.includes(owner)).map(dto)});
+   const dto=t=>{const peer=t.members.find(id=>id!==owner);const list=messages.get(t.id)||[];return {id:t.id,type:t.type,name:t.type==='direct'?users[peer].name:t.name,targetUserId:t.type==='direct'?peer:null,participantCount:t.members.length,isOnline:true,hasMessages:list.length>0,lastMessage:list.at(-1)?.text||'',lastMessageTime:list.at(-1)?.timestamp||''};};
+   if(data.action==='threads')return reply(200,{success:true,features:['receipts','idempotentSend'],threads:[...threads.values()].filter(t=>t.members.includes(owner)&&(t.type==='group'||(messages.get(t.id)||[]).length>0)).map(dto)});
    if(data.action==='direct'){
     if(!users[data.target_user_id]||data.target_user_id===owner)return reply(400,{success:false,message:'Destinatario inválido'});
     const members=[owner,data.target_user_id].sort();const id='fixture-direct-'+members.join('_');

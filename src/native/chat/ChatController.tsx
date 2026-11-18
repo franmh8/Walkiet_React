@@ -10,7 +10,7 @@ import { useChatOutbox } from './useChatOutbox';
 import type { OutboxEntry } from './chatOutbox';
 import { chatTime } from './chatDates';
 import type { AlertButton } from 'react-native';
-import { createChatSyncApi, type ChatThreadDto, type ChatMessageDto } from '../../services/chatSyncApi';
+import { ChatApiError, createChatSyncApi, type ChatThreadDto, type ChatMessageDto } from '../../services/chatSyncApi';
 import type { DirectoryContact as ContactOfficer } from '../../services/contactsApi';
 import type { ChatMessage, Conversation } from '../NativeApp';
 
@@ -55,7 +55,7 @@ export function useChatController({ serverUrl, currentUser, showAlert, playMessa
     targetUserId: t.targetUserId || undefined,
     participantCount: t.participantCount || 0,
     lastMessage: t.lastMessage || '', lastMessageTime: chatTime(t.lastMessageAt, t.lastMessageTime || ''),
-    unreadCount: 0, lastMessageStatus: t.lastMessageStatus || undefined, messages: [],
+    unreadCount: 0, hasMessages: t.hasMessages, lastMessageStatus: t.lastMessageStatus || undefined, messages: [],
   }), []);
 
   const fromServerMessage = useCallback((m: ChatMessageDto): ChatMessage => ({
@@ -71,9 +71,10 @@ export function useChatController({ serverUrl, currentUser, showAlert, playMessa
     const message:ChatMessage={id:saved.id,senderId:user.id,senderName:user.name,text:entry.text,
       timestamp:chatTime(saved.sentAt||entry.queuedAt),sentAt:saved.sentAt||entry.queuedAt,isSelf:true,status:saved.status||'sent',
       mediaType:entry.mediaType,mediaUrl:entry.mediaUrl,fileName:entry.fileName};
-    const append=(c:Conversation)=>({...c,messages:c.messages.some(m=>m.id===message.id)?c.messages:[...c.messages,message],lastMessage:message.text,lastMessageTime:message.timestamp,lastMessageStatus:message.status});
+    const append=(c:Conversation)=>({...c,hasMessages:true,messages:c.messages.some(m=>m.id===message.id)?c.messages:[...c.messages,message],lastMessage:message.text,lastMessageTime:message.timestamp,lastMessageStatus:message.status});
     setActiveConversation(c=>c?.id===entry.threadId?append(c):c);
-    setConversations(old=>old.map(c=>c.id===entry.threadId?append(c):c));
+    setConversations(old=>old.some(c=>c.id===entry.threadId) ? old.map(c=>c.id===entry.threadId?append(c):c) :
+      [append({...entry.conversation,lastMessage:'',lastMessageTime:'',unreadCount:0,messages:[]}),...old]);
   });
   const pendingMessages=(threadId:string,known:ChatMessage[]):ChatMessage[]=>outbox.entries.filter(entry=>entry.threadId===threadId&&!known.some(message=>message.id===entry.serverId)).map(entry=>({
     id:'pending-'+entry.clientId,clientId:entry.clientId,senderId:currentUser?.id||'',senderName:currentUser?.name||'',
@@ -84,7 +85,8 @@ export function useChatController({ serverUrl, currentUser, showAlert, playMessa
     const pending=pendingMessages(conversation.id,conversation.messages);const last=pending[pending.length-1];
     return {...conversation,messages:[...conversation.messages.filter(message=>!message.clientId),...pending],...(last?{lastMessage:last.text,lastMessageTime:last.timestamp,lastMessageStatus:last.status}:{})};
   };
-  const allConversations=conversations.map(decorate);
+  const allConversations=conversations.map(decorate).filter(conversation=>
+    conversation.type==='group'||conversation.hasMessages||conversation.messages.length>0);
   for(const entry of outbox.entries)if(!allConversations.some(c=>c.id===entry.threadId))allConversations.push(decorate({...entry.conversation,lastMessage:'',lastMessageTime:'',unreadCount:0,messages:[]}));
   const displayedActive=activeConversation?decorate(activeConversation):null;
 
@@ -111,7 +113,10 @@ export function useChatController({ serverUrl, currentUser, showAlert, playMessa
         setActiveConversation(prev => {
           if (!prev) return prev;
           const found = remote.find(t => t.id === prev.id);
-          return found ? { ...fromServerThread(found), messages: prev.messages } : null;
+          if (found) return { ...fromServerThread(found), messages: prev.messages };
+          // Abrir un contacto permite escribir el primer mensaje, pero el chat
+          // vacío no pertenece aún a la lista sincronizada de conversaciones.
+          return prev.type === 'direct' ? prev : null;
         });
       } catch (error: any) {
         if (!disposed) setChatSyncError(error?.message || 'No se pudieron cargar las conversaciones.');
@@ -140,12 +145,15 @@ export function useChatController({ serverUrl, currentUser, showAlert, playMessa
           });
           if (messages.every(message => message.sentAt)) messages.sort((left, right) => Date.parse(left.sentAt!) - Date.parse(right.sentAt!));
           const last = messages[messages.length-1];
-          return { ...c, messages, ...(last ? { lastMessage: last.text, lastMessageTime: last.timestamp } : {}) };
+          return { ...c, messages, hasMessages: messages.length>0 || c.hasMessages, ...(last ? { lastMessage: last.text, lastMessageTime: last.timestamp } : {}) };
         };
         setActiveConversation(prev => prev?.id === threadId ? merge(prev) : prev);
         setConversations(prev => prev.map(c => c.id === threadId ? merge(c) : c));
       } catch (error: any) {
-        if (!disposed) setChatSyncError(error?.message || 'No se pudieron actualizar los mensajes.');
+        if (!disposed) {
+          if (error instanceof ChatApiError && error.status===403) setActiveConversation(prev=>prev?.id===threadId?null:prev);
+          setChatSyncError(error?.message || 'No se pudieron actualizar los mensajes.');
+        }
       }
     };
     void refresh();

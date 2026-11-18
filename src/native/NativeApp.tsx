@@ -205,6 +205,7 @@ export interface Conversation {
   lastMessage: string;
   lastMessageTime: string;
   lastMessageStatus?: MessageStatus;
+  hasMessages?: boolean;
   unreadCount: number;
   messages: ChatMessage[];
 }

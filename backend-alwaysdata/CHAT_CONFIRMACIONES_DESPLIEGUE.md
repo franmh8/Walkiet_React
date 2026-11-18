@@ -107,3 +107,23 @@ npx eas-cli build --platform android --profile preview
 Los acuses se sincronizan aproximadamente cada 4 s con la app abierta; la cola
 reintenta cada 5 s y al recuperar conexión. No promete recepción con la app
 cerrada ni ejecuta un servicio de fondo. El 503 del servicio PTT es independiente.
+
+## Corrección de chats directos vacíos
+
+Abrir un contacto permite preparar un mensaje, pero no agrega la conversación a
+la lista de ninguno de los participantes hasta el primer mensaje real. Los grupos
+creados explícitamente sí aparecen aunque todavía no tengan mensajes. Un envío
+pendiente sin conexión aparece únicamente en el dispositivo que lo escribió.
+
+Para aplicar esta corrección sobre la instalación del cambio #9, descargar main,
+actualizar solo `chat-sync.php` y reiniciar/recargar las apps. No hay migración nueva
+ni hay que borrar filas, mensajes, contactos o datos de la app:
+
+```sh
+scp backend-alwaysdata/chat-sync.php walkiet@ssh-walkiet.alwaysdata.net:/home/walkiet/www/
+npx expo start --go -c
+```
+
+Ejecutar los comandos desde la Terminal del Mac, dentro del proyecto actualizado.
+El parámetro `--go` corresponde a Expo Go; para una app de desarrollo instalada,
+usar `npx expo start --dev-client -c`. Los APK instalados requieren recompilarse.
