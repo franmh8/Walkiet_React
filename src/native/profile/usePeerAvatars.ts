@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { AppState, Platform } from 'react-native';
+import { peerIds } from '../../services/peerIds';
 import { AccountApiError, createAccountApi } from '../../services/accountApi';
 
 type Cache = Record<string, { revision: string | null; image: string | null }>;
 export function usePeerAvatars(server: string, token: string, ids: string[], enabled: boolean) {
   const scope = JSON.stringify([server, token]);
-  const key = JSON.stringify([...new Set(ids.filter(Boolean))].sort());
+  const key = JSON.stringify(peerIds(ids).sort());
+  const unsupported = useRef('');
   const cache = useRef<{ scope: string; entries: Cache }>({ scope, entries: Object.create(null) });
   const [state, setState] = useState<{ scope: string; images: Record<string, string | null> }>({ scope, images: {} });
   useEffect(() => {
@@ -18,7 +20,7 @@ export function usePeerAvatars(server: string, token: string, ids: string[], ena
     const requested: string[] = JSON.parse(key);
     const api = createAccountApi(server, token);
     const refresh = async () => {
-      if (running || cancelled || AppState.currentState && AppState.currentState !== 'active' ||
+      if (unsupported.current === scope || running || cancelled || AppState.currentState && AppState.currentState !== 'active' ||
           Platform.OS === 'web' && typeof document !== 'undefined' && document.hidden) return;
       running = true;
       try {
@@ -35,6 +37,7 @@ export function usePeerAvatars(server: string, token: string, ids: string[], ena
           setState({ scope, images: Object.fromEntries(requested.map(id => [id, cache.current.entries[id]?.image || null])) });
         }
       } catch (error) {
+        if (error instanceof AccountApiError && error.status === 400 && /operación.*no disponible/i.test(error.message)) unsupported.current = scope;
         if (!cancelled && error instanceof AccountApiError && [401, 403].includes(error.status)) {
           cache.current.entries = Object.create(null); setState({ scope, images: {} });
         }

@@ -4,6 +4,7 @@
  * La pantalla principal conserva únicamente navegación e integración de adjuntos.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { chatTime } from './chatDates';
 import type { AlertButton } from 'react-native';
 import { createChatSyncApi, type ChatThreadDto, type ChatMessageDto } from '../../services/chatSyncApi';
 import type { DirectoryContact as ContactOfficer } from '../../services/contactsApi';
@@ -49,14 +50,14 @@ export function useChatController({ serverUrl, currentUser, showAlert, playMessa
     callsign: t.callsign || undefined, unit: t.unit || undefined,
     targetUserId: t.targetUserId || undefined,
     participantCount: t.participantCount || 0,
-    lastMessage: t.lastMessage || '', lastMessageTime: t.lastMessageTime || '',
+    lastMessage: t.lastMessage || '', lastMessageTime: chatTime(t.lastMessageAt, t.lastMessageTime || ''),
     unreadCount: 0, messages: [],
   }), []);
 
   const fromServerMessage = useCallback((m: ChatMessageDto): ChatMessage => ({
     id: m.id, senderId: m.sender_id, senderName: m.sender_name || 'Oficial',
     senderCallsign: m.sender_callsign || undefined, text: m.text || '',
-    timestamp: m.timestamp || 'Ahora', isSelf: m.sender_id === currentUser?.id,
+    timestamp: chatTime(m.sentAt, m.timestamp), sentAt: m.sentAt || null, isSelf: m.sender_id === currentUser?.id,
     status: 'sent', mediaType: m.mediaType || 'text',
     mediaUrl: m.mediaUrl || undefined, fileName: m.fileName || undefined,
   }), [currentUser?.id]);
@@ -104,12 +105,17 @@ export function useChatController({ serverUrl, currentUser, showAlert, playMessa
       try {
         const response = await chatApi.listMessages(threadId);
         if (disposed) return;
-        const messages = response.map(fromServerMessage);
-        const last = messages[messages.length - 1];
-        const merge = (c: Conversation): Conversation => ({
-          ...c, messages,
-          ...(last ? { lastMessage: last.text, lastMessageTime: last.timestamp } : {}),
-        });
+        const incoming = response.map(fromServerMessage);
+        const merge = (c: Conversation): Conversation => {
+          const known = new Map(c.messages.map(message => [message.id, message]));
+          const messages = incoming.map(message => {
+            const sentAt = message.sentAt || known.get(message.id)?.sentAt || null;
+            return { ...message, sentAt, timestamp: chatTime(sentAt, message.timestamp) };
+          });
+          if (messages.every(message => message.sentAt)) messages.sort((left, right) => Date.parse(left.sentAt!) - Date.parse(right.sentAt!));
+          const last = messages[messages.length-1];
+          return { ...c, messages, ...(last ? { lastMessage: last.text, lastMessageTime: last.timestamp } : {}) };
+        };
         setActiveConversation(prev => prev?.id === threadId ? merge(prev) : prev);
         setConversations(prev => prev.map(c => c.id === threadId ? merge(c) : c));
       } catch (error: any) {
@@ -216,7 +222,8 @@ export function useChatController({ serverUrl, currentUser, showAlert, playMessa
       const newMsg: ChatMessage = {
         id: saved.id, senderId: user.id, senderName: user.name,
         senderCallsign: user.callsign || user.badge, text: caption,
-        timestamp: saved.timestamp || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        sentAt: saved.sentAt || new Date().toISOString(),
+        timestamp: chatTime(saved.sentAt || new Date().toISOString()),
         isSelf: true, status: 'sent', mediaType, mediaUrl, fileName, locationCoords: coords,
       };
       const append = (c: Conversation): Conversation => ({

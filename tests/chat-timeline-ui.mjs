@@ -1,0 +1,30 @@
+import assert from 'node:assert/strict';
+import {createRequire} from 'node:module';
+const {chromium}=createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODULE||'playwright');
+const base=process.env.ACCOUNT_TEST_BACKEND,url=process.env.ACCOUNT_UI_URL||'http://localhost:3002';if(base!=='http://127.0.0.1:8103')throw Error('Usa solo contacts_test_account.');
+const browser=await chromium.launch({executablePath:process.env.CHROMIUM_PATH,headless:true,args:['--no-sandbox']});
+try{
+ const context=await browser.newContext({viewport:{width:430,height:932},timezoneId:'America/Mexico_City'});
+ await context.route('**/walkiet.alwaysdata.net/**',r=>r.abort());await context.route('**/api/ptt',r=>r.fulfill({status:503,contentType:'application/json',body:'{"success":false,"message":"Radio de prueba detenida"}'}));
+ await context.addInitScript(server=>localStorage.setItem('c5i_native_server_url',server),base);
+ const page=await context.newPage();const errors=[];page.on('pageerror',e=>errors.push(e.message));await page.clock.setFixedTime(new Date('2026-11-18T16:45:00Z'));
+ let unsupported=0;await page.route('**/api/account',r=>{if(r.request().postDataJSON()?.action==='presence'){unsupported++;return r.fulfill({status:400,contentType:'application/json',body:'{"success":false,"message":"Operación de cuenta no disponible."}'});}return r.continue();});
+ await page.goto(url);await page.getByPlaceholder('Ingresa tu teléfono o correo',{exact:true}).fill('7710000301');await page.getByPlaceholder('Ingresa tu contraseña',{exact:true}).fill('profile-test-password');await page.getByText('Iniciar Sesión',{exact:true}).click();
+ await page.getByText('Chat',{exact:true}).click();await page.getByText('Prueba Perfil B',{exact:true}).click();
+ await page.getByLabel('Fecha de mensajes: Ayer',{exact:true}).waitFor({state:'attached'});await page.getByLabel('Fecha de mensajes: Hoy',{exact:true}).waitFor({state:'attached'});
+ assert.equal(await page.getByLabel('Fecha de mensajes: Ayer',{exact:true}).count(),1);assert.equal(await page.getByLabel('Fecha de mensajes: Hoy',{exact:true}).count(),1);
+ await page.getByTestId('chat-message-today-b').getByText('10:33',{exact:true}).waitFor();assert.equal(await page.getByTestId('chat-message-today-b').getByText('17:33',{exact:true}).count(),0);
+ const scroll=page.getByTestId('chat-message-scroll');const gap=()=>scroll.evaluate(e=>e.scrollHeight-e.clientHeight-e.scrollTop);
+ await page.waitForFunction(()=>{const e=document.querySelector('[data-testid="chat-message-scroll"]');return e&&e.scrollHeight-e.clientHeight-e.scrollTop<8;});assert.ok(await gap()<8,'Abre en el mensaje más reciente.');
+ const post=async(path,token,data)=>{const r=await fetch(base+path,{method:'POST',headers:{'Content-Type':'text/plain',...(token?{Authorization:'Bearer '+token}:{})},body:JSON.stringify(data)});assert.ok(r.ok);return r.json();};
+ const b=(await post('/login.php',null,{phone_number:'7710000302',password:'profile-test-password'})).token;
+ let sent=await post('/chat-sync.php',b,{action:'send',thread_id:'timeline-thread',mediaType:'text',text:'Entrante mientras estoy abajo'});await page.getByTestId('chat-message-'+sent.id).waitFor({state:'attached'});await page.waitForTimeout(700);assert.ok(await gap()<8,'Sigue un mensaje recibido al estar abajo.');
+ await scroll.evaluate(e=>{e.scrollTop=0;e.dispatchEvent(new Event('scroll',{bubbles:true}));});await page.waitForTimeout(200);
+ sent=await post('/chat-sync.php',b,{action:'send',thread_id:'timeline-thread',mediaType:'text',text:'Entrante mientras leo el historial'});await page.getByTestId('chat-message-'+sent.id).waitFor({state:'attached'});await page.getByLabel('Ir a los mensajes más recientes',{exact:true}).waitFor();assert.ok(await scroll.evaluate(e=>e.scrollTop)<8,'No interrumpe la lectura anterior.');
+ await page.screenshot({path:'/tmp/chat-dates-yesterday-mobile.png',fullPage:true});await page.getByLabel('Ir a los mensajes más recientes',{exact:true}).click();await page.waitForFunction(()=>{const e=document.querySelector('[data-testid="chat-message-scroll"]');return e&&e.scrollHeight-e.clientHeight-e.scrollTop<8;},{},{timeout:5000});assert.ok(await gap()<8);
+ await scroll.evaluate(e=>{e.scrollTop=0;e.dispatchEvent(new Event('scroll',{bubbles:true}));});await page.waitForTimeout(100);await page.getByPlaceholder('Escribe un mensaje de radio...',{exact:true}).fill('Mensaje propio desplaza al final');await page.getByLabel('Enviar mensaje',{exact:true}).click();await page.getByText('Mensaje propio desplaza al final',{exact:true}).waitFor();await page.waitForFunction(()=>{const e=document.querySelector('[data-testid="chat-message-scroll"]');return e&&e.scrollHeight-e.clientHeight-e.scrollTop<8;},{},{timeout:5000});assert.ok(await gap()<8,'Enviar siempre muestra el mensaje propio.');
+ await page.waitForTimeout(4500);assert.equal(unsupported,1,'No repite indefinidamente la operación ausente del servidor antiguo.');
+ await page.screenshot({path:'/tmp/chat-dates-today-mobile.png',fullPage:true});await page.unroute('**/api/account');await page.reload();await page.getByText('Chat',{exact:true}).click();await page.getByText('Prueba Perfil B',{exact:true}).click();await page.getByTestId('chat-message-today-b').getByText('10:33',{exact:true}).waitFor({state:'attached'});
+ await page.setViewportSize({width:1440,height:940});await page.screenshot({path:'/tmp/chat-dates-desktop.png',fullPage:true});assert.deepEqual(errors,[]);
+ console.log('OK UI PHP/MySQL: Ayer/Hoy, hora México correcta y persistente, abre/recibe/envía al final, preserva lectura anterior, enlace de mensajes nuevos y 400 antiguo sin bucle.');
+}finally{await browser.close();}

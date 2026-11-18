@@ -1,3 +1,4 @@
+import { peerIds } from './peerIds';
 import type { PresenceSnapshot } from './presence';
 export interface AccountSettings {
   theme: 'light' | 'dark' | 'system';
@@ -40,6 +41,7 @@ export function createAccountApi(baseUrl: string, token: string, fetcher: typeof
   return { get: () => snapshot('get'), update: (fields: Partial<Pick<AccountUser, 'name'|'unit'>>) => snapshot('update', { fields }),
     settings: (settings: Partial<AccountSettings>) => snapshot('settings', { settings }), avatar: (image: string | null) => snapshot('avatar', { image }),
     async avatars(ids: string[], known: Record<string, string> = {}): Promise<PeerAvatar[]> {
+      ids = peerIds(ids);
       const data = await request('avatars', { ids, known });
       if (!Array.isArray(data.avatars) || data.avatars.length !== ids.length) throw new Error('Respuesta de fotos no válida.');
       const received = new Set<string>();
@@ -53,6 +55,7 @@ export function createAccountApi(baseUrl: string, token: string, fetcher: typeof
       return data.avatars;
     },
     async presence(ids: string[], activity?: { clientId: string; active: boolean }): Promise<PresenceSnapshot> {
+      ids = peerIds(ids);
       const data = await request('presence', { ids, ...activity });
       if (!Number.isFinite(data.now) || !Array.isArray(data.peers) || data.peers.length !== ids.length) throw new Error('Estado de actividad no válido.');
       const received = new Set<string>();
