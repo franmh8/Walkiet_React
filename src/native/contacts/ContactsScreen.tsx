@@ -103,6 +103,7 @@ export const ContactsScreen = forwardRef<ContactsScreenHandle, Props>(function C
         phone_number: newContactPhone, email: newContactEmail,
       });
       if (base !== serverRef.current) return;
+      onContactUpdated(saved);
       setIsAddContactModalOpen(false);
       setNewContactName(''); setNewContactLastName(''); setNewContactPhone(''); setNewContactEmail('');
       showTacticalToast(`Contacto "${saved.name}" guardado en la BD`, 'success');

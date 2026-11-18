@@ -187,7 +187,7 @@ export function useChatController({ serverUrl, currentUser, showAlert, playMessa
       const id = await chatApi.startDirect(officer.registered_user_id);
       if (chatSessionScopeRef.current !== scope) return false;
       const existing = conversations.find(c => c.id === id);
-      const conv: Conversation = existing || {
+      const conv: Conversation = existing ? { ...existing, name: officer.name, callsign: officer.callsign, unit: officer.unit } : {
         id, type: 'direct', name: officer.name, callsign: officer.callsign,
         unit: officer.unit, targetUserId: officer.registered_user_id,
         lastMessage: '', lastMessageTime: '', unreadCount: 0,

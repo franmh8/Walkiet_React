@@ -127,3 +127,18 @@ npx expo start --go -c
 Ejecutar los comandos desde la Terminal del Mac, dentro del proyecto actualizado.
 El parámetro `--go` corresponde a Expo Go; para una app de desarrollo instalada,
 usar `npx expo start --dev-client -c`. Los APK instalados requieren recompilarse.
+
+## Nombres y apodos personales en los chats
+
+La lista y el encabezado de un chat directo usan primero el nombre/apodo de tu
+agenda privada. Si no tienes guardado al otro participante, usan el nombre de
+su cuenta. Cada usuario ve sus propios apodos; guardar o editar uno no cambia
+el perfil de la otra persona ni la agenda de sus compañeros. Al eliminar el
+contacto, el chat conserva sus mensajes y vuelve al nombre de la cuenta.
+
+La resolución se hace en el servidor por propietario y teléfono, sin depender
+de que el contacto esté en la primera página de la agenda. No renombra los grupos.
+Para aplicar esta corrección sobre la instalación anterior, descargar `main`,
+reemplazar `chat-sync.php` con el mismo comando SCP indicado arriba y recargar
+las apps (o recompilar los APK). No requiere una migración ni volver a guardar
+los contactos existentes.

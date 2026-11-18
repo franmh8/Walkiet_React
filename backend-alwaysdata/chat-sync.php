@@ -11,7 +11,7 @@ function chatRespond($status,array $body) { http_response_code($status); echo js
 function chatString($value,$max=120) { return is_string($value)&&strlen($value)<=($max*4)&&(function_exists('mb_strlen')?mb_strlen($value)<=$max:strlen($value)<=($max*4)); }
 function chatIsMember(PDO $pdo,$thread,$owner) { $stmt=$pdo->prepare('SELECT 1 FROM chat_thread_members WHERE thread_id=? AND user_id=? LIMIT 1');$stmt->execute([$thread,$owner]);return (bool)$stmt->fetchColumn(); }
 function chatThreads(PDO $pdo,$owner,$zone,$timestampColumn) {
- $stmt=$pdo->prepare("SELECT t.id,t.kind,t.name AS group_name,peer.id AS target_user_id,peer.name AS peer_name,peer.callsign,peer.unit,peer.status,
+ $stmt=$pdo->prepare("SELECT t.id,t.kind,t.name AS group_name,peer.id AS target_user_id,peer.name AS peer_name,personal.name AS contact_name,peer.callsign,peer.unit,peer.status,
   (SELECT COUNT(*) FROM chat_thread_members cm WHERE cm.thread_id=t.id) AS participants,
   (SELECT m.id FROM chat_thread_messages m WHERE m.thread_id=t.id ORDER BY m.created_at DESC,m.id DESC LIMIT 1) AS last_message_id,
   (SELECT m.content FROM chat_thread_messages m WHERE m.thread_id=t.id ORDER BY m.created_at DESC,m.id DESC LIMIT 1) AS last_message,
@@ -20,14 +20,15 @@ function chatThreads(PDO $pdo,$owner,$zone,$timestampColumn) {
   FROM chat_threads t INNER JOIN chat_thread_members mine ON mine.thread_id=t.id AND mine.user_id=?
   LEFT JOIN chat_thread_members opposite ON opposite.thread_id=t.id AND opposite.user_id<>? AND t.kind='direct'
   LEFT JOIN users peer ON peer.id=opposite.user_id
+  LEFT JOIN contactos personal ON personal.owner_user_id=? AND personal.phone_number=BINARY peer.phone_number
   WHERE t.kind<>'direct' OR EXISTS(SELECT 1 FROM chat_thread_messages started WHERE started.thread_id=t.id)
   ORDER BY t.updated_at DESC,t.id DESC LIMIT 200");
- $stmt->execute([$owner,$owner]);$out=[];$threads=$stmt->fetchAll(PDO::FETCH_ASSOC);
+ $stmt->execute([$owner,$owner,$owner]);$out=[];$threads=$stmt->fetchAll(PDO::FETCH_ASSOC);
  $lastIds=array_values(array_filter(array_column($threads,'last_message_id')));$statuses=[];
  if($lastIds){$marks=implode(',',array_fill(0,count($lastIds),'?'));foreach(chatMessageRows($pdo,"m.id IN ($marks)",$lastIds,200,true,true)as$row)$statuses[$row['id']]=chatMessageStatus($row,$owner);}
  foreach($threads as$r) {
   $date=chatTimeFields($r['last_message_at'],$zone,$timestampColumn?$r['last_message_epoch']:null);
-  $out[]=['id'=>(string)$r['id'],'type'=>$r['kind'],'name'=>$r['kind']==='direct'?($r['peer_name']?:'Contacto'):($r['group_name']?:'Grupo'),
+  $out[]=['id'=>(string)$r['id'],'type'=>$r['kind'],'name'=>$r['kind']==='direct'?(trim($r['contact_name']??'')?:($r['peer_name']?:'Contacto')):($r['group_name']?:'Grupo'),
    'targetUserId'=>$r['target_user_id']!==null?(string)$r['target_user_id']:null,'callsign'=>$r['callsign'],'unit'=>$r['unit'],'participantCount'=>(int)$r['participants'],
    'isOnline'=>$r['status']==='online'||$r['status']==='transmitting','lastMessage'=>$r['last_message']?:'',
    'lastMessageTime'=>$date['timestamp'],'lastMessageAt'=>$date['sent_at'],'hasMessages'=>$r['last_message_id']!==null];
