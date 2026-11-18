@@ -23,8 +23,8 @@ function accountPresence(PDO $db, array $data, $owner, $token) {
     if ($ids) {
         $marks=implode(',',array_fill(0,count($ids),'?'));
         // La privacidad se aplica en el servidor a cada respuesta, nunca en la UI.
-        $stmt=$db->prepare('SELECT u.id,COALESCE(v.show_last_seen,1) AS show_last_seen FROM users u LEFT JOIN account_privacy v ON v.user_id=u.id WHERE u.id IN ('.$marks.') AND (u.id=? OR EXISTS(SELECT 1 FROM contactos c WHERE c.owner_user_id=? AND c.phone_number=BINARY u.phone_number) OR EXISTS(SELECT 1 FROM channel_members mine JOIN channel_members peer ON peer.channel_id=mine.channel_id WHERE mine.user_id=? AND peer.user_id=BINARY u.id))');
-        $stmt->execute(array_merge($ids,[$owner,$owner,$owner])); $allowed=[];
+        $stmt=$db->prepare('SELECT u.id,COALESCE(v.show_last_seen,1) AS show_last_seen FROM users u LEFT JOIN account_privacy v ON v.user_id=u.id WHERE u.id IN ('.$marks.') AND (u.id=? OR EXISTS(SELECT 1 FROM contactos c WHERE c.owner_user_id=? AND c.phone_number=BINARY u.phone_number) OR EXISTS(SELECT 1 FROM channel_members mine JOIN channel_members peer ON peer.channel_id=mine.channel_id WHERE mine.user_id=? AND peer.user_id=BINARY u.id) OR EXISTS(SELECT 1 FROM chat_thread_members mine JOIN chat_thread_members peer ON peer.thread_id=mine.thread_id WHERE mine.user_id=? AND peer.user_id=BINARY u.id))');
+        $stmt->execute(array_merge($ids,[$owner,$owner,$owner,$owner])); $allowed=[];
         foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) $allowed[(string)$row['id']]=(bool)$row['show_last_seen'];
         if ($allowed) {
             $marks=implode(',',array_fill(0,count($allowed),'?'));

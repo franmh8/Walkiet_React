@@ -99,3 +99,7 @@ npm run build
 
 Las pruebas de integración están en `tests/`; sus fixtures usan bases y cuentas
 sintéticas. Revisar sus variables de entorno antes de ejecutarlas.
+
+### Entrega, lectura y envío sin conexión
+
+Consultar [CHAT_CONFIRMACIONES_DESPLIEGUE.md](backend-alwaysdata/CHAT_CONFIRMACIONES_DESPLIEGUE.md) para aplicar la migración 008, publicar los seis PHP y actualizar las apps.

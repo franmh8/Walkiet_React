@@ -1,0 +1,14 @@
+import assert from 'node:assert/strict';
+import {createHash} from 'node:crypto';
+import {serverMessageId} from '../src/native/chat/chatMessageId.web';
+import {createChatOutbox,type OutboxEntry} from '../src/native/chat/chatOutbox';
+const data=new Map<string,string>();const storage={getAllKeys:async()=>[...data.keys()],getItem:async(key:string)=>data.get(key)||null,setItem:async(key:string,value:string)=>{data.set(key,value);},removeItem:async(key:string)=>{data.delete(key);}};
+const a=createChatOutbox(storage,'https://example.test','account-a'),b=createChatOutbox(storage,'https://example.test','account-b'),other=createChatOutbox(storage,'https://other.test','account-a');
+const entry:OutboxEntry={clientId:'10000000-0000-4000-8000-000000000001',threadId:'synthetic-chat',conversation:{id:'synthetic-chat',type:'direct',name:'Contacto de prueba'},text:'Pendiente sintético',mediaType:'text',queuedAt:'2026-11-18T16:00:00Z'};
+assert.equal(await serverMessageId('account-a',entry.clientId),'cm-'+createHash('sha256').update('account-a:'+entry.clientId).digest('hex').slice(0,32));
+await a.put(entry);assert.deepEqual(await a.list(),[entry]);assert.deepEqual(await b.list(),[]);assert.deepEqual(await other.list(),[]);
+const restored=createChatOutbox(storage,'https://example.test','account-a');assert.deepEqual(await restored.list(),[entry]);
+await Promise.all([a.put({...entry,clientId:'10000000-0000-4000-8000-000000000002'}),restored.put({...entry,clientId:'10000000-0000-4000-8000-000000000003'})]);assert.equal((await a.list()).length,3);
+await b.put(entry);await a.remove(entry.clientId);assert.equal((await a.list()).length,2);assert.equal((await b.list()).length,1);
+const broken=createChatOutbox({...storage,setItem:async()=>{throw Error('Disco lleno');}},'https://example.test','account-a');await assert.rejects(broken.put(entry),/Disco lleno/);
+console.log('OK cola: persiste tras reinicio, aislamiento por cuenta y servidor, escrituras concurrentes por mensaje, fallo de disco explícito.');
