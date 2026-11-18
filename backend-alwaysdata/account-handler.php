@@ -17,6 +17,8 @@ function accountSnapshot(PDO $db, $owner) {
     if (!$avatar && preg_match('#^https://#i', $user['avatar_url'] ?? '')) $avatar=$user['avatar_url'];
     $stmt=$db->prepare('SELECT show_last_seen FROM account_privacy WHERE user_id=?'); $stmt->execute([$owner]);
     $privacy=$stmt->fetchColumn();
+    $stmt=$db->prepare('SELECT read_receipts FROM account_read_privacy WHERE user_id=?'); $stmt->execute([$owner]);
+    $readPrivacy=$stmt->fetchColumn();
     return ['success'=>true, 'user'=>[
         'id'=>(string)$user['id'], 'name'=>$user['name'], 'phone_number'=>$user['phone_number'],
         'correo'=>$user['correo'] ?? null, 'unit'=>$user['unit'] ?? '', 'role'=>$user['role'] ?? '',
@@ -27,6 +29,7 @@ function accountSnapshot(PDO $db, $owner) {
         'rogerBeep'=>!isset($prefs['roger_beep']) || (bool)$prefs['roger_beep'],
         'backgroundNotifications'=>!empty($prefs['push_notifications']),
         'showLastSeen'=>$privacy===false || (bool)$privacy,
+        'readReceipts'=>$readPrivacy===false || (bool)$readPrivacy,
     ]];
 }
 function accountText($value, $label, $max, $allowEmpty=false) {
@@ -90,6 +93,7 @@ function handleAccount(PDO $db, array $data, $owner, $token=null) {
             $db->prepare('DELETE FROM auth_sessions WHERE user_id=?')->execute([$owner]);
             $db->prepare('DELETE FROM account_presence WHERE user_id=?')->execute([$owner]);
             $db->prepare('DELETE FROM account_privacy WHERE user_id=?')->execute([$owner]);
+            $db->prepare('DELETE FROM account_read_privacy WHERE user_id=?')->execute([$owner]);
             $db->prepare('DELETE FROM user_settings WHERE user_id=?')->execute([$owner]);
             $db->prepare('DELETE FROM account_avatars WHERE user_id=?')->execute([$owner]);
             if (accountTableExists($db,'sms_otps')) $db->prepare('DELETE FROM sms_otps WHERE phone_number=?')->execute([$user['phone_number']]);
@@ -126,11 +130,12 @@ function handleAccount(PDO $db, array $data, $owner, $token=null) {
             } else {
                 $db->prepare('INSERT IGNORE INTO user_settings (user_id,push_notifications) VALUES (?,0)')->execute([$owner]);
                 $patch=$data['settings'] ?? null;
-                $map=['theme'=>'theme_mode','pttMode'=>'ptt_mode','messageSounds'=>'channel_message_sounds','rogerBeep'=>'roger_beep','backgroundNotifications'=>'push_notifications','showLastSeen'=>'show_last_seen'];
+                $map=['theme'=>'theme_mode','pttMode'=>'ptt_mode','messageSounds'=>'channel_message_sounds','rogerBeep'=>'roger_beep','backgroundNotifications'=>'push_notifications','showLastSeen'=>'show_last_seen','readReceipts'=>'read_receipts'];
                 if (!is_array($patch) || !$patch || array_diff(array_keys($patch),array_keys($map))) throw new AccountRequestError(400,'Revisa las preferencias enviadas.');
                 $sets=[]; $args=[];
                 foreach ($patch as $key=>$value) {
-                    if ($key==='theme' && !in_array($value,['light','dark','system'],true) || $key==='pttMode' && !in_array($value,['hold','toggle'],true) || in_array($key,['messageSounds','rogerBeep','backgroundNotifications','showLastSeen'],true) && !is_bool($value)) throw new AccountRequestError(400,'Valor de preferencia no válido.');
+                    if ($key==='theme' && !in_array($value,['light','dark','system'],true) || $key==='pttMode' && !in_array($value,['hold','toggle'],true) || in_array($key,['messageSounds','rogerBeep','backgroundNotifications','showLastSeen','readReceipts'],true) && !is_bool($value)) throw new AccountRequestError(400,'Valor de preferencia no válido.');
+                    if ($key==='readReceipts') { $db->prepare('INSERT INTO account_read_privacy(user_id,read_receipts) VALUES(?,?) ON DUPLICATE KEY UPDATE read_receipts=VALUES(read_receipts)')->execute([$owner,(int)$value]); continue; }
                     if ($key==='showLastSeen') { $db->prepare('INSERT INTO account_privacy(user_id,show_last_seen) VALUES(?,?) ON DUPLICATE KEY UPDATE show_last_seen=VALUES(show_last_seen)')->execute([$owner,(int)$value]); continue; }
                     $sets[]=$map[$key].'=?'; $args[]=is_bool($value)?(int)$value:$value;
                 }

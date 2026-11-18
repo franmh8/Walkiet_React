@@ -7,8 +7,9 @@ export interface AccountSettings {
   rogerBeep: boolean;
   backgroundNotifications: boolean;
   showLastSeen: boolean;
+  readReceipts: boolean;
 }
-export const defaultAccountSettings: AccountSettings = { theme: 'system', pttMode: 'hold', messageSounds: true, rogerBeep: true, backgroundNotifications: false, showLastSeen: true };
+export const defaultAccountSettings: AccountSettings = { theme: 'system', pttMode: 'hold', messageSounds: true, rogerBeep: true, backgroundNotifications: false, showLastSeen: true, readReceipts: true };
 export interface AccountUser {
   id: string; name: string; phone_number: string; correo: string | null; unit: string; role: string; callsign: string; avatar_url: string | null;
 }

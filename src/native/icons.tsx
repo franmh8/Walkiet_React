@@ -494,11 +494,11 @@ export const DoubleCheckIcon: React.FC<IconProps> = ({
   color = '#38bdf8',
   strokeWidth = 2,
 }) => (
-  <View style={[styles.center, { width: size, height: size }]}>
+  <View style={[styles.center, { width: size + 4, height: size }]}>
     {isWeb ? (
       <LucideCheckCheck size={size} color={color} strokeWidth={strokeWidth} />
     ) : (
-      <Feather name="check" size={size} color={color} />
+      <View style={{width:size+4,height:size}}><Feather name="check" size={size} color={color} style={{position:"absolute",left:0}}/><Feather name="check" size={size} color={color} style={{position:"absolute",left:4}}/></View>
     )}
   </View>
 );

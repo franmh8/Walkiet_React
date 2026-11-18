@@ -10,7 +10,7 @@ try {
     if (!is_array($data)) throw new AccountRequestError(400,'Se requiere un objeto JSON.');
     if (($data['action'] ?? '')==='health') {
         $pdo->query('SELECT 1')->fetchColumn();
-        echo json_encode(['success'=>true,'service'=>'walkiet-account','database'=>true,'features'=>['avatars','presence','showLastSeen']]); exit;
+        echo json_encode(['success'=>true,'service'=>'walkiet-account','database'=>true,'features'=>['avatars','presence','showLastSeen','readReceipts']]); exit;
     }
     $owner=authenticateContactOwner($pdo,contactsBearerToken($_SERVER));
     echo json_encode(handleAccount($pdo,$data,$owner,contactsBearerToken($_SERVER)),JSON_UNESCAPED_UNICODE);
@@ -18,5 +18,5 @@ try {
     http_response_code($error->status); echo json_encode(['success'=>false,'message'=>$error->getMessage()],JSON_UNESCAPED_UNICODE);
 } catch (Throwable $error) {
     error_log('Account API: '.$error->getMessage()); http_response_code(503);
-    echo json_encode(['success'=>false,'message'=>'No se pudo acceder a tu perfil. Verifica el servidor y las migraciones 005_account_profile.sql y 007_chat_presence.sql.']);
+    echo json_encode(['success'=>false,'message'=>'No se pudo acceder a tu perfil. Verifica el servidor y las migraciones 005_account_profile.sql, 007_chat_presence.sql y 008_chat_receipts.sql.']);
 }

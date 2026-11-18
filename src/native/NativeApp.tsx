@@ -18,6 +18,9 @@ import {
 } from 'react-native';
 import { SafeAreaView, SafeAreaProvider } from 'react-native-safe-area-context';
 import { safeStorage } from './storage';
+import { MessageReceipt, type MessageStatus } from './chat/MessageReceipt';
+import { useVisibleChatMessages } from './chat/useVisibleChatMessages';
+import { useChatAcknowledgements } from './chat/useChatAcknowledgements';
 import { useChatController } from './chat/ChatController';
 import { ChatDateSeparator } from './chat/ChatDateSeparator';
 import { chatDay } from './chat/chatDates';
@@ -58,7 +61,6 @@ import {
   EditIcon,
   SendIcon,
   PaperclipIcon,
-  DoubleCheckIcon,
   ImageIcon,
   MapPinIcon,
   FileTextIcon,
@@ -184,7 +186,8 @@ export interface ChatMessage {
   timestamp: string;
   sentAt?: string | null;
   isSelf: boolean;
-  status: 'sent' | 'delivered' | 'read';
+  status: MessageStatus;
+  clientId?: string;
   mediaType?: 'text' | 'image' | 'voice' | 'location' | 'document';
   mediaUrl?: string;
   fileName?: string;
@@ -201,6 +204,7 @@ export interface Conversation {
   participantCount?: number;
   lastMessage: string;
   lastMessageTime: string;
+  lastMessageStatus?: MessageStatus;
   unreadCount: number;
   messages: ChatMessage[];
 }
@@ -343,7 +347,7 @@ function NativeAppScreen() {
     newGroupName, setNewGroupName,
     selectedGroupMembers, setSelectedGroupMembers,
     createGroupError, setCreateGroupError,
-    chatSyncError, filteredConversations,
+    chatApi, retryPending, chatSyncError, filteredConversations,
     totalChatCount, groupsChatCount, directChatCount,
     handleStartDirectChat, handleCreateGroupChatSubmit, handleContactUpdated,
     sendMediaMessage, handleSendChatMessage, toggleGroupMemberSelection,
@@ -353,6 +357,9 @@ function NativeAppScreen() {
     playMessageSound: () => soundEngine.playIncomingChirp(),
   });
   const chatScroll = useChatScroll(activeConversation?.id, activeConversation?.messages || []);
+  const chatVisible=useVisibleChatMessages(activeConversation?.id,currentTab==='Chat'&&!!activeConversation&&!isNewChatModalOpen&&!isCreateGroupChatModalOpen&&!isLiveCameraModalOpen);
+  const incomingVisible=chatVisible.ids.filter(id=>activeConversation?.messages.some(message=>message.id===id&&!message.isSelf));
+  useChatAcknowledgements(chatApi,activeConversation?.id,incomingVisible,account.loaded&&account.settings.readReceipts);
   const contactsDirectory = useContactsDirectory(serverUrl, currentUser ? { userId: currentUser.id, token: currentUser.authToken || '' } : null);
   const channelsDirectory = useChannelsDirectory(serverUrl, currentUser?.id || '', currentUser?.authToken || '');
   const { channels, refresh: refreshChannels } = channelsDirectory;
@@ -1920,7 +1927,7 @@ const position =
                     <Text style={styles.chatActiveTitle} numberOfLines={1}>
                       {activeConversation.name}
                     </Text>
-                    <Text style={styles.chatActiveSubtitle} numberOfLines={1}>
+                    <Text style={styles.chatActiveSubtitle} numberOfLines={2}>
                       {activeConversation.type === 'group' ? 'Conversación de grupo' : presenceLabel(presence.peers[activeConversation.targetUserId || ''], presence.now)}
                     </Text>
                   </View>
@@ -1932,8 +1939,8 @@ const position =
                 <ScrollView
                   ref={chatScroll.ref}
                   testID="chat-message-scroll"
-                  onScroll={chatScroll.onScroll} scrollEventThrottle={32}
-                  onContentSizeChange={chatScroll.onSize} onLayout={chatScroll.onSize}
+                  onScroll={event=>{chatScroll.onScroll(event);chatVisible.onScroll(event);}} scrollEventThrottle={32}
+                  onContentSizeChange={chatScroll.onSize} onLayout={event=>{chatScroll.onSize();chatVisible.onLayout(event);}}
                   style={styles.chatMessagesScroll}
                   contentContainerStyle={[
                     styles.chatMessagesScrollContent,
@@ -1970,6 +1977,7 @@ const position =
                           {(index === 0 || chatDay(msg.sentAt) !== chatDay(activeConversation.messages[index - 1].sentAt)) && <ChatDateSeparator sentAt={msg.sentAt} />}
                           <View
                             testID={`chat-message-${msg.id}`}
+                            onLayout={event=>chatVisible.onMessageLayout(msg.id,event)}
                             style={[
                               styles.chatBubbleRow,
                               isSelf ? styles.chatBubbleRowSelf : styles.chatBubbleRowOther,
@@ -2086,9 +2094,9 @@ const position =
                                   {msg.timestamp}
                                 </Text>
                                 {isSelf && (
-                                  <View style={styles.chatBubbleCheckWrap}>
-                                    <DoubleCheckIcon size={13} color="#86efac" />
-                                  </View>
+                                  <TouchableOpacity style={styles.chatBubbleCheckWrap} disabled={msg.status!=='failed'} onPress={()=>{if(msg.clientId)void retryPending(msg.clientId).catch(()=>showNativeAlert('No se pudo reintentar','Revisa el almacenamiento del dispositivo.'));}}>
+                                    <MessageReceipt status={msg.status}/>
+                                  </TouchableOpacity>
                                 )}
                               </View>
                             </View>
@@ -2348,9 +2356,9 @@ const position =
                           </View>
 
                           <View style={styles.chatConvMsgRow}>
-                            <View style={styles.chatConvCheckWrap}>
-                              <DoubleCheckIcon size={14} color="#059669" />
-                            </View>
+                            {conv.lastMessageStatus && <View style={styles.chatConvCheckWrap}>
+                              <MessageReceipt status={conv.lastMessageStatus} compact/>
+                            </View>}
                             <Text style={styles.chatConvLastMsg} numberOfLines={1}>
                               {conv.lastMessage}
                             </Text>

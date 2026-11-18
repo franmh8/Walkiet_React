@@ -5,6 +5,7 @@ require_once __DIR__.'/cors.php';
 require_once __DIR__.'/conexion.php';
 require_once __DIR__.'/auth-session.php';
 require_once __DIR__.'/chat-time.php';
+require_once __DIR__.'/chat-receipts.php';
 header('Cache-Control: no-store');
 function chatRespond($status,array $body) { http_response_code($status); echo json_encode($body,JSON_UNESCAPED_UNICODE|JSON_INVALID_UTF8_SUBSTITUTE); exit(); }
 function chatString($value,$max=120) { return is_string($value)&&strlen($value)<=($max*4)&&(function_exists('mb_strlen')?mb_strlen($value)<=$max:strlen($value)<=($max*4)); }
@@ -12,19 +13,23 @@ function chatIsMember(PDO $pdo,$thread,$owner) { $stmt=$pdo->prepare('SELECT 1 F
 function chatThreads(PDO $pdo,$owner,$zone,$timestampColumn) {
  $stmt=$pdo->prepare("SELECT t.id,t.kind,t.name AS group_name,peer.id AS target_user_id,peer.name AS peer_name,peer.callsign,peer.unit,peer.status,
   (SELECT COUNT(*) FROM chat_thread_members cm WHERE cm.thread_id=t.id) AS participants,
+  (SELECT m.id FROM chat_thread_messages m WHERE m.thread_id=t.id ORDER BY m.created_at DESC,m.id DESC LIMIT 1) AS last_message_id,
   (SELECT m.content FROM chat_thread_messages m WHERE m.thread_id=t.id ORDER BY m.created_at DESC,m.id DESC LIMIT 1) AS last_message,
   (SELECT m.created_at FROM chat_thread_messages m WHERE m.thread_id=t.id ORDER BY m.created_at DESC,m.id DESC LIMIT 1) AS last_message_at,
   (SELECT UNIX_TIMESTAMP(m.created_at) FROM chat_thread_messages m WHERE m.thread_id=t.id ORDER BY m.created_at DESC,m.id DESC LIMIT 1) AS last_message_epoch
   FROM chat_threads t INNER JOIN chat_thread_members mine ON mine.thread_id=t.id AND mine.user_id=?
   LEFT JOIN chat_thread_members opposite ON opposite.thread_id=t.id AND opposite.user_id<>? AND t.kind='direct'
   LEFT JOIN users peer ON peer.id=opposite.user_id ORDER BY t.updated_at DESC,t.id DESC LIMIT 200");
- $stmt->execute([$owner,$owner]);$out=[];
- foreach($stmt->fetchAll(PDO::FETCH_ASSOC)as$r) {
+ $stmt->execute([$owner,$owner]);$out=[];$threads=$stmt->fetchAll(PDO::FETCH_ASSOC);
+ $lastIds=array_values(array_filter(array_column($threads,'last_message_id')));$statuses=[];
+ if($lastIds){$marks=implode(',',array_fill(0,count($lastIds),'?'));foreach(chatMessageRows($pdo,"m.id IN ($marks)",$lastIds,200,true,true)as$row)$statuses[$row['id']]=chatMessageStatus($row,$owner);}
+ foreach($threads as$r) {
   $date=chatTimeFields($r['last_message_at'],$zone,$timestampColumn?$r['last_message_epoch']:null);
   $out[]=['id'=>(string)$r['id'],'type'=>$r['kind'],'name'=>$r['kind']==='direct'?($r['peer_name']?:'Contacto'):($r['group_name']?:'Grupo'),
    'targetUserId'=>$r['target_user_id']!==null?(string)$r['target_user_id']:null,'callsign'=>$r['callsign'],'unit'=>$r['unit'],'participantCount'=>(int)$r['participants'],
    'isOnline'=>$r['status']==='online'||$r['status']==='transmitting','lastMessage'=>$r['last_message']?:'',
    'lastMessageTime'=>$date['timestamp'],'lastMessageAt'=>$date['sent_at']];
+  $out[count($out)-1]['lastMessageStatus']=$statuses[$r['last_message_id']]??null;
  }
  return $out;
 }
@@ -36,16 +41,19 @@ if(!is_array($data))chatRespond(400,['success'=>false,'message'=>'Solicitud inv�
 $action=$method==='GET'?($_GET['action']??'threads'):($data['action']??'');
 try {
  $zone=chatStorageTimeZone($pdo,$timestampColumn);
- if($method==='GET'&&$action==='threads')chatRespond(200,['success'=>true,'time_zone'=>$zone,'threads'=>chatThreads($pdo,$owner,$zone,$timestampColumn)]);
+ if($method==='GET'&&$action==='threads')chatRespond(200,['success'=>true,'time_zone'=>$zone,'features'=>['receipts','idempotentSend'],'threads'=>chatThreads($pdo,$owner,$zone,$timestampColumn)]);
  if($method==='GET'&&$action==='messages') {
   $id=$_GET['thread_id']??'';if(!chatString($id,64)||$id==='')chatRespond(422,['success'=>false,'message'=>'Conversación inválida.']);
   if(!chatIsMember($pdo,$id,$owner))chatRespond(403,['success'=>false,'message'=>'No tienes acceso a esta conversación.']);
-  $stmt=$pdo->prepare('SELECT m.id,m.sender_id,u.name AS sender_name,u.callsign AS sender_callsign,m.content,m.media_type,m.media_url,m.file_name,m.created_at,UNIX_TIMESTAMP(m.created_at) AS sent_epoch FROM chat_thread_messages m LEFT JOIN users u ON u.id=m.sender_id WHERE m.thread_id=? ORDER BY m.created_at DESC,m.id DESC LIMIT 100');
-  $stmt->execute([$id]);$rows=array_reverse($stmt->fetchAll(PDO::FETCH_ASSOC));$messages=[];
-  foreach($rows as$m)$messages[]=array_merge(['id'=>(string)$m['id'],'sender_id'=>(string)$m['sender_id'],'sender_name'=>$m['sender_name']?:'Oficial','sender_callsign'=>$m['sender_callsign']?:'',
-   'text'=>$m['content'],'mediaType'=>$m['media_type'],'mediaUrl'=>$m['media_url'],'fileName'=>$m['file_name'],'created_at'=>$m['created_at']],chatTimeFields($m['created_at'],$zone,$timestampColumn?$m['sent_epoch']:null));
+  $rows=chatMessageRows($pdo,'m.thread_id=?',[$id]);
+  $messages=array_map(fn($row)=>chatMessageDto($row,$zone,$timestampColumn,$owner),$rows);
   chatRespond(200,['success'=>true,'time_zone'=>$zone,'messages'=>$messages]);
  }
+ if($method==='GET'&&$action==='inbox') {
+  $rows=chatMessageRows($pdo,'m.sender_id<>? AND EXISTS(SELECT 1 FROM chat_thread_members cm WHERE cm.thread_id=m.thread_id AND cm.user_id=?) AND NOT EXISTS(SELECT 1 FROM chat_message_receipts r WHERE r.message_id=m.id AND r.user_id=?)',[$owner,$owner,$owner],20,false);
+  chatRespond(200,['success'=>true,'time_zone'=>$zone,'messages'=>array_map(fn($row)=>chatMessageDto($row,$zone,$timestampColumn,$owner),$rows)]);
+ }
+ if($method==='POST'&&$action==='receipts') chatRespond(200,chatAcknowledge($pdo,$data,$owner));
  if($method==='POST'&&$action==='direct') {
   $peer=$data['target_user_id']??'';if(!chatString($peer,64)||$peer===''||$peer===$owner)chatRespond(422,['success'=>false,'message'=>'Selecciona otro usuario con cuenta registrada.']);
   $stmt=$pdo->prepare('SELECT 1 FROM users WHERE id=? LIMIT 1');$stmt->execute([$peer]);if(!$stmt->fetchColumn())chatRespond(404,['success'=>false,'message'=>'El contacto no tiene una cuenta disponible.']);
@@ -72,13 +80,23 @@ try {
   if(in_array($type,['image','document'],true)&&(!is_string($media)||!preg_match('/^data:[^;,]+;base64,/i',$media)))chatRespond(422,['success'=>false,'message'=>'El archivo adjunto no tiene un formato válido.']);
   if($type==='location'&&$media!==null&&!preg_match('#^https://www\.google\.com/maps\?q=#',$media))chatRespond(422,['success'=>false,'message'=>'El enlace de ubicación no es válido.']);
   if(!chatIsMember($pdo,$thread,$owner))chatRespond(403,['success'=>false,'message'=>'No perteneces a esta conversación.']);
-  $id='cm-'.bin2hex(random_bytes(16));$created=chatStorageNow($zone);$pdo->beginTransaction();
+  $client=$data['client_message_id']??null;
+  if($client!==null&&(!is_string($client)||!preg_match('/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/D',$client)))chatRespond(422,['success'=>false,'message'=>'Identificador de envío inválido.']);
+  $id=$client===null?'cm-'.bin2hex(random_bytes(16)):'cm-'.substr(hash('sha256',$owner.':'.$client),0,32);
+  $created=chatStorageNow($zone);$pdo->beginTransaction();
+  // Reintentos y dos ventanas comparten un único envío por cuenta/client ID.
+  $stmt=$pdo->prepare('SELECT id FROM users WHERE id=? FOR UPDATE');$stmt->execute([$owner]);
+  $stmt=$pdo->prepare('SELECT * FROM chat_thread_messages WHERE id=?');$stmt->execute([$id]);$existing=$stmt->fetch(PDO::FETCH_ASSOC);
+  if($existing){
+   if((string)$existing['sender_id']!==$owner||$existing['thread_id']!==$thread||$existing['content']!==$text||$existing['media_type']!==$type||$existing['media_url']!==$media||$existing['file_name']!==$file){$pdo->rollBack();chatRespond(409,['success'=>false,'message'=>'El identificador ya pertenece a otro mensaje.']);}
+   $pdo->commit();$row=chatMessageRows($pdo,'m.id=?',[$id],1)[0];chatRespond(200,array_merge(['success'=>true],chatMessageDto($row,$zone,$timestampColumn,$owner)));
+  }
   $args=[$id,$thread,$owner,$text,$type,$media,$file];if(!$timestampColumn)$args[]=$created;
   $pdo->prepare('INSERT INTO chat_thread_messages(id,thread_id,sender_id,content,media_type,media_url,file_name,created_at)VALUES(?,?,?,?,?,?,?,'.($timestampColumn?'CURRENT_TIMESTAMP(6)':'?').')')->execute($args);
   $pdo->prepare('UPDATE chat_threads SET updated_at=CURRENT_TIMESTAMP(6) WHERE id=?')->execute([$thread]);
   // La confirmación usa exactamente la fecha persistida, igual que el sondeo.
   $stmt=$pdo->prepare('SELECT created_at,UNIX_TIMESTAMP(created_at) AS sent_epoch FROM chat_thread_messages WHERE id=?');$stmt->execute([$id]);$saved=$stmt->fetch(PDO::FETCH_ASSOC);$pdo->commit();
-  chatRespond(201,array_merge(['success'=>true,'id'=>$id,'created_at'=>$saved['created_at']],chatTimeFields($saved['created_at'],$zone,$timestampColumn?$saved['sent_epoch']:null)));
+  chatRespond(201,array_merge(['success'=>true,'id'=>$id,'status'=>'sent','created_at'=>$saved['created_at']],chatTimeFields($saved['created_at'],$zone,$timestampColumn?$saved['sent_epoch']:null)));
  }
  chatRespond(405,['success'=>false,'message'=>'Acción de chat no soportada.']);
 }catch(Throwable$error) {

@@ -13,8 +13,9 @@ $sql=file_get_contents(__DIR__.'/../../backend-alwaysdata/migrations/005_account
 foreach(explode(';',$sql) as $statement) if(trim($statement)!=='') $db->exec($statement);
 $presenceSql=file_get_contents(__DIR__.'/../../backend-alwaysdata/migrations/007_chat_presence.sql');
 foreach(explode(';',$presenceSql) as $statement) if(trim($statement)!=='') $db->exec($statement);
-foreach(['chat_thread_messages','chat_thread_members','chat_threads']as$table){$q=$db->prepare('SELECT 1 FROM information_schema.TABLES WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=?');$q->execute([$table]);if($q->fetchColumn())$db->exec('DELETE FROM '.$table);}
-foreach(['account_presence','account_privacy','account_avatars','user_settings','channel_members','channels','auth_sessions','contactos','users'] as $table) $db->exec('DELETE FROM '.$table);
+$receiptMigration=explode(';',file_get_contents(__DIR__.'/../../backend-alwaysdata/migrations/008_chat_receipts.sql'));$db->exec($receiptMigration[0]);
+foreach(['chat_message_receipts','chat_thread_messages','chat_thread_members','chat_threads']as$table){$q=$db->prepare('SELECT 1 FROM information_schema.TABLES WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=?');$q->execute([$table]);if($q->fetchColumn())$db->exec('DELETE FROM '.$table);}
+foreach(['account_read_privacy','account_presence','account_privacy','account_avatars','user_settings','channel_members','channels','auth_sessions','contactos','users'] as $table) $db->exec('DELETE FROM '.$table);
 foreach([['account-a','7710000301','Prueba Perfil A'],['account-b','7710000302','Prueba Perfil B'],['account-c','7710000303','Prueba Perfil C']] as $user) $db->prepare('INSERT INTO users(id,phone_number,name,password_hash,correo,unit,role,callsign,status) VALUES(?,?,?,?,?,?,?,?,?)')->execute([$user[0],$user[1],$user[2],password_hash('profile-test-password',PASSWORD_BCRYPT,['cost'=>4]),$user[0].'@example.test','Unidad de pruebas','Oficial de Radio',strtoupper($user[0]),'online']);
 $db->exec("INSERT INTO channels(id,name,access_code,created_by) VALUES('account-group','GRUPO DE PRUEBA DE PERFIL','8383','account-a')");
 $db->exec("INSERT INTO channel_members(id,channel_id,user_id) VALUES('acm-a','account-group','account-a'),('acm-b','account-group','account-b')");

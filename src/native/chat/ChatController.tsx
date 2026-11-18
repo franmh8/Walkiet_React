@@ -4,6 +4,10 @@
  * La pantalla principal conserva únicamente navegación e integración de adjuntos.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { randomUUID } from 'expo-crypto';
+import { serverMessageId } from './chatMessageId';
+import { useChatOutbox } from './useChatOutbox';
+import type { OutboxEntry } from './chatOutbox';
 import { chatTime } from './chatDates';
 import type { AlertButton } from 'react-native';
 import { createChatSyncApi, type ChatThreadDto, type ChatMessageDto } from '../../services/chatSyncApi';
@@ -51,16 +55,38 @@ export function useChatController({ serverUrl, currentUser, showAlert, playMessa
     targetUserId: t.targetUserId || undefined,
     participantCount: t.participantCount || 0,
     lastMessage: t.lastMessage || '', lastMessageTime: chatTime(t.lastMessageAt, t.lastMessageTime || ''),
-    unreadCount: 0, messages: [],
+    unreadCount: 0, lastMessageStatus: t.lastMessageStatus || undefined, messages: [],
   }), []);
 
   const fromServerMessage = useCallback((m: ChatMessageDto): ChatMessage => ({
     id: m.id, senderId: m.sender_id, senderName: m.sender_name || 'Oficial',
     senderCallsign: m.sender_callsign || undefined, text: m.text || '',
     timestamp: chatTime(m.sentAt, m.timestamp), sentAt: m.sentAt || null, isSelf: m.sender_id === currentUser?.id,
-    status: 'sent', mediaType: m.mediaType || 'text',
+    status: m.status || 'sent', mediaType: m.mediaType || 'text',
     mediaUrl: m.mediaUrl || undefined, fileName: m.fileName || undefined,
   }), [currentUser?.id]);
+
+  const outbox=useChatOutbox(serverUrl,currentUser?.id||'',chatApi,(entry,saved)=>{
+    const user=currentUser;if(!user)return;
+    const message:ChatMessage={id:saved.id,senderId:user.id,senderName:user.name,text:entry.text,
+      timestamp:chatTime(saved.sentAt||entry.queuedAt),sentAt:saved.sentAt||entry.queuedAt,isSelf:true,status:saved.status||'sent',
+      mediaType:entry.mediaType,mediaUrl:entry.mediaUrl,fileName:entry.fileName};
+    const append=(c:Conversation)=>({...c,messages:c.messages.some(m=>m.id===message.id)?c.messages:[...c.messages,message],lastMessage:message.text,lastMessageTime:message.timestamp,lastMessageStatus:message.status});
+    setActiveConversation(c=>c?.id===entry.threadId?append(c):c);
+    setConversations(old=>old.map(c=>c.id===entry.threadId?append(c):c));
+  });
+  const pendingMessages=(threadId:string,known:ChatMessage[]):ChatMessage[]=>outbox.entries.filter(entry=>entry.threadId===threadId&&!known.some(message=>message.id===entry.serverId)).map(entry=>({
+    id:'pending-'+entry.clientId,clientId:entry.clientId,senderId:currentUser?.id||'',senderName:currentUser?.name||'',
+    text:entry.text,timestamp:chatTime(entry.queuedAt),sentAt:entry.queuedAt,isSelf:true,status:entry.failure?'failed':'pending',
+    mediaType:entry.mediaType,mediaUrl:entry.mediaUrl,fileName:entry.fileName,
+  }));
+  const decorate=(conversation:Conversation):Conversation=>{
+    const pending=pendingMessages(conversation.id,conversation.messages);const last=pending[pending.length-1];
+    return {...conversation,messages:[...conversation.messages.filter(message=>!message.clientId),...pending],...(last?{lastMessage:last.text,lastMessageTime:last.timestamp,lastMessageStatus:last.status}:{})};
+  };
+  const allConversations=conversations.map(decorate);
+  for(const entry of outbox.entries)if(!allConversations.some(c=>c.id===entry.threadId))allConversations.push(decorate({...entry.conversation,lastMessage:'',lastMessageTime:'',unreadCount:0,messages:[]}));
+  const displayedActive=activeConversation?decorate(activeConversation):null;
 
   // Lista persistente de conversaciones por cuenta; también descubre chats entrantes.
   useEffect(() => {
@@ -127,17 +153,17 @@ export function useChatController({ serverUrl, currentUser, showAlert, playMessa
     return () => { disposed = true; clearInterval(timer); };
   }, [chatApi, activeConversation?.id, fromServerMessage]);
 
-  const filteredConversations = useMemo(() => conversations.filter(c => {
+  const filteredConversations = useMemo(() => allConversations.filter(c => {
     if (selectedChatFilter === 'Grupos' && c.type !== 'group') return false;
     if (selectedChatFilter === 'Directos' && c.type !== 'direct') return false;
     const q = chatSearchQuery.trim().toLowerCase();
     return !q || c.name.toLowerCase().includes(q) ||
       Boolean(c.callsign?.toLowerCase().includes(q)) || c.lastMessage.toLowerCase().includes(q);
-  }), [conversations, selectedChatFilter, chatSearchQuery]);
+  }), [allConversations, selectedChatFilter, chatSearchQuery]);
 
-  const totalChatCount = conversations.length;
-  const groupsChatCount = conversations.filter(c => c.type === 'group').length;
-  const directChatCount = conversations.filter(c => c.type === 'direct').length;
+  const totalChatCount = allConversations.length;
+  const groupsChatCount = allConversations.filter(c => c.type === 'group').length;
+  const directChatCount = allConversations.filter(c => c.type === 'direct').length;
 
   const handleStartDirectChat = async (officer: ContactOfficer): Promise<boolean> => {
     if (!officer.registered_user_id) {
@@ -217,28 +243,20 @@ export function useChatController({ serverUrl, currentUser, showAlert, playMessa
     }
     const scope = chatSessionScopeRef.current;
     try {
-      const saved = await chatApi.sendMessage(conv.id, mediaType, caption, mediaUrl, fileName);
-      if (chatSessionScopeRef.current !== scope) return false;
-      const newMsg: ChatMessage = {
-        id: saved.id, senderId: user.id, senderName: user.name,
-        senderCallsign: user.callsign || user.badge, text: caption,
-        sentAt: saved.sentAt || new Date().toISOString(),
-        timestamp: chatTime(saved.sentAt || new Date().toISOString()),
-        isSelf: true, status: 'sent', mediaType, mediaUrl, fileName, locationCoords: coords,
-      };
-      const append = (c: Conversation): Conversation => ({
-        ...c, lastMessage: caption, lastMessageTime: newMsg.timestamp,
-        messages: c.messages.some(m => m.id === newMsg.id) ? c.messages : [...c.messages, newMsg],
-      });
-      setActiveConversation(prev => prev?.id === conv.id ? append(prev) : prev);
-      setConversations(prev => prev.map(c => c.id === conv.id ? append(c) : c));
+      const clientId=randomUUID().toLowerCase();
+      const serverId=await serverMessageId(user.id,clientId);
+      const entry:OutboxEntry={clientId,serverId,threadId:conv.id,
+        conversation:{id:conv.id,type:conv.type,name:conv.name,targetUserId:conv.targetUserId},
+        mediaType,text:caption,mediaUrl,fileName,queuedAt:new Date().toISOString()};
+      await outbox.enqueue(entry);
+      if(chatSessionScopeRef.current!==scope)return false;
       setChatSyncError(null);
       try { playMessageSound(); } catch {}
       return true;
     } catch (error: any) {
       if (chatSessionScopeRef.current !== scope) return false;
       setChatSyncError(error?.message || 'Error guardando el mensaje.');
-      showAlert('No se guardó el mensaje', error?.message || 'Revisa la conexión y vuelve a intentar.');
+      showAlert('No se pudo guardar el envío pendiente', error?.message || 'Revisa la conexión y vuelve a intentar.');
       return false;
     }
   };
@@ -254,7 +272,8 @@ export function useChatController({ serverUrl, currentUser, showAlert, playMessa
     prev.includes(id) ? prev.filter(value => value !== id) : [...prev, id]);
 
   return {
-    conversations, setConversations, activeConversation, setActiveConversation,
+    conversations:allConversations, setConversations, activeConversation:displayedActive, setActiveConversation,
+    chatApi, retryPending:outbox.retry,
     chatSearchQuery, setChatSearchQuery, selectedChatFilter, setSelectedChatFilter,
     chatDraftMessage, setChatDraftMessage,
     isNewChatModalOpen, setIsNewChatModalOpen,
@@ -262,7 +281,7 @@ export function useChatController({ serverUrl, currentUser, showAlert, playMessa
     newGroupName, setNewGroupName,
     selectedGroupMembers, setSelectedGroupMembers,
     createGroupError, setCreateGroupError,
-    chatSyncError, setChatSyncError,
+    chatSyncError:outbox.error||chatSyncError, setChatSyncError,
     filteredConversations, totalChatCount, groupsChatCount, directChatCount,
     handleStartDirectChat, handleCreateGroupChatSubmit, handleContactUpdated,
     sendMediaMessage, handleSendChatMessage, toggleGroupMemberSelection,
