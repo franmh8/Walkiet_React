@@ -14,6 +14,7 @@ export interface ChatThreadDto {
   lastMessage?: string;
   lastMessageTime?: string;
   lastMessageAt?: string | null;
+  hasMessages?: boolean;
   lastMessageStatus?: MessageStatus | null;
 }
 
@@ -107,6 +108,9 @@ export function createChatSyncApi(baseUrl: string, token: string, fetcher: typeo
       return data.threads.map((thread: any) => {
         const id = peerId(thread?.id); if (!id || !['direct','group'].includes(thread.type)) throw new Error('El servidor devolvió una conversación inválida.');
         return { ...thread, id, targetUserId: peerId(thread.targetUserId),
+          // Compatibilidad con el PHP anterior: un adjunto sin texto también
+          // tiene fecha/hora. No usar el guion de presentación como prueba.
+          hasMessages: typeof thread.hasMessages === 'boolean' ? thread.hasMessages : Boolean(thread.lastMessageAt || thread.last_message_at || thread.lastMessageTime || thread.lastMessage),
           lastMessageAt: chatInstant({ sentAt: thread.lastMessageAt, created_at: thread.last_message_at, timestamp: thread.lastMessageTime, time_zone: thread.time_zone }, (data as any).time_zone || (data as any).timezone || legacyZone) };
       });
     },
