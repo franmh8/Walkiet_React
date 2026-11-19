@@ -53,6 +53,17 @@
           "enableBackgroundRecording": false,
           "enableBackgroundPlayback": false
         }
+      ],
+      [
+        "expo-media-library",
+        {
+          "photosPermission": "Permite seleccionar fotos para compartirlas en una conversación.",
+          "savePhotosPermission": "Permite guardar en Fotos las imágenes nuevas del chat si activas esta opción.",
+          "granularPermissions": [
+            "photo"
+          ],
+          "isAccessMediaLocationEnabled": false
+        }
       ]
     ]
   }

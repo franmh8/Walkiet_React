@@ -8,8 +8,9 @@ export interface AccountSettings {
   backgroundNotifications: boolean;
   showLastSeen: boolean;
   readReceipts: boolean;
+  autoSavePhotos: boolean;
 }
-export const defaultAccountSettings: AccountSettings = { theme: 'system', pttMode: 'hold', messageSounds: true, rogerBeep: true, backgroundNotifications: false, showLastSeen: true, readReceipts: true };
+export const defaultAccountSettings: AccountSettings = { theme: 'system', pttMode: 'hold', messageSounds: true, rogerBeep: true, backgroundNotifications: false, showLastSeen: true, readReceipts: true, autoSavePhotos: true };
 export interface AccountUser {
   id: string; name: string; phone_number: string; correo: string | null; unit: string; role: string; callsign: string; avatar_url: string | null;
 }
@@ -37,7 +38,7 @@ export function createAccountApi(baseUrl: string, token: string, fetcher: typeof
   async function snapshot(action: string, payload: object = {}): Promise<AccountSnapshot> {
     const data = await request(action, payload);
     if (!data.user?.id || typeof data.user.name !== 'string' || !['light','dark','system'].includes(data.settings?.theme) || !['hold','toggle'].includes(data.settings?.pttMode)) throw new Error('El servidor devolvió un perfil no válido.');
-    return { ...data, settings: { ...defaultAccountSettings, ...data.settings } };
+    return { ...data, settings: { ...defaultAccountSettings, ...data.settings, autoSavePhotos: typeof data.settings.autoSavePhotos === 'boolean' ? data.settings.autoSavePhotos : false } };
   }
   return { get: () => snapshot('get'), update: (fields: Partial<Pick<AccountUser, 'name'|'unit'>>) => snapshot('update', { fields }),
     settings: (settings: Partial<AccountSettings>) => snapshot('settings', { settings }), avatar: (image: string | null) => snapshot('avatar', { image }),

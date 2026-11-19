@@ -7,6 +7,7 @@ export interface OutboxEntry {
   mediaType: 'text' | 'image' | 'voice' | 'location' | 'document';
   mediaUrl?: string;
   fileName?: string;
+  saveImage?: boolean;
   queuedAt: string;
   failure?: string;
 }
