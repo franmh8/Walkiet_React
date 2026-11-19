@@ -9,7 +9,7 @@
       "supportsTablet": true,
       "bundleIdentifier": "com.c5i.hidalgo.walkiet",
       "infoPlist": {
-        "NSMicrophoneUsageDescription": "Esta app requiere acceso al micrófono para la transmisión táctica de radio PTT.",
+        "NSMicrophoneUsageDescription": "Permite grabar notas de voz en los chats y transmitir por radio PTT cuando tú lo decidas.",
         "NSLocationWhenInUseUsageDescription": "Permite compartir tu ubicación actual en una conversación cuando tú lo decidas."
       }
     },
@@ -45,7 +45,15 @@
           "locationWhenInUsePermission": "Permite compartir tu ubicación actual en una conversación cuando tú lo decidas."
         }
       ],
-      "expo-sharing"
+      "expo-sharing",
+      [
+        "expo-audio",
+        {
+          "microphonePermission": "Permite grabar notas de voz en los chats y transmitir por radio PTT cuando tú lo decidas.",
+          "enableBackgroundRecording": false,
+          "enableBackgroundPlayback": false
+        }
+      ]
     ]
   }
 }
