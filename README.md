@@ -81,6 +81,7 @@ archivos privados del servidor y no se comparten mediante Git.
 - [Perfil y ajustes](backend-alwaysdata/PERFIL_DESPLIEGUE.md)
 - [Diseño uniforme de avisos y modales](backend-alwaysdata/DIALOGOS_DISENO_GUIA.md)
 - [Fotos de perfil visibles en chats y contactos](backend-alwaysdata/FOTOS_CHAT_DESPLIEGUE.md)
+- [Notas de voz: grabar al mantener, enviar al soltar y reproducir](backend-alwaysdata/CHAT_VOZ_DESPLIEGUE.md)
 - [Verificación de correo y recuperación de acceso](backend-alwaysdata/CORREO_SEGURIDAD_DESPLIEGUE.md)
 - [Envío mediante Gmail SMTP](backend-alwaysdata/SMTP_GMAIL_DESPLIEGUE.md)
 - [Actualizar códigos a 3 minutos](backend-alwaysdata/ACTUALIZACION_CODIGOS_3_MINUTOS.md)

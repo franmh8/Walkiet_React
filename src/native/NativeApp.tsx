@@ -21,6 +21,10 @@ import { safeStorage } from './storage';
 import { MessageReceipt, type MessageStatus } from './chat/MessageReceipt';
 import { useVisibleChatMessages } from './chat/useVisibleChatMessages';
 import { useChatAcknowledgements } from './chat/useChatAcknowledgements';
+import {useVoiceNote} from './chat/voice/useVoiceNote';
+import {VoiceRecordButton} from './chat/voice/VoiceRecordButton';
+import {VoiceNotePlayer} from './chat/voice/VoiceNotePlayer';
+import {voiceTime} from './chat/voice/voiceTypes';
 import { useChatController } from './chat/ChatController';
 import { ChatDateSeparator } from './chat/ChatDateSeparator';
 import { chatDay } from './chat/chatDates';
@@ -420,6 +424,11 @@ function NativeAppScreen() {
   // Conversaciones y mensajes: useChatController (src/native/chat).
 
   const radio = useLiveRadio(serverUrl, currentUser?.id || '', currentUser?.authToken || '', selectedChannel);
+  const voiceEnabled=currentTab==='Chat'&&!!activeConversation&&!isAttachMenuOpen&&!isLiveCameraModalOpen&&!isNewChatModalOpen&&!isCreateGroupChatModalOpen;
+  const voice=useVoiceNote(JSON.stringify([serverUrl,currentUser?.id,currentUser?.authToken,activeConversation?.id]),voiceEnabled,
+    clip=>sendMediaMessage('voice',`Nota de voz (${voiceTime(Math.max(1,Math.ceil(clip.durationMs/1000)))})`,clip.dataUrl,clip.fileName),
+    ()=>radio.disconnect(),message=>showNativeAlert('Nota de voz',message));
+
   useEffect(() => { soundEngine.setRadioActive(radio.state !== 'off'); }, [radio.state]);
   const notificationSession = useRef('');
   notificationSession.current = JSON.stringify([serverUrl, currentUser?.id, currentUser?.authToken]);
@@ -883,16 +892,6 @@ function NativeAppScreen() {
   };
 
   // Envío de mensajes: useChatController.
-
-  // Envío dinámico de nota de voz (cuando no hay texto escrito en el input)
-  const handleSendVoiceNote = () => {
-    if (!activeConversation) return;
-    soundEngine.playPttStart();
-    setTimeout(() => {
-      soundEngine.playRogerBeep();
-      sendMediaMessage('voice', '🔊 Mensaje de Voz PTT (0:04)');
-    }, 450);
-  };
 
   // Fotos: selector web en navegador y biblioteca del teléfono en Android/iOS.
   const handlePickPhoto = async () => {
@@ -2062,18 +2061,8 @@ const position =
                                   </Text>
                                 </TouchableOpacity>
                               ) : msg.mediaType === 'voice' ? (
-                                <View style={styles.chatBubbleVoiceBox}>
-                                  <MicIcon size={18} color={isSelf ? '#ffffff' : '#8a1a36'} />
-                                  <Text
-                                    style={[
-                                      styles.chatBubbleText,
-                                      styles.chatBubbleVoiceText,
-                                      isSelf ? styles.chatBubbleTextSelf : styles.chatBubbleTextOther,
-                                    ]}
-                                  >
-                                    {msg.text}
-                                  </Text>
-                                </View>
+                                <VoiceNotePlayer dataUrl={msg.mediaUrl} label={msg.text||'Nota de voz'} isSelf={isSelf}
+                                  enabled={voiceEnabled&&voice.state.phase==='idle'} beforePlay={()=>radio.disconnect()}/>
                               ) : (
                                 <Text
                                   style={[
@@ -2137,6 +2126,13 @@ const position =
                   keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
                 >
                   <View style={styles.chatInputBarWrapper}>
+                    <View style={{flexDirection:'row',alignItems:'center',justifyContent:'space-between',paddingHorizontal:14,paddingBottom:6,gap:10}}>
+                      <Text accessibilityLiveRegion="polite" testID="voice-recording-status" style={{fontSize:12,color:voice.state.phase==='recording'?palette.accent:palette.muted,flex:1}}>
+                        {voice.state.phase==='recording'?`● Grabando ${voiceTime(voice.state.durationMs/1000)} · Suelta para enviar`:voice.state.phase==='preparing'?'Preparando micrófono… Mantén presionado':voice.state.phase==='processing'?'Guardando audio…':voice.state.phase==='retry'?'Audio pendiente de guardar':'Mantén presionado el micrófono para grabar · Máx. 1 min'}
+                      </Text>
+                      {(voice.state.phase==='preparing'||voice.state.phase==='recording'||voice.state.phase==='retry')&&<TouchableOpacity accessibilityLabel="Cancelar nota de voz" onPress={voice.cancel}><Text style={{color:palette.accent,fontSize:12,fontWeight:'700'}}>Cancelar</Text></TouchableOpacity>}
+                      {voice.state.phase==='retry'&&<TouchableOpacity accessibilityLabel="Reintentar envío de audio" onPress={voice.retry}><Text style={{color:palette.accent,fontSize:12,fontWeight:'700'}}>Reintentar</Text></TouchableOpacity>}
+                    </View>
                     <View style={styles.chatInputBar}>
                       {/* Botón Clip para desplegar el menú de adjuntos */}
                       <TouchableOpacity
@@ -2162,6 +2158,7 @@ const position =
                       <TextInput
                         style={styles.chatTextInput}
                         value={chatDraftMessage}
+                        editable={voice.state.phase==='idle'}
                         onChangeText={setChatDraftMessage}
                         placeholder="Escribe un mensaje de radio..."
                         placeholderTextColor="#94a3b8"
@@ -2179,14 +2176,11 @@ const position =
                           <SendIcon size={18} color="#ffffff" />
                         </TouchableOpacity>
                       ) : (
-                        <TouchableOpacity
-                          style={[styles.chatDynamicBtn, styles.chatMicBtn]}
-                          onPress={handleSendVoiceNote}
-                          activeOpacity={0.8}
-                          accessibilityLabel="Enviar nota de voz"
-                        >
-                          <MicIcon size={20} color={palette.accent} strokeWidth={2.2} />
-                        </TouchableOpacity>
+                        <VoiceRecordButton style={[styles.chatDynamicBtn,styles.chatMicBtn,voice.state.phase==='recording'&&{backgroundColor:palette.accent}]}
+                          disabled={voice.state.phase==='processing'||voice.state.phase==='retry'} recording={voice.state.phase==='recording'||voice.state.phase==='preparing'}
+                          start={voice.start} finish={voice.finish} cancel={voice.cancel}>
+                          <MicIcon size={20} color={voice.state.phase==='recording'?'#ffffff':palette.accent} strokeWidth={2.2}/>
+                        </VoiceRecordButton>
                       )}
                     </View>
                   </View>

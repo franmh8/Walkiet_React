@@ -1,0 +1,12 @@
+import assert from 'node:assert/strict';
+const base=process.env.ACCOUNT_TEST_BACKEND;if(base!=='http://127.0.0.1:8103')throw Error('Usa solo contacts_test_account local.');
+const post=async(path,token,data)=>{const r=await fetch(base+path,{method:'POST',headers:{'Content-Type':'text/plain',...(token?{Authorization:'Bearer '+token}:{})},body:JSON.stringify(data)});return {status:r.status,body:await r.json()};};
+const login=async phone=>(await post('/login.php',null,{phone_number:phone,password:'profile-test-password'})).body.token;
+const a=await login('7710000301'),b=await login('7710000302'),c=await login('7710000303');
+const bytes=Buffer.alloc(44+24000);bytes.write('RIFF');bytes.writeUInt32LE(bytes.length-8,4);bytes.write('WAVEfmt ',8);bytes.writeUInt32LE(16,16);bytes.writeUInt16LE(1,20);bytes.writeUInt16LE(1,22);bytes.writeUInt32LE(12000,24);bytes.writeUInt32LE(24000,28);bytes.writeUInt16LE(2,32);bytes.writeUInt16LE(16,34);bytes.write('data',36);bytes.writeUInt32LE(24000,40);for(let i=0;i<12000;i++)bytes.writeInt16LE(Math.sin(i*2*Math.PI*440/12000)*16000,44+i*2);
+const audio='data:audio/wav;base64,'+bytes.toString('base64');
+const body={action:'send',thread_id:'timeline-thread',mediaType:'voice',text:'Nota de voz (0:01)',mediaUrl:audio,fileName:'synthetic.wav',client_message_id:'10000000-0000-4000-8000-000000000099'};
+for(const mediaUrl of [null,'blob:http://localhost/not-shared','file:///private/local.m4a','data:audio/wav;base64,ZmFrZQ==','data:text/html;base64,PHNjcmlwdD4='])assert.equal((await post('/chat-sync.php',a,{...body,mediaUrl})).status,422,'No admite alertas, archivos privados ni audio falso.');
+assert.equal((await post('/chat-sync.php',c,body)).status,403);const sent=await post('/chat-sync.php',a,body);assert.equal(sent.status,201);assert.equal((await post('/chat-sync.php',a,body)).status,200);
+const read=await fetch(base+'/chat-sync.php?action=messages&thread_id=timeline-thread',{headers:{Authorization:'Bearer '+b}});assert.equal(read.status,200);const messages=(await read.json()).messages;const item=messages.find(m=>m.id===sent.body.id);assert.equal(item.mediaUrl,audio);assert.equal(item.fileName,'synthetic.wav');assert.equal(messages.filter(m=>m.id===item.id).length,1);assert.equal(item.mediaType,'voice');
+console.log('OK voz HTTP: audio íntegro entre participantes, autorización, persistencia e idempotencia, rechazo de notas sin archivo o con datos incompatibles.');

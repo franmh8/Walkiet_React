@@ -1,0 +1,18 @@
+import assert from 'node:assert/strict';
+import {VoiceNoteSession} from '../src/native/chat/voice/VoiceNoteSession';
+import {voiceWav} from '../src/native/chat/voice/voiceWav';
+import type {VoiceCapture,VoiceClip} from '../src/native/chat/voice/voiceTypes';
+const clip:VoiceClip={dataUrl:'data:audio/wav;base64,c3ludGhldGlj',fileName:'synthetic.wav',durationMs:1000};
+let now=0,sent=0,cancelled=0,stopped=0,errors=0;
+const capture:VoiceCapture={stop:async()=>{stopped++;return clip;},cancel:async()=>{cancelled++;}};
+const options={capture:async()=>capture,send:async()=>{sent++;return true;},state:()=>{},error:()=>{errors++;},now:()=>now};
+const session=new VoiceNoteSession(options);await session.start();assert.equal(session.state.phase,'recording');now=1300;await session.finish();await session.finish();assert.equal(sent,1);assert.equal(stopped,1);assert.equal(session.state.phase,'idle');
+await session.start();now+=100;await session.finish();assert.equal(sent,1);assert.equal(cancelled,1,'Un toque corto no envía una falsa grabación.');
+let grant!:(value:VoiceCapture)=>void;const delayed=new VoiceNoteSession({...options,capture:()=>new Promise(resolve=>{grant=resolve;})});const preparing=delayed.start();await delayed.finish();grant(capture);await preparing;assert.equal(sent,1);assert.equal(cancelled,2,'Soltar durante permisos cancela el recurso tardío.');
+await session.start();now+=1000;session.cancel();await session.finish();assert.equal(sent,1);assert.equal(cancelled,3,'Salir del chat/fondo no envía.');
+let stopResolve!:(value:VoiceClip)=>void;const converting=new VoiceNoteSession({...options,capture:async()=>({...capture,stop:()=>new Promise(resolve=>{stopResolve=resolve;})})});await converting.start();now+=1200;const finishing=converting.finish();converting.cancel();stopResolve(clip);await finishing;assert.equal(sent,1,'Una conversión de la sesión anterior no envía a otra cuenta/chat.');
+let allowed=false;const retry=new VoiceNoteSession({...options,send:async()=>{if(!allowed)return false;sent++;return true;}});await retry.start();now+=1000;await retry.finish();assert.equal(retry.state.phase,'retry');allowed=true;retry.retry();await new Promise(resolve=>setTimeout(resolve,0));assert.equal(retry.state.phase,'idle');assert.equal(sent,2);
+const denied=new VoiceNoteSession({...options,capture:async()=>{throw Error('Sin permiso');}});await denied.start();assert.equal(denied.state.phase,'idle');assert.equal(errors,1);
+const samples=Float32Array.from({length:48000},(_,i)=>Math.sin(i*2*Math.PI*440/48000)*0.5);const wav=voiceWav([samples],48000),view=new DataView(wav.buffer);assert.equal(new TextDecoder().decode(wav.subarray(0,4)),'RIFF');assert.equal(view.getUint32(24,true),12000);assert.equal(wav.length,24044);assert.ok(Array.from(wav.subarray(44)).some(x=>x!==0),'Contiene muestras de audio.');
+const longest=voiceWav([new Float32Array(12000*61)],12000);assert.equal(longest.length,1440044);assert.ok(Math.ceil(longest.length/3)*4<2000000,'El audio máximo cabe en la fila de la cola nativa.');
+console.log('OK voz: grabación real vs toque corto, permisos tardíos, cancelación, cambio de sesión durante conversión, reintento y WAV mono compatible de hasta 60 s.');

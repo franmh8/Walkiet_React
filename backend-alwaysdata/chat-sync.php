@@ -6,6 +6,7 @@ require_once __DIR__.'/conexion.php';
 require_once __DIR__.'/auth-session.php';
 require_once __DIR__.'/chat-time.php';
 require_once __DIR__.'/chat-receipts.php';
+require_once __DIR__.'/chat-voice.php';
 header('Cache-Control: no-store');
 function chatRespond($status,array $body) { http_response_code($status); echo json_encode($body,JSON_UNESCAPED_UNICODE|JSON_INVALID_UTF8_SUBSTITUTE); exit(); }
 function chatString($value,$max=120) { return is_string($value)&&strlen($value)<=($max*4)&&(function_exists('mb_strlen')?mb_strlen($value)<=$max:strlen($value)<=($max*4)); }
@@ -79,6 +80,7 @@ try {
  if($method==='POST'&&$action==='send') {
   $thread=$data['thread_id']??'';$type=$data['mediaType']??'text';$text=$data['text']??'';$media=$data['mediaUrl']??null;$file=$data['fileName']??null;
   if(!chatString($thread,64)||$thread===''||!in_array($type,['text','image','voice','location','document'],true)||!chatString($text,10000)||!($media===null||is_string($media)&&strlen($media)<=5500000)||!($file===null||chatString($file,255)))chatRespond(422,['success'=>false,'message'=>'El mensaje es inválido o excede el tamaño permitido.']);
+  if($type==='voice'&&!chatValidVoice($media))chatRespond(422,['success'=>false,'message'=>'Graba una nota de voz válida de hasta un minuto. No se recibió un archivo de audio compatible.']);
   if($type==='text'&&trim($text)==='')chatRespond(422,['success'=>false,'message'=>'Escribe un mensaje.']);
   if(in_array($type,['image','document'],true)&&(!is_string($media)||!preg_match('/^data:[^;,]+;base64,/i',$media)))chatRespond(422,['success'=>false,'message'=>'El archivo adjunto no tiene un formato válido.']);
   if($type==='location'&&$media!==null&&!preg_match('#^https://www\.google\.com/maps\?q=#',$media))chatRespond(422,['success'=>false,'message'=>'El enlace de ubicación no es válido.']);
