@@ -42,6 +42,17 @@ export function createChatSyncApi(baseUrl: string, token: string, fetcher: typeo
   let supportsReceipts = false;
   let supportsIdempotentSend = false;
   let legacyZone: string | undefined;
+  // Por instancia autenticada: no compartir adjuntos entre cuentas/servidores.
+  const mediaCache = new Map<string, string>();
+  let cachedChars = 0;
+  const rememberMedia = (id: string, url: string) => {
+    cachedChars -= mediaCache.get(id)?.length || 0;
+    mediaCache.delete(id); mediaCache.set(id,url); cachedChars += url.length;
+    while(mediaCache.size>100 || cachedChars>8000000) {
+      const oldest=mediaCache.keys().next().value!;
+      cachedChars-=mediaCache.get(oldest)!.length; mediaCache.delete(oldest);
+    }
+  };
   try { if (new URL(base).hostname === 'walkiet.alwaysdata.net') legacyZone = 'Europe/Paris'; } catch {}
   async function request<T>(action: string, fields: Record<string, unknown> = {}, method: 'GET' | 'POST' = 'GET'): Promise<T> {
     let server: URL;
@@ -84,19 +95,27 @@ export function createChatSyncApi(baseUrl: string, token: string, fetcher: typeo
       clearTimeout(timeout);
     }
   }
-  const messages = (data: any): ChatMessageDto[] => {
+  const messages = (data: any, known = mediaCache): ChatMessageDto[] => {
     if (!Array.isArray(data.messages)) throw new Error('El servidor devolvió mensajes inválidos.');
     return data.messages.map((message: any) => {
       const id=peerId(message?.id), sender=peerId(message?.sender_id);
       if(!id||!sender)throw new Error('El servidor devolvió un mensaje inválido.');
       const status = ['sent','delivered','read'].includes(message.status) ? message.status : 'sent';
-      return {...message,id,sender_id:sender,status,sentAt:chatInstant(message,data.time_zone||data.timezone||data.server_timezone||legacyZone)};
+      const mediaUrl = message.media_unchanged ? known.get(id) : message.mediaUrl;
+      if(message.media_unchanged && !mediaUrl)throw new Error('No se pudo recuperar el archivo del mensaje.');
+      if(typeof mediaUrl==='string' && mediaUrl && /^[A-Za-z0-9_-]{1,64}$/.test(id)) {
+        rememberMedia(id,mediaUrl);
+      }
+      return {...message,mediaUrl,id,sender_id:sender,status,sentAt:chatInstant(message,data.time_zone||data.timezone||data.server_timezone||legacyZone)};
     });
   };
   return {
     get supportsReceipts() { return supportsReceipts; },
     get supportsIdempotentSend() { return supportsIdempotentSend; },
-    async inbox(): Promise<ChatMessageDto[]> { return messages(await request('inbox')); },
+    async inbox(): Promise<ChatMessageDto[]> {
+      const known=new Map(mediaCache);
+      return messages(await request('inbox',known.size?{known_media:[...known.keys()].join(',')}:{}),known);
+    },
     acknowledge(threadId: string, ids: string[], read=false): Promise<{read_recorded:boolean}> {
       return request('receipts',{thread_id:threadId,message_ids:ids,read},'POST');
     },
@@ -115,8 +134,9 @@ export function createChatSyncApi(baseUrl: string, token: string, fetcher: typeo
       });
     },
     async listMessages(threadId: string): Promise<ChatMessageDto[]> {
-      const data = await request<{ messages: ChatMessageDto[] }>('messages', { thread_id: threadId });
-      return messages(data);
+      const known=new Map(mediaCache);
+      const data = await request<{ messages: ChatMessageDto[] }>('messages', { thread_id: threadId, ...(known.size?{known_media:[...known.keys()].join(',')}:{}) });
+      return messages(data,known);
     },
     async startDirect(targetUserId: string): Promise<string> {
       const data = await request<{ thread_id: string }>('direct', { target_user_id: targetUserId }, 'POST');
@@ -131,6 +151,7 @@ export function createChatSyncApi(baseUrl: string, token: string, fetcher: typeo
         thread_id: threadId, mediaType, text, mediaUrl: mediaUrl ?? null, fileName: fileName ?? null, ...(clientId ? {client_message_id:clientId} : {}),
       }, 'POST');
       const id = peerId(data.id); if (!id) throw new Error('El servidor no confirmó el mensaje.');
+      if(mediaUrl)rememberMedia(id,mediaUrl);
       return { ...data, id, sentAt: chatInstant(data) };
     },
   };

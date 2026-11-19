@@ -1,7 +1,8 @@
 import {useEffect, useRef} from 'react';
-import {AppState, Platform} from 'react-native';
 import type {createChatSyncApi} from '../../services/chatSyncApi';
 import {chatForeground} from './useChatOutbox';
+import {startChatPolling} from './chatPoller';
+import {watchChatWake} from './chatWake';
 type Api=ReturnType<typeof createChatSyncApi>;
 export function useChatAcknowledgements(api:Api|null, threadId:string|undefined, visibleIds:string[], readReceipts:boolean) {
   const visible=useRef(visibleIds);visible.current=visibleIds;
@@ -20,12 +21,10 @@ export function useChatAcknowledgements(api:Api|null, threadId:string|undefined,
         const groups=new Map<string,string[]>();
         for(const message of incoming)if(message.thread_id)groups.set(message.thread_id,[...(groups.get(message.thread_id)||[]),message.id]);
         for(const [thread,ids] of groups){if(disposed||!chatForeground())break;await api.acknowledge(thread,ids);}
-      }catch{}finally{running=false;}
+      }catch{return false;}finally{running=false;}
     };
-    void poll();const timer=setInterval(()=>void poll(),4000);
-    const sub=AppState.addEventListener('change',()=>void poll());const wake=()=>void poll();
-    if(Platform.OS==='web'){window.addEventListener('online',wake);document.addEventListener('visibilitychange',wake);}
-    return()=>{disposed=true;clearInterval(timer);sub.remove();if(Platform.OS==='web'){window.removeEventListener('online',wake);document.removeEventListener('visibilitychange',wake);}};
+    const poller=startChatPolling(poll,chatForeground,1500),unwatch=watchChatWake(poller.wake);
+    return()=>{disposed=true;poller.stop();unwatch();};
   },[api]);
   const key=visibleIds.join('|');
   useEffect(()=>{
