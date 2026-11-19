@@ -11,6 +11,15 @@ header('Cache-Control: no-store');
 function chatRespond($status,array $body) { http_response_code($status); echo json_encode($body,JSON_UNESCAPED_UNICODE|JSON_INVALID_UTF8_SUBSTITUTE); exit(); }
 function chatString($value,$max=120) { return is_string($value)&&strlen($value)<=($max*4)&&(function_exists('mb_strlen')?mb_strlen($value)<=$max:strlen($value)<=($max*4)); }
 function chatIsMember(PDO $pdo,$thread,$owner) { $stmt=$pdo->prepare('SELECT 1 FROM chat_thread_members WHERE thread_id=? AND user_id=? LIMIT 1');$stmt->execute([$thread,$owner]);return (bool)$stmt->fetchColumn(); }
+function chatKnownMedia() {
+ $raw=$_GET['known_media']??'';
+ if(!is_string($raw)||strlen($raw)>6500)chatRespond(422,['success'=>false,'message'=>'Caché de archivos inválida.']);
+ if($raw==='')return [];
+ $ids=explode(',',$raw);
+ if(count($ids)>100)chatRespond(422,['success'=>false,'message'=>'Demasiados archivos en caché.']);
+ foreach($ids as$id)if(!preg_match('/^[A-Za-z0-9_-]{1,64}$/D',$id))chatRespond(422,['success'=>false,'message'=>'Archivo en caché inválido.']);
+ return array_values(array_unique($ids));
+}
 function chatThreads(PDO $pdo,$owner,$zone,$timestampColumn) {
  $stmt=$pdo->prepare("SELECT t.id,t.kind,t.name AS group_name,peer.id AS target_user_id,peer.name AS peer_name,personal.name AS contact_name,peer.callsign,peer.unit,peer.status,
   (SELECT COUNT(*) FROM chat_thread_members cm WHERE cm.thread_id=t.id) AS participants,
@@ -49,12 +58,12 @@ try {
  if($method==='GET'&&$action==='messages') {
   $id=$_GET['thread_id']??'';if(!chatString($id,64)||$id==='')chatRespond(422,['success'=>false,'message'=>'Conversación inválida.']);
   if(!chatIsMember($pdo,$id,$owner))chatRespond(403,['success'=>false,'message'=>'No tienes acceso a esta conversación.']);
-  $rows=chatMessageRows($pdo,'m.thread_id=?',[$id]);
+  $rows=chatMessageRows($pdo,'m.thread_id=?',[$id],100,true,false,chatKnownMedia());
   $messages=array_map(fn($row)=>chatMessageDto($row,$zone,$timestampColumn,$owner),$rows);
   chatRespond(200,['success'=>true,'time_zone'=>$zone,'messages'=>$messages]);
  }
  if($method==='GET'&&$action==='inbox') {
-  $rows=chatMessageRows($pdo,'m.sender_id<>? AND EXISTS(SELECT 1 FROM chat_thread_members cm WHERE cm.thread_id=m.thread_id AND cm.user_id=?) AND NOT EXISTS(SELECT 1 FROM chat_message_receipts r WHERE r.message_id=m.id AND r.user_id=?)',[$owner,$owner,$owner],20,false);
+  $rows=chatMessageRows($pdo,'m.sender_id<>? AND EXISTS(SELECT 1 FROM chat_thread_members cm WHERE cm.thread_id=m.thread_id AND cm.user_id=?) AND NOT EXISTS(SELECT 1 FROM chat_message_receipts r WHERE r.message_id=m.id AND r.user_id=?)',[$owner,$owner,$owner],20,false,false,chatKnownMedia());
   chatRespond(200,['success'=>true,'time_zone'=>$zone,'messages'=>array_map(fn($row)=>chatMessageDto($row,$zone,$timestampColumn,$owner),$rows)]);
  }
  if($method==='POST'&&$action==='receipts') chatRespond(200,chatAcknowledge($pdo,$data,$owner));

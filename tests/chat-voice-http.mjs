@@ -10,3 +10,15 @@ for(const mediaUrl of [null,'blob:http://localhost/not-shared','file:///private/
 assert.equal((await post('/chat-sync.php',c,body)).status,403);const sent=await post('/chat-sync.php',a,body);assert.equal(sent.status,201);assert.equal((await post('/chat-sync.php',a,body)).status,200);
 const read=await fetch(base+'/chat-sync.php?action=messages&thread_id=timeline-thread',{headers:{Authorization:'Bearer '+b}});assert.equal(read.status,200);const messages=(await read.json()).messages;const item=messages.find(m=>m.id===sent.body.id);assert.equal(item.mediaUrl,audio);assert.equal(item.fileName,'synthetic.wav');assert.equal(messages.filter(m=>m.id===item.id).length,1);assert.equal(item.mediaType,'voice');
 console.log('OK voz HTTP: audio íntegro entre participantes, autorización, persistencia e idempotencia, rechazo de notas sin archivo o con datos incompatibles.');
+const raw=async(token,action,extra={})=>fetch(base+'/chat-sync.php?'+new URLSearchParams({action,thread_id:'timeline-thread',...extra}),{headers:{Authorization:'Bearer '+token}});
+const fullText=await (await raw(b,'messages')).text();
+const compactText=await (await raw(b,'messages',{known_media:item.id})).text();
+const compact=JSON.parse(compactText).messages.find(m=>m.id===item.id);
+assert.equal(compact.mediaUrl,null);assert.equal(compact.media_unchanged,true);assert.equal(compact.id,item.id);
+for(let page=0;page<5;page++){const waiting=(await (await raw(b,'inbox')).json()).messages;if(waiting.some(m=>m.id===item.id))break;assert.ok(waiting.length);assert.equal((await post('/chat-sync.php',b,{action:'receipts',thread_id:'timeline-thread',message_ids:waiting.map(m=>m.id),read:false})).status,200);}
+const compactInbox=await (await raw(b,'inbox',{known_media:item.id})).json();assert.ok(compactInbox.messages.some(m=>m.id===item.id&&m.media_unchanged&&m.mediaUrl===null));
+assert.ok(Buffer.byteLength(compactText)<Buffer.byteLength(fullText)-audio.length+30,'No retransfiere los bytes de audio conocidos.');
+assert.equal((await raw(c,'messages',{known_media:item.id})).status,403,'La caché no elude la pertenencia al chat.');
+assert.equal((await raw(b,'messages',{known_media:'x,'.repeat(101)})).status,422);
+assert.equal((await raw(b,'messages',{known_media:"bad'quote"})).status,422);
+console.log('Audio conocido: respuesta',Buffer.byteLength(fullText),'→',Buffer.byteLength(compactText),'bytes; permisos e inbox conservados.');

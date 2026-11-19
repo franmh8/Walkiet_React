@@ -426,7 +426,7 @@ function NativeAppScreen() {
   const radio = useLiveRadio(serverUrl, currentUser?.id || '', currentUser?.authToken || '', selectedChannel);
   const voiceEnabled=currentTab==='Chat'&&!!activeConversation&&!isAttachMenuOpen&&!isLiveCameraModalOpen&&!isNewChatModalOpen&&!isCreateGroupChatModalOpen;
   const voice=useVoiceNote(JSON.stringify([serverUrl,currentUser?.id,currentUser?.authToken,activeConversation?.id]),voiceEnabled,
-    clip=>sendMediaMessage('voice',`Nota de voz (${voiceTime(Math.max(1,Math.ceil(clip.durationMs/1000)))})`,clip.dataUrl,clip.fileName),
+    clip=>sendMediaMessage('voice',`Nota de voz (${voiceTime(Math.max(1,Math.floor(clip.durationMs/1000)))})`,clip.dataUrl,clip.fileName),
     ()=>radio.disconnect(),message=>showNativeAlert('Nota de voz',message));
 
   useEffect(() => { soundEngine.setRadioActive(radio.state !== 'off'); }, [radio.state]);
@@ -1987,6 +1987,7 @@ const position =
                               style={[
                                 styles.chatBubble,
                                 isSelf ? styles.chatBubbleSelf : styles.chatBubbleOther,
+                                msg.mediaType === 'voice' && {width: '82%', maxWidth: 340, borderRadius: 20, paddingHorizontal: 10, paddingVertical: 8},
                               ]}
                             >
                               {!isSelf && activeConversation.type === 'group' && (
@@ -2062,7 +2063,9 @@ const position =
                                 </TouchableOpacity>
                               ) : msg.mediaType === 'voice' ? (
                                 <VoiceNotePlayer dataUrl={msg.mediaUrl} label={msg.text||'Nota de voz'} isSelf={isSelf}
-                                  enabled={voiceEnabled&&voice.state.phase==='idle'} beforePlay={()=>radio.disconnect()}/>
+                                  visible={chatVisible.ids.includes(msg.id)} name={isSelf ? currentUser?.name || 'Tú' : activeConversation.type === 'direct' ? activeConversation.name : msg.senderName}
+                                  avatarUri={isSelf ? account.user?.avatar_url : peerAvatars[msg.senderId]}
+                                  enabled={voiceEnabled&&voice.state.phase==='idle'} beforePlay={radio.disconnect}/>
                               ) : (
                                 <Text
                                   style={[
@@ -2126,13 +2129,13 @@ const position =
                   keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
                 >
                   <View style={styles.chatInputBarWrapper}>
-                    <View style={{flexDirection:'row',alignItems:'center',justifyContent:'space-between',paddingHorizontal:14,paddingBottom:6,gap:10}}>
+                    {voice.state.phase !== 'idle' && <View style={{flexDirection:'row',alignItems:'center',justifyContent:'space-between',paddingHorizontal:14,paddingBottom:6,gap:10}}>
                       <Text accessibilityLiveRegion="polite" testID="voice-recording-status" style={{fontSize:12,color:voice.state.phase==='recording'?palette.accent:palette.muted,flex:1}}>
-                        {voice.state.phase==='recording'?`● Grabando ${voiceTime(voice.state.durationMs/1000)} · Suelta para enviar`:voice.state.phase==='preparing'?'Preparando micrófono… Mantén presionado':voice.state.phase==='processing'?'Guardando audio…':voice.state.phase==='retry'?'Audio pendiente de guardar':'Mantén presionado el micrófono para grabar · Máx. 1 min'}
+                        {voice.state.phase==='recording'?`● Grabando ${voiceTime(voice.state.durationMs/1000)} · Suelta para enviar`:voice.state.phase==='preparing'?'Preparando micrófono…':voice.state.phase==='processing'?'Guardando audio…':voice.state.phase==='retry'?'Audio pendiente de guardar':''}
                       </Text>
                       {(voice.state.phase==='preparing'||voice.state.phase==='recording'||voice.state.phase==='retry')&&<TouchableOpacity accessibilityLabel="Cancelar nota de voz" onPress={voice.cancel}><Text style={{color:palette.accent,fontSize:12,fontWeight:'700'}}>Cancelar</Text></TouchableOpacity>}
                       {voice.state.phase==='retry'&&<TouchableOpacity accessibilityLabel="Reintentar envío de audio" onPress={voice.retry}><Text style={{color:palette.accent,fontSize:12,fontWeight:'700'}}>Reintentar</Text></TouchableOpacity>}
-                    </View>
+                    </View>}
                     <View style={styles.chatInputBar}>
                       {/* Botón Clip para desplegar el menú de adjuntos */}
                       <TouchableOpacity

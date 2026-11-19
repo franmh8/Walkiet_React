@@ -19,16 +19,16 @@ export function useChatOutbox(server: string, userId: string, api: Api|null, onS
   const active=useRef(scope);active.current=scope;
   const [error,setError]=useState<string|null>(null);
   useEffect(()=>{
-    let disposed=false,running=false;
+    let disposed=false,running=false,queuedWake=false;
     setState({scope,entries:[]});setError(null);
     if(!userId||!api)return;
     const refresh=async()=>{
       const entries=await store.list();
-      if(!disposed)setState(old=>old.scope===scope&&JSON.stringify(old.entries)===JSON.stringify(entries)?old:{scope,entries});
+      if(!disposed)setState(old=>old.scope===scope&&old.entries.length===entries.length&&old.entries.every((entry,i)=>entry.clientId===entries[i].clientId&&entry.failure===entries[i].failure)?old:{scope,entries});
       return entries;
     };
     const flush=async()=>{
-      if(disposed||running)return;running=true;
+      if(disposed)return;if(running){queuedWake=true;return;}running=true;
       try{
         const entries=await refresh();
         if(!chatForeground() || (Platform.OS==='web' && typeof navigator!=='undefined' && !navigator.onLine))return;
@@ -51,7 +51,7 @@ export function useChatOutbox(server: string, userId: string, api: Api|null, onS
         }
         await refresh();
       }catch{if(!disposed)setError('No se pudo acceder a los envíos pendientes en este dispositivo.');}
-      finally{running=false;}
+      finally{running=false;if(queuedWake&&!disposed){queuedWake=false;void flush();}}
     };
     wake.current=()=>void flush();void flush();
     const timer=setInterval(()=>void flush(),5000);

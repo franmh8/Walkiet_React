@@ -89,3 +89,51 @@ Chromium, reproducción real en otra cuenta, PHP/MySQL y cola sin conexión.
 Las exportaciones de Expo comprueban la integración de Android/iOS, pero aún
 hace falta la comprobación física con los teléfonos del equipo. El error 503
 de `ptt.php` corresponde al servicio de radio y se atiende por separado.
+
+## Reproductor compacto y sincronización más ágil
+
+El reproductor muestra avatar/inicial, reproducción/pausa, duración, barras de
+intensidad y progreso; tocar las barras permite adelantar después de cargar el
+archivo. Se elimina el título de la burbuja y la instrucción fija del pie. El
+contador y Cancelar aparecen únicamente mientras se graba o prepara el audio.
+
+La onda usa RMS (intensidad real) de las muestras, no barras aleatorias ni una
+medición de bandas de graves/agudos. En WAV se calcula al entrar la nota en
+pantalla. El navegador también analiza AAC/M4A. En la app nativa, la onda AAC/M4A
+se completa durante la reproducción con el muestreo de Expo; si el equipo no lo
+permite, queda una línea con progreso. Android puede necesitar el permiso de
+micrófono ya concedido para ese muestreo; escuchar sigue funcionando sin pedir
+ese permiso adicional. Comprobar este comportamiento en los teléfonos del equipo.
+
+El chat abierto consulta aproximadamente cada 1,2 segundos, la bandeja cada 1,5
+segundos y la lista cada 3 segundos, más lo que tarde la red/servidor. Cada flujo
+espera a terminar su consulta antes de iniciar otra, pausa al salir al fondo y
+espacia los reintentos si falla. No usa un servidor push ni promete un plazo de
+entrega con la app cerrada. El reintento offline conserva su cola durable.
+
+La app recuerda los archivos inmutables por cuenta/sesión en memoria, con límite
+de 100 entradas y 8 millones de caracteres. El parámetro opcional `known_media`
+permite al servidor omitir solo los adjuntos ya cargados y actualizar el resto,
+incluidas las palomitas y sus reglas de privacidad. Al recargar se descargan otra
+vez. Los clientes anteriores siguen recibiendo la respuesta completa.
+
+Para instalar esta mejora sobre la PR #12, descargar la nueva versión y publicar
+**primero `chat-receipts.php`, después `chat-sync.php`**. Conservar el auxiliar
+`chat-voice.php` de la instalación anterior. Desde la Terminal del Mac:
+
+```sh
+scp backend-alwaysdata/chat-receipts.php walkiet@ssh-walkiet.alwaysdata.net:/home/walkiet/www/
+scp backend-alwaysdata/chat-sync.php walkiet@ssh-walkiet.alwaysdata.net:/home/walkiet/www/
+npx expo start --go -c
+```
+
+No añade SQL ni dependencias. Recargar ambas apps; recompilar si se prueba con
+un APK instalado. Actualizar solo la app cambia el diseño, pero el ahorro de
+descarga necesita ambos PHP actualizados.
+
+Validación local: una nota grabada se entregó/confirmó en aproximadamente 2,1 s
+entre dos cuentas en Chromium con micrófono simulado. En una consulta con 40
+mensajes de texto y una nota de un segundo, la respuesta pasó de 53.272 a 20.590
+bytes al omitir ese audio ya recibido. Son mediciones locales, no garantías para
+Alwaysdata o redes celulares. También se comprueban reproducción, adelanto,
+recarga, cancelación, permisos, privacidad y envío offline sin duplicados.

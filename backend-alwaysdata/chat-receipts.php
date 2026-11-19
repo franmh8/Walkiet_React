@@ -1,8 +1,17 @@
 <?php
 // Las entregas son acuses del dispositivo, nunca una inferencia de presencia.
-function chatMessageRows(PDO $db, $where, array $args, $limit = 100, $descending = true, $summary = false) {
+function chatMessageRows(PDO $db, $where, array $args, $limit = 100, $descending = true, $summary = false, array $knownMedia = []) {
     $direction = $descending ? 'DESC' : 'ASC';
     $fields=$summary ? 'm.id,m.sender_id,m.thread_id,m.created_at' : 'm.*';
+    if (!$summary && $knownMedia) {
+        $marks=implode(',',array_fill(0,count($knownMedia),'?'));
+        // El cliente conserva los archivos inmutables de estos mensajes.
+        // No volver a transferir megabytes para actualizar solo las palomitas.
+        $fields="m.id,m.thread_id,m.sender_id,m.content,m.media_type,m.file_name,m.created_at,
+          CASE WHEN m.id IN ($marks) THEN NULL ELSE m.media_url END AS media_url,
+          (m.id IN ($marks) AND m.media_url IS NOT NULL) AS media_unchanged";
+        $args=array_merge($knownMedia,$knownMedia,$args);
+    }
     $stmt = $db->prepare("SELECT $fields,u.name AS sender_name,u.callsign AS sender_callsign,
         (SELECT COUNT(*) FROM chat_thread_members cm WHERE cm.thread_id=m.thread_id AND cm.user_id<>m.sender_id) AS recipient_count,
         (SELECT COUNT(*) FROM chat_message_receipts r JOIN chat_thread_members cm ON cm.thread_id=m.thread_id AND cm.user_id=r.user_id
@@ -29,6 +38,7 @@ function chatMessageDto(array $row, $zone, $timestampColumn, $owner) {
         'sender_name'=>$row['sender_name'] ?: 'Oficial', 'sender_callsign'=>$row['sender_callsign'] ?: '',
         'text'=>$row['content'], 'mediaType'=>$row['media_type'], 'mediaUrl'=>$row['media_url'],
         'fileName'=>$row['file_name'], 'created_at'=>$row['created_at'],
+        'media_unchanged'=>!empty($row['media_unchanged']),
         // Solo el remitente obtiene la confirmación de sus propios mensajes.
         'status'=>chatMessageStatus($row,$owner),
     ],chatTimeFields($row['created_at'],$zone,$timestampColumn ? $row['sent_epoch'] : null));

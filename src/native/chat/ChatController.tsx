@@ -7,6 +7,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { randomUUID } from 'expo-crypto';
 import { serverMessageId } from './chatMessageId';
 import { useChatOutbox } from './useChatOutbox';
+import {chatForeground} from './useChatOutbox';
+import {startChatPolling} from './chatPoller';
+import {watchChatWake} from './chatWake';
 import type { OutboxEntry } from './chatOutbox';
 import { chatTime } from './chatDates';
 import type { AlertButton } from 'react-native';
@@ -120,11 +123,12 @@ export function useChatController({ serverUrl, currentUser, showAlert, playMessa
         });
       } catch (error: any) {
         if (!disposed) setChatSyncError(error?.message || 'No se pudieron cargar las conversaciones.');
+        return false;
       }
     };
-    void refresh();
-    const timer = setInterval(() => void refresh(), 6000);
-    return () => { disposed = true; clearInterval(timer); };
+    const poller = startChatPolling(refresh, chatForeground, 3000);
+    const unwatch = watchChatWake(poller.wake);
+    return () => { disposed = true; poller.stop(); unwatch(); };
   }, [chatApi, currentUser?.id, fromServerThread]);
 
   // Actualiza el chat abierto también cuando otro dispositivo envía mensajes.
@@ -141,10 +145,13 @@ export function useChatController({ serverUrl, currentUser, showAlert, playMessa
           const known = new Map(c.messages.map(message => [message.id, message]));
           const messages = incoming.map(message => {
             const sentAt = message.sentAt || known.get(message.id)?.sentAt || null;
-            return { ...message, sentAt, timestamp: chatTime(sentAt, message.timestamp) };
+            const next={ ...message, sentAt, timestamp: chatTime(sentAt, message.timestamp) };
+            const old=known.get(message.id);
+            return old && Object.keys(next).every(key=>old[key as keyof ChatMessage]===next[key as keyof ChatMessage]) ? old : next;
           });
           if (messages.every(message => message.sentAt)) messages.sort((left, right) => Date.parse(left.sentAt!) - Date.parse(right.sentAt!));
           const last = messages[messages.length-1];
+          if(messages.length===c.messages.length&&messages.every((message,i)=>message===c.messages[i]))return c;
           return { ...c, messages, hasMessages: messages.length>0 || c.hasMessages, ...(last ? { lastMessage: last.text, lastMessageTime: last.timestamp } : {}) };
         };
         setActiveConversation(prev => prev?.id === threadId ? merge(prev) : prev);
@@ -154,11 +161,12 @@ export function useChatController({ serverUrl, currentUser, showAlert, playMessa
           if (error instanceof ChatApiError && error.status===403) setActiveConversation(prev=>prev?.id===threadId?null:prev);
           setChatSyncError(error?.message || 'No se pudieron actualizar los mensajes.');
         }
+        return false;
       }
     };
-    void refresh();
-    const timer = setInterval(() => void refresh(), 4000);
-    return () => { disposed = true; clearInterval(timer); };
+    const poller = startChatPolling(refresh, chatForeground, 1200);
+    const unwatch = watchChatWake(poller.wake);
+    return () => { disposed = true; poller.stop(); unwatch(); };
   }, [chatApi, activeConversation?.id, fromServerMessage]);
 
   const filteredConversations = useMemo(() => allConversations.filter(c => {
