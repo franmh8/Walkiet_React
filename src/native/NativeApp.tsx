@@ -25,6 +25,9 @@ import {useVoiceNote} from './chat/voice/useVoiceNote';
 import {VoiceRecordButton} from './chat/voice/VoiceRecordButton';
 import {VoiceNotePlayer} from './chat/voice/VoiceNotePlayer';
 import {voiceTime} from './chat/voice/voiceTypes';
+import {PhotoViewer} from './chat/photos/PhotoViewer';
+import {useChatPhotoGallery} from './chat/photos/useChatPhotoGallery';
+import type {ChatPhoto} from './chat/photos/photoTypes';
 import { useChatController } from './chat/ChatController';
 import { ChatDateSeparator } from './chat/ChatDateSeparator';
 import { chatDay } from './chat/chatDates';
@@ -319,7 +322,7 @@ function NativeAppScreen() {
         if (ctx) {
           ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
           const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
-          sendMediaMessage('image', '📸 Foto Capturada con Cámara Táctica', dataUrl, 'evidencia_camara.jpg');
+          sendMediaMessage('image', '', dataUrl, 'evidencia_camara.jpg', undefined, account.loaded&&account.settings.autoSavePhotos);
         }
       } catch (e: any) {
         showNativeAlert('Error al capturar foto', e.message || 'No se pudo procesar la imagen.');
@@ -343,6 +346,9 @@ function NativeAppScreen() {
   // Modal: Crear Grupo de Conversación
 
   const { showNativeAlert, showTacticalToast, feedback } = useNativeFeedback();
+  const [viewedPhoto, setViewedPhoto] = useState<ChatPhoto|null>(null);
+  const photoGallery=useChatPhotoGallery(serverUrl,currentUser?.id||'',account.loaded,account.settings.autoSavePhotos,message=>showNativeAlert('Guardar fotos',message));
+  useEffect(()=>{setViewedPhoto(null);},[serverUrl,currentUser?.id,currentUser?.authToken]);
   const {
     conversations, setConversations, activeConversation, setActiveConversation,
     chatSearchQuery, setChatSearchQuery, selectedChatFilter, setSelectedChatFilter,
@@ -357,14 +363,14 @@ function NativeAppScreen() {
     handleStartDirectChat, handleCreateGroupChatSubmit, handleContactUpdated,
     sendMediaMessage, handleSendChatMessage, toggleGroupMemberSelection,
   } = useChatController({
-    serverUrl, currentUser,
+    serverUrl, currentUser, onPhotoCaptured: photoGallery.captured,
     showAlert: showNativeAlert,
     playMessageSound: () => soundEngine.playIncomingChirp(),
   });
   const chatScroll = useChatScroll(activeConversation?.id, activeConversation?.messages || []);
-  const chatVisible=useVisibleChatMessages(activeConversation?.id,currentTab==='Chat'&&!!activeConversation&&!isNewChatModalOpen&&!isCreateGroupChatModalOpen&&!isLiveCameraModalOpen);
+  const chatVisible=useVisibleChatMessages(activeConversation?.id,currentTab==='Chat'&&!!activeConversation&&!isNewChatModalOpen&&!isCreateGroupChatModalOpen&&!isLiveCameraModalOpen&&!viewedPhoto);
   const incomingVisible=chatVisible.ids.filter(id=>activeConversation?.messages.some(message=>message.id===id&&!message.isSelf));
-  useChatAcknowledgements(chatApi,activeConversation?.id,incomingVisible,account.loaded&&account.settings.readReceipts);
+  useChatAcknowledgements(chatApi,activeConversation?.id,incomingVisible,account.loaded&&account.settings.readReceipts,photoGallery.receive);
   const contactsDirectory = useContactsDirectory(serverUrl, currentUser ? { userId: currentUser.id, token: currentUser.authToken || '' } : null);
   const channelsDirectory = useChannelsDirectory(serverUrl, currentUser?.id || '', currentUser?.authToken || '');
   const { channels, refresh: refreshChannels } = channelsDirectory;
@@ -424,7 +430,7 @@ function NativeAppScreen() {
   // Conversaciones y mensajes: useChatController (src/native/chat).
 
   const radio = useLiveRadio(serverUrl, currentUser?.id || '', currentUser?.authToken || '', selectedChannel);
-  const voiceEnabled=currentTab==='Chat'&&!!activeConversation&&!isAttachMenuOpen&&!isLiveCameraModalOpen&&!isNewChatModalOpen&&!isCreateGroupChatModalOpen;
+  const voiceEnabled=currentTab==='Chat'&&!!activeConversation&&!isAttachMenuOpen&&!isLiveCameraModalOpen&&!isNewChatModalOpen&&!isCreateGroupChatModalOpen&&!viewedPhoto;
   const voice=useVoiceNote(JSON.stringify([serverUrl,currentUser?.id,currentUser?.authToken,activeConversation?.id]),voiceEnabled,
     clip=>sendMediaMessage('voice',`Nota de voz (${voiceTime(Math.max(1,Math.floor(clip.durationMs/1000)))})`,clip.dataUrl,clip.fileName),
     ()=>radio.disconnect(),message=>showNativeAlert('Nota de voz',message));
@@ -909,7 +915,7 @@ function NativeAppScreen() {
         }
         const reader = new FileReader();
         reader.onload = () => {
-          sendMediaMessage('image', file.name || 'Foto adjunta', reader.result as string, file.name);
+          sendMediaMessage('image', '', reader.result as string, file.name);
         };
         reader.readAsDataURL(file);
       };
@@ -933,7 +939,7 @@ function NativeAppScreen() {
       }
       const fileName = `foto_${Date.now()}.jpg`; // Base64 del selector es JPEG, incluso si el original era HEIC.
       // Base64 genera una URL transportable; file:// solamente sirve en el dispositivo de origen.
-      sendMediaMessage('image', fileName, `data:image/jpeg;base64,${photo.base64}`, fileName);
+      sendMediaMessage('image', '', `data:image/jpeg;base64,${photo.base64}`, fileName);
     } catch (error: any) {
       showNativeAlert('No se pudo abrir Fotos', error?.message || 'Revisa los permisos de tus fotos.');
     }
@@ -964,7 +970,7 @@ function NativeAppScreen() {
           return;
         }
         const fileName = `camara_${Date.now()}.jpg`;
-        sendMediaMessage('image', '📸 Foto capturada', `data:image/jpeg;base64,${picture.base64}`, fileName);
+        sendMediaMessage('image', '', `data:image/jpeg;base64,${picture.base64}`, fileName, undefined, account.loaded&&account.settings.autoSavePhotos);
       } catch (error: any) {
         showNativeAlert('Error de cámara', error?.message || 'No se pudo abrir la cámara.');
       }
@@ -1001,7 +1007,7 @@ function NativeAppScreen() {
           }
           const reader = new FileReader();
           reader.onload = () => {
-            sendMediaMessage('image', file.name || 'Captura de Cámara', reader.result as string, file.name);
+            sendMediaMessage('image', '', reader.result as string, file.name, undefined, account.loaded&&account.settings.autoSavePhotos);
           };
           reader.readAsDataURL(file);
         };
@@ -1873,6 +1879,7 @@ const position =
 
   return (
     <SafeAreaView style={styles.cleanContainer}>
+      <PhotoViewer photo={viewedPhoto} close={()=>setViewedPhoto(null)} save={photoGallery.saveManually}/>
       <StatusBar barStyle={dark ? "light-content" : "dark-content"} />
 
       {/* Main Tab Content */}
@@ -1987,6 +1994,7 @@ const position =
                               style={[
                                 styles.chatBubble,
                                 isSelf ? styles.chatBubbleSelf : styles.chatBubbleOther,
+                                msg.mediaType === 'image' && {padding: 4, overflow: 'hidden'},
                                 msg.mediaType === 'voice' && {width: '82%', maxWidth: 340, borderRadius: 20, paddingHorizontal: 10, paddingVertical: 8},
                               ]}
                             >
@@ -1998,22 +2006,10 @@ const position =
 
                               {/* Renderizado multimedia dinámico */}
                               {msg.mediaType === 'image' && msg.mediaUrl ? (
-                                <View style={styles.chatBubbleMediaImageWrap}>
-                                  <Image
-                                    source={{ uri: msg.mediaUrl }}
-                                    style={styles.chatBubbleMediaImage}
-                                    resizeMode="cover"
-                                  />
-                                  <Text
-                                    style={[
-                                      styles.chatBubbleText,
-                                      styles.chatBubbleMediaCaption,
-                                      isSelf ? styles.chatBubbleTextSelf : styles.chatBubbleTextOther,
-                                    ]}
-                                  >
-                                    {msg.text}
-                                  </Text>
-                                </View>
+                                <TouchableOpacity accessibilityRole="button" accessibilityLabel="Abrir imagen" activeOpacity={0.9}
+                                  onPress={()=>setViewedPhoto({id:msg.id,dataUrl:msg.mediaUrl!})} style={styles.chatBubbleMediaImageWrap}>
+                                  <Image source={{uri:msg.mediaUrl}} style={styles.chatBubbleMediaImage} resizeMode="cover" accessibilityLabel="Foto del chat"/>
+                                </TouchableOpacity>
                               ) : msg.mediaType === 'location' ? (
                                 <TouchableOpacity
                                   style={styles.chatBubbleLocationBox}
@@ -2077,11 +2073,12 @@ const position =
                                 </Text>
                               )}
 
-                              <View style={styles.chatBubbleMetaRow}>
+                              <View style={[styles.chatBubbleMetaRow,msg.mediaType==='image'&&{position:'absolute',bottom:8,right:8,backgroundColor:'#0009',borderRadius:10,paddingHorizontal:6,paddingVertical:2}] }>
                                 <Text
                                   style={[
                                     styles.chatBubbleTime,
                                     isSelf ? styles.chatBubbleTimeSelf : styles.chatBubbleTimeOther,
+                                    msg.mediaType==='image'&&{color:'#fff'},
                                   ]}
                                 >
                                   {msg.timestamp}
@@ -2836,6 +2833,8 @@ const position =
 
               <TouchableOpacity
                 style={styles.liveCamCaptureBtn}
+                accessibilityRole="button"
+                accessibilityLabel="Capturar foto"
                 onPress={handleCaptureLivePhoto}
                 activeOpacity={0.85}
               >
@@ -4372,7 +4371,7 @@ const baseStyles = StyleSheet.create({
   chatBubbleMediaImageWrap: {
     borderRadius: 12,
     overflow: 'hidden',
-    marginBottom: 4,
+    marginBottom: 0,
     maxWidth: 240,
   },
   chatBubbleMediaImage: {

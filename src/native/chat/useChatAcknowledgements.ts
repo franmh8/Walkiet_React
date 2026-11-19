@@ -1,10 +1,12 @@
 import {useEffect, useRef} from 'react';
-import type {createChatSyncApi} from '../../services/chatSyncApi';
+import type {ChatMessageDto, createChatSyncApi} from '../../services/chatSyncApi';
 import {chatForeground} from './useChatOutbox';
 import {startChatPolling} from './chatPoller';
 import {watchChatWake} from './chatWake';
 type Api=ReturnType<typeof createChatSyncApi>;
-export function useChatAcknowledgements(api:Api|null, threadId:string|undefined, visibleIds:string[], readReceipts:boolean) {
+export function useChatAcknowledgements(api:Api|null, threadId:string|undefined, visibleIds:string[], readReceipts:boolean, onIncoming?: (messages: ChatMessageDto[]) => void) {
+  const receive=useRef(onIncoming);receive.current=onIncoming;
+  const currentApi=useRef(api);currentApi.current=api;
   const visible=useRef(visibleIds);visible.current=visibleIds;
   const enabled=useRef(readReceipts);enabled.current=readReceipts;
   // Recepción en cualquier pestaña de la app; el servidor solo marca después
@@ -17,10 +19,11 @@ export function useChatAcknowledgements(api:Api|null, threadId:string|undefined,
       running=true;
       try{
         const incoming=await api.inbox();
-        if(disposed||!chatForeground())return;
+        if(disposed||currentApi.current!==api||!chatForeground())return;
+        receive.current?.(incoming);
         const groups=new Map<string,string[]>();
         for(const message of incoming)if(message.thread_id)groups.set(message.thread_id,[...(groups.get(message.thread_id)||[]),message.id]);
-        for(const [thread,ids] of groups){if(disposed||!chatForeground())break;await api.acknowledge(thread,ids);}
+        for(const [thread,ids] of groups){if(disposed||currentApi.current!==api||!chatForeground())break;await api.acknowledge(thread,ids);}
       }catch{return false;}finally{running=false;}
     };
     const poller=startChatPolling(poll,chatForeground,1500),unwatch=watchChatWake(poller.wake);

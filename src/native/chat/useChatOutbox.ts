@@ -42,7 +42,7 @@ export function useChatOutbox(server: string, userId: string, api: Api|null, onS
             const saved=await api.sendMessage(entry.threadId,entry.mediaType,entry.text,entry.mediaUrl,entry.fileName,entry.clientId);
             // Conservar la cola hasta tener una confirmación válida y durable.
             await store.remove(entry.clientId);
-            if(!disposed){sent.current(entry,saved);setError(null);}
+            if(!disposed&&active.current===scope){sent.current(entry,saved);setError(null);}
           }catch(cause){
             if(cause instanceof ChatApiError && [400,403,404,409,413,422].includes(cause.status)) {
               await store.put({...entry,failure:cause.message});

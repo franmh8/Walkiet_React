@@ -10,6 +10,7 @@ import { useChatOutbox } from './useChatOutbox';
 import {chatForeground} from './useChatOutbox';
 import {startChatPolling} from './chatPoller';
 import {watchChatWake} from './chatWake';
+import type {ChatPhoto} from './photos/photoTypes';
 import type { OutboxEntry } from './chatOutbox';
 import { chatTime } from './chatDates';
 import type { AlertButton } from 'react-native';
@@ -29,9 +30,11 @@ interface ChatControllerOptions {
   currentUser: ChatUser | null;
   showAlert: (title: string, message?: string, buttons?: AlertButton[]) => void;
   playMessageSound: () => void;
+  onPhotoCaptured?: (photo: ChatPhoto) => void;
 }
 
-export function useChatController({ serverUrl, currentUser, showAlert, playMessageSound }: ChatControllerOptions) {
+export function useChatController({ serverUrl, currentUser, showAlert, playMessageSound, onPhotoCaptured }: ChatControllerOptions) {
+  const capturedPhoto = useRef(onPhotoCaptured); capturedPhoto.current = onPhotoCaptured;
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeConversation, setActiveConversation] = useState<Conversation | null>(null);
   const [chatSearchQuery, setChatSearchQuery] = useState('');
@@ -71,6 +74,7 @@ export function useChatController({ serverUrl, currentUser, showAlert, playMessa
 
   const outbox=useChatOutbox(serverUrl,currentUser?.id||'',chatApi,(entry,saved)=>{
     const user=currentUser;if(!user)return;
+    if(entry.saveImage && entry.mediaUrl) capturedPhoto.current?.({id:saved.id,dataUrl:entry.mediaUrl});
     const message:ChatMessage={id:saved.id,senderId:user.id,senderName:user.name,text:entry.text,
       timestamp:chatTime(saved.sentAt||entry.queuedAt),sentAt:saved.sentAt||entry.queuedAt,isSelf:true,status:saved.status||'sent',
       mediaType:entry.mediaType,mediaUrl:entry.mediaUrl,fileName:entry.fileName};
@@ -249,7 +253,7 @@ export function useChatController({ serverUrl, currentUser, showAlert, playMessa
   const sendMediaMessage = async (
     mediaType: 'text' | 'image' | 'voice' | 'location' | 'document',
     caption: string, mediaUrl?: string, fileName?: string,
-    coords?: { latitude: number; longitude: number; address?: string }
+    coords?: { latitude: number; longitude: number; address?: string }, saveImage=false
   ): Promise<boolean> => {
     const conv = activeConversation;
     const user = currentUser;
@@ -263,9 +267,10 @@ export function useChatController({ serverUrl, currentUser, showAlert, playMessa
       const serverId=await serverMessageId(user.id,clientId);
       const entry:OutboxEntry={clientId,serverId,threadId:conv.id,
         conversation:{id:conv.id,type:conv.type,name:conv.name,targetUserId:conv.targetUserId},
-        mediaType,text:caption,mediaUrl,fileName,queuedAt:new Date().toISOString()};
+        mediaType,text:caption,mediaUrl,fileName,saveImage,queuedAt:new Date().toISOString()};
       await outbox.enqueue(entry);
       if(chatSessionScopeRef.current!==scope)return false;
+      if(saveImage && mediaUrl) capturedPhoto.current?.({id:serverId,dataUrl:mediaUrl});
       setChatSyncError(null);
       try { playMessageSound(); } catch {}
       return true;
