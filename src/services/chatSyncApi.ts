@@ -1,3 +1,4 @@
+import type {ReplyPreview, SendContext} from '../native/chat/actions/messageTypes';
 import type { MessageStatus } from '../native/chat/MessageReceipt';
 import { peerId } from './peerIds';
 import { chatInstant, type ChatDateFields } from '../native/chat/chatDates';
@@ -31,6 +32,10 @@ export interface ChatMessageDto extends ChatDateFields {
   mediaType?: 'text' | 'image' | 'voice' | 'location' | 'document';
   mediaUrl?: string | null;
   fileName?: string | null;
+  reply?: ReplyPreview | null;
+  deleted?: boolean;
+  editedAt?: string | null;
+  forwarded?: boolean;
 }
 
 export class ChatApiError extends Error { constructor(message: string, public status: number) { super(message); } }
@@ -41,6 +46,7 @@ export function createChatSyncApi(baseUrl: string, token: string, fetcher: typeo
   // hora de París sin zona. El contrato nuevo sent_at/metadata tiene prioridad.
   let supportsReceipts = false;
   let supportsIdempotentSend = false;
+  let supportsMessageActions = false;
   let legacyZone: string | undefined;
   // Por instancia autenticada: no compartir adjuntos entre cuentas/servidores.
   const mediaCache = new Map<string, string>();
@@ -101,8 +107,9 @@ export function createChatSyncApi(baseUrl: string, token: string, fetcher: typeo
       const id=peerId(message?.id), sender=peerId(message?.sender_id);
       if(!id||!sender)throw new Error('El servidor devolvió un mensaje inválido.');
       const status = ['sent','delivered','read'].includes(message.status) ? message.status : 'sent';
-      const mediaUrl = message.media_unchanged ? known.get(id) : message.mediaUrl;
-      if(message.media_unchanged && !mediaUrl)throw new Error('No se pudo recuperar el archivo del mensaje.');
+      const mediaUrl = message.deleted ? null : message.media_unchanged ? known.get(id) : message.mediaUrl;
+      if(message.deleted){cachedChars-=mediaCache.get(id)?.length||0;mediaCache.delete(id);}
+      if(!message.deleted && message.media_unchanged && !mediaUrl)throw new Error('No se pudo recuperar el archivo del mensaje.');
       if(typeof mediaUrl==='string' && mediaUrl && /^[A-Za-z0-9_-]{1,64}$/.test(id)) {
         rememberMedia(id,mediaUrl);
       }
@@ -110,6 +117,10 @@ export function createChatSyncApi(baseUrl: string, token: string, fetcher: typeo
     });
   };
   return {
+    get supportsMessageActions() { return supportsMessageActions; },
+    async requireMessageActions() {if(!supportsMessageActions)await this.listThreads();if(!supportsMessageActions)throw new ChatApiError('Actualiza el servicio de chats para usar las opciones de mensajes.',503);},
+    async editMessage(threadId: string, id: string, text: string): Promise<{id:string;editedAt?:string}> {await this.requireMessageActions();return request('edit',{thread_id:threadId,message_id:id,text},'POST');},
+    async deleteMessage(threadId: string, id: string, scope: 'me'|'everyone'): Promise<{id:string}> {await this.requireMessageActions();return request('delete',{thread_id:threadId,message_id:id,scope},'POST');},
     get supportsReceipts() { return supportsReceipts; },
     get supportsIdempotentSend() { return supportsIdempotentSend; },
     async inbox(): Promise<ChatMessageDto[]> {
@@ -122,6 +133,7 @@ export function createChatSyncApi(baseUrl: string, token: string, fetcher: typeo
     async listThreads(): Promise<ChatThreadDto[]> {
       const data = await request<{ threads: ChatThreadDto[] }>('threads');
       supportsReceipts=Array.isArray((data as any).features)&&(data as any).features.includes('receipts');
+      supportsMessageActions=Array.isArray((data as any).features)&&(data as any).features.includes('messageActions');
       supportsIdempotentSend=Array.isArray((data as any).features)&&(data as any).features.includes('idempotentSend');
       if (!Array.isArray(data.threads)) throw new Error('El servidor devolvió una lista de chats inválida.');
       return data.threads.map((thread: any) => {
@@ -146,12 +158,13 @@ export function createChatSyncApi(baseUrl: string, token: string, fetcher: typeo
       const data = await request<{ thread_id: string }>('group', { name, member_ids: memberIds }, 'POST');
       const id = peerId(data.thread_id); if (!id) throw new Error('El servidor no confirmó la conversación.'); return id;
     },
-    async sendMessage(threadId: string, mediaType: string, text: string, mediaUrl?: string, fileName?: string, clientId?: string): Promise<{ id: string; timestamp: string; sentAt: string | null; status?: MessageStatus }> {
-      const data = await request<{ id: string; timestamp: string } & ChatDateFields>('send', {
-        thread_id: threadId, mediaType, text, mediaUrl: mediaUrl ?? null, fileName: fileName ?? null, ...(clientId ? {client_message_id:clientId} : {}),
+    async sendMessage(threadId: string, mediaType: string, text: string, mediaUrl?: string, fileName?: string, clientId?: string, context: SendContext = {}): Promise<{ id: string; timestamp: string; sentAt: string | null; status?: MessageStatus; deleted?: boolean; editedAt?: string | null; text?: string; reply?: ReplyPreview | null; forwarded?: boolean }> {
+      if(context.replyToId||context.sourceMessageId)await this.requireMessageActions();
+      const data = await request<{ id: string; timestamp: string; deleted?: boolean } & ChatDateFields>('send', {
+        thread_id: threadId, ...(context.sourceMessageId?{source_message_id:context.sourceMessageId}:{mediaType, text, mediaUrl: mediaUrl ?? null, fileName: fileName ?? null}), ...(context.replyToId?{reply_to_id:context.replyToId}:{}), ...(clientId ? {client_message_id:clientId} : {}),
       }, 'POST');
       const id = peerId(data.id); if (!id) throw new Error('El servidor no confirmó el mensaje.');
-      if(mediaUrl)rememberMedia(id,mediaUrl);
+      if(!data.deleted){const file=mediaUrl||(context.sourceMessageId?mediaCache.get(context.sourceMessageId):undefined);if(file)rememberMedia(id,file);}else{cachedChars-=mediaCache.get(id)?.length||0;mediaCache.delete(id);}
       return { ...data, id, sentAt: chatInstant(data) };
     },
   };

@@ -17,6 +17,7 @@ export function useChatOutbox(server: string, userId: string, api: Api|null, onS
   const sent=useRef(onSent); sent.current=onSent;
   const wake=useRef<()=>void>(()=>{});
   const active=useRef(scope);active.current=scope;
+  const sending=useRef<{scope:string;id:string}|null>(null),cancelled=useRef(new Set<string>());
   const [error,setError]=useState<string|null>(null);
   useEffect(()=>{
     let disposed=false,running=false,queuedWake=false;
@@ -37,9 +38,10 @@ export function useChatOutbox(server: string, userId: string, api: Api|null, onS
         if(!api.supportsIdempotentSend){setError('Publica la actualización de chat-sync.php para enviar los mensajes pendientes sin duplicarlos.');return;}
         for(const entry of entries){
           if(disposed||!chatForeground())break;
-          if(entry.failure)continue;
+          if(entry.failure||cancelled.current.has(scope+'|'+entry.clientId))continue;
+          sending.current={scope,id:entry.clientId};
           try{
-            const saved=await api.sendMessage(entry.threadId,entry.mediaType,entry.text,entry.mediaUrl,entry.fileName,entry.clientId);
+            const saved=await api.sendMessage(entry.threadId,entry.mediaType,entry.text,entry.mediaUrl,entry.fileName,entry.clientId,{replyToId:entry.replyToId,sourceMessageId:entry.sourceMessageId});
             // Conservar la cola hasta tener una confirmación válida y durable.
             await store.remove(entry.clientId);
             if(!disposed&&active.current===scope){sent.current(entry,saved);setError(null);}
@@ -47,7 +49,7 @@ export function useChatOutbox(server: string, userId: string, api: Api|null, onS
             if(cause instanceof ChatApiError && [400,403,404,409,413,422].includes(cause.status)) {
               await store.put({...entry,failure:cause.message});
             }else break; // Internet, timeout, 5xx o sesión: conservar para reintentar.
-          }
+          }finally{if(sending.current?.scope===scope&&sending.current.id===entry.clientId)sending.current=null;}
         }
         await refresh();
       }catch{if(!disposed)setError('No se pudo acceder a los envíos pendientes en este dispositivo.');}
@@ -67,6 +69,14 @@ export function useChatOutbox(server: string, userId: string, api: Api|null, onS
       if((await store.list()).length>=30)throw new Error('Tienes 30 mensajes pendientes. Conéctate para enviarlos antes de agregar más.');
       await store.put(entry);
       if(active.current===scope){setState({scope,entries:await store.list()});wake.current();}
+    },
+    async cancel(clientId:string){
+      if(active.current!==scope)throw new Error('La sesión cambió.');
+      const exists=(await store.list()).some(entry=>entry.clientId===clientId);
+      if(active.current!==scope)throw new Error('La sesión cambió.');
+      if(!exists||(sending.current?.scope===scope&&sending.current.id===clientId))return false;
+      cancelled.current.add(scope+'|'+clientId);if(cancelled.current.size>500)cancelled.current.delete(cancelled.current.values().next().value!);
+      await store.remove(clientId);if(active.current===scope)setState({scope,entries:await store.list()});return true;
     },
     async retry(clientId:string){
       const entry=(await store.list()).find(item=>item.clientId===clientId);

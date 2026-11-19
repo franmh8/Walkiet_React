@@ -26,6 +26,12 @@ import {VoiceRecordButton} from './chat/voice/VoiceRecordButton';
 import {VoiceNotePlayer} from './chat/voice/VoiceNotePlayer';
 import {voiceTime} from './chat/voice/voiceTypes';
 import {PhotoViewer} from './chat/photos/PhotoViewer';
+import {useMessageActions} from './chat/actions/useMessageActions';
+import {MessagePressTarget} from './chat/actions/MessagePressTarget';
+import {MessageMenu} from './chat/actions/MessageMenu';
+import {ForwardMessageDialog} from './chat/actions/ForwardMessageDialog';
+import {ReplyQuote} from './chat/actions/ReplyQuote';
+import {mediaLabel} from './chat/actions/messageTypes';
 import {useChatPhotoGallery} from './chat/photos/useChatPhotoGallery';
 import type {ChatPhoto} from './chat/photos/photoTypes';
 import { useChatController } from './chat/ChatController';
@@ -198,6 +204,10 @@ export interface ChatMessage {
   mediaType?: 'text' | 'image' | 'voice' | 'location' | 'document';
   mediaUrl?: string;
   fileName?: string;
+  reply?: import('./chat/actions/messageTypes').ReplyPreview | null;
+  editedAt?: string | null;
+  deleted?: boolean;
+  forwarded?: boolean;
   locationCoords?: { latitude: number; longitude: number; address?: string };
 }
 
@@ -361,14 +371,24 @@ function NativeAppScreen() {
     chatApi, retryPending, chatSyncError, filteredConversations,
     totalChatCount, groupsChatCount, directChatCount,
     handleStartDirectChat, handleCreateGroupChatSubmit, handleContactUpdated,
-    sendMediaMessage, handleSendChatMessage, toggleGroupMemberSelection,
+    sendMediaMessage: sendRawMediaMessage, cancelPending, changeMessage, forwardMessage, toggleGroupMemberSelection,
   } = useChatController({
     serverUrl, currentUser, onPhotoCaptured: photoGallery.captured,
     showAlert: showNativeAlert,
     playMessageSound: () => soundEngine.playIncomingChirp(),
   });
+  const actions=useMessageActions({scope:JSON.stringify([serverUrl,currentUser?.id,currentUser?.authToken,activeConversation?.id]),
+    conversation:activeConversation,userId:currentUser?.id||'',api:chatApi,draft:chatDraftMessage,setDraft:setChatDraftMessage,
+    send:(text,context)=>sendRawMediaMessage('text',text,undefined,undefined,undefined,false,context),
+    change:changeMessage,cancel:cancelPending,forward:forwardMessage,alert:showNativeAlert,toast:showTacticalToast});
+  const sendMediaMessage:typeof sendRawMediaMessage=async(type,text,url,fileName,coords,saveImage=false,context={})=>{
+    const reply=actions.reply;
+    const saved=await sendRawMediaMessage(type,text,url,fileName,coords,saveImage,reply?{replyToId:reply.id,reply,...context}:context);
+    if(saved)actions.afterSend(reply?.id);
+    return saved;
+  };
   const chatScroll = useChatScroll(activeConversation?.id, activeConversation?.messages || []);
-  const chatVisible=useVisibleChatMessages(activeConversation?.id,currentTab==='Chat'&&!!activeConversation&&!isNewChatModalOpen&&!isCreateGroupChatModalOpen&&!isLiveCameraModalOpen&&!viewedPhoto);
+  const chatVisible=useVisibleChatMessages(activeConversation?.id,currentTab==='Chat'&&!!activeConversation&&!isNewChatModalOpen&&!isCreateGroupChatModalOpen&&!isLiveCameraModalOpen&&!viewedPhoto&&!actions.menuOpen&&!actions.forwarding);
   const incomingVisible=chatVisible.ids.filter(id=>activeConversation?.messages.some(message=>message.id===id&&!message.isSelf));
   useChatAcknowledgements(chatApi,activeConversation?.id,incomingVisible,account.loaded&&account.settings.readReceipts,photoGallery.receive);
   const contactsDirectory = useContactsDirectory(serverUrl, currentUser ? { userId: currentUser.id, token: currentUser.authToken || '' } : null);
@@ -430,7 +450,7 @@ function NativeAppScreen() {
   // Conversaciones y mensajes: useChatController (src/native/chat).
 
   const radio = useLiveRadio(serverUrl, currentUser?.id || '', currentUser?.authToken || '', selectedChannel);
-  const voiceEnabled=currentTab==='Chat'&&!!activeConversation&&!isAttachMenuOpen&&!isLiveCameraModalOpen&&!isNewChatModalOpen&&!isCreateGroupChatModalOpen&&!viewedPhoto;
+  const voiceEnabled=currentTab==='Chat'&&!!activeConversation&&!isAttachMenuOpen&&!isLiveCameraModalOpen&&!isNewChatModalOpen&&!isCreateGroupChatModalOpen&&!viewedPhoto&&!actions.menuOpen&&!actions.forwarding&&!actions.editing&&!actions.busy;
   const voice=useVoiceNote(JSON.stringify([serverUrl,currentUser?.id,currentUser?.authToken,activeConversation?.id]),voiceEnabled,
     clip=>sendMediaMessage('voice',`Nota de voz (${voiceTime(Math.max(1,Math.floor(clip.durationMs/1000)))})`,clip.dataUrl,clip.fileName),
     ()=>radio.disconnect(),message=>showNativeAlert('Nota de voz',message));
@@ -1990,7 +2010,7 @@ const position =
                               isSelf ? styles.chatBubbleRowSelf : styles.chatBubbleRowOther,
                             ]}
                           >
-                            <View
+                            <MessagePressTarget disabled={actions.busy} onOpen={point=>actions.open(msg,point)}
                               style={[
                                 styles.chatBubble,
                                 isSelf ? styles.chatBubbleSelf : styles.chatBubbleOther,
@@ -2004,10 +2024,12 @@ const position =
                                 </Text>
                               )}
 
+                              {msg.forwarded&&!msg.deleted&&<Text style={{fontSize:11,color:isSelf?'#ffd9e2':'#64748b',fontStyle:'italic',marginBottom:5}}>↪ Reenviado</Text>}
+                              {msg.reply&&!msg.deleted&&<ReplyQuote reply={msg.reply} name={actions.quoteName(msg.reply.authorId,msg.reply.authorName)} isSelf={isSelf}/>}
                               {/* Renderizado multimedia dinámico */}
-                              {msg.mediaType === 'image' && msg.mediaUrl ? (
+                              {msg.deleted ? <Text style={[styles.chatBubbleText,isSelf?styles.chatBubbleTextSelf:styles.chatBubbleTextOther,{fontStyle:'italic',opacity:0.8}]}>Mensaje eliminado</Text> : msg.forwarded&&!msg.mediaUrl&&msg.mediaType!=='text' ? <Text style={[styles.chatBubbleText,isSelf?styles.chatBubbleTextSelf:styles.chatBubbleTextOther]}>{mediaLabel(msg.mediaType)} · Cargando…</Text> : msg.mediaType === 'image' && msg.mediaUrl ? (
                                 <TouchableOpacity accessibilityRole="button" accessibilityLabel="Abrir imagen" activeOpacity={0.9}
-                                  onPress={()=>setViewedPhoto({id:msg.id,dataUrl:msg.mediaUrl!})} style={styles.chatBubbleMediaImageWrap}>
+                                  onPress={()=>{if(Date.now()>=actions.suppressPress.current)setViewedPhoto({id:msg.id,dataUrl:msg.mediaUrl!});}} style={styles.chatBubbleMediaImageWrap}>
                                   <Image source={{uri:msg.mediaUrl}} style={styles.chatBubbleMediaImage} resizeMode="cover" accessibilityLabel="Foto del chat"/>
                                 </TouchableOpacity>
                               ) : msg.mediaType === 'location' ? (
@@ -2015,7 +2037,7 @@ const position =
                                   style={styles.chatBubbleLocationBox}
                                   activeOpacity={0.8}
                                   onPress={() => {
-                                    if (msg.mediaUrl) {
+                                    if (Date.now()>=actions.suppressPress.current && msg.mediaUrl) {
                                       Linking.openURL(msg.mediaUrl).catch(() => {});
                                     }
                                   }}
@@ -2044,7 +2066,7 @@ const position =
                                 <TouchableOpacity
                                   style={styles.chatBubbleDocBox}
                                   activeOpacity={0.8}
-                                  onPress={() => { void handleOpenChatDocument(msg); }}
+                                  onPress={() => { if(Date.now()>=actions.suppressPress.current)void handleOpenChatDocument(msg); }}
                                 >
                                   <FileTextIcon size={20} color={isSelf ? '#bae6fd' : '#0284c7'} />
                                   <Text
@@ -2074,7 +2096,8 @@ const position =
                               )}
 
                               <View style={[styles.chatBubbleMetaRow,msg.mediaType==='image'&&{position:'absolute',bottom:8,right:8,backgroundColor:'#0009',borderRadius:10,paddingHorizontal:6,paddingVertical:2}] }>
-                                <Text
+                                {!!msg.editedAt&&!msg.deleted&&<Text style={[styles.chatBubbleTime,isSelf?styles.chatBubbleTimeSelf:styles.chatBubbleTimeOther,{fontSize:10}]}>Editado</Text>}
+                                <TouchableOpacity accessibilityLabel="Opciones del mensaje" onPress={event=>actions.open(msg,{x:event.nativeEvent.pageX,y:event.nativeEvent.pageY})}><Text
                                   style={[
                                     styles.chatBubbleTime,
                                     isSelf ? styles.chatBubbleTimeSelf : styles.chatBubbleTimeOther,
@@ -2082,14 +2105,14 @@ const position =
                                   ]}
                                 >
                                   {msg.timestamp}
-                                </Text>
+                                </Text></TouchableOpacity>
                                 {isSelf && (
                                   <TouchableOpacity style={styles.chatBubbleCheckWrap} disabled={msg.status!=='failed'} onPress={()=>{if(msg.clientId)void retryPending(msg.clientId).catch(()=>showNativeAlert('No se pudo reintentar','Revisa el almacenamiento del dispositivo.'));}}>
                                     <MessageReceipt status={msg.status}/>
                                   </TouchableOpacity>
                                 )}
                               </View>
-                            </View>
+                            </MessagePressTarget>
                           </View>
                           </React.Fragment>
                         );
@@ -2126,6 +2149,10 @@ const position =
                   keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
                 >
                   <View style={styles.chatInputBarWrapper}>
+                    {(actions.reply||actions.editing)&&<View style={{flexDirection:'row',alignItems:'center',justifyContent:'space-between',paddingHorizontal:16,paddingTop:8,gap:12}}>
+                      <View style={{flex:1}}>{actions.editing?<><Text style={{color:palette.accent,fontSize:12,fontWeight:'700'}}>Editar mensaje</Text><Text numberOfLines={1} style={{color:palette.muted,fontSize:12,marginTop:3}}>{actions.editing.text}</Text></>:actions.reply&&<ReplyQuote reply={actions.reply} name={actions.replyName}/>}</View>
+                      <TouchableOpacity accessibilityLabel={actions.editing?'Cancelar edición':'Cancelar respuesta'} onPress={actions.editing?actions.cancelEdit:actions.clearReply} style={{padding:10}}><Text style={{color:palette.muted,fontSize:22}}>×</Text></TouchableOpacity>
+                    </View>}
                     {voice.state.phase !== 'idle' && <View style={{flexDirection:'row',alignItems:'center',justifyContent:'space-between',paddingHorizontal:14,paddingBottom:6,gap:10}}>
                       <Text accessibilityLiveRegion="polite" testID="voice-recording-status" style={{fontSize:12,color:voice.state.phase==='recording'?palette.accent:palette.muted,flex:1}}>
                         {voice.state.phase==='recording'?`● Grabando ${voiceTime(voice.state.durationMs/1000)} · Suelta para enviar`:voice.state.phase==='preparing'?'Preparando micrófono…':voice.state.phase==='processing'?'Guardando audio…':voice.state.phase==='retry'?'Audio pendiente de guardar':''}
@@ -2145,6 +2172,7 @@ const position =
                           console.log(`[Walkiet-adjuntos] Clip pulsado (${Platform.OS})`);
                           setIsAttachMenuOpen((prev) => !prev);
                         }}
+                        disabled={!!actions.editing||actions.busy}
                         accessibilityLabel="Adjuntar archivo o evidencia"
                       >
                         <PaperclipIcon
@@ -2157,27 +2185,29 @@ const position =
                       {/* Campo de texto limpio "Escribe un mensaje de radio..." */}
                       <TextInput
                         style={styles.chatTextInput}
-                        value={chatDraftMessage}
-                        editable={voice.state.phase==='idle'}
-                        onChangeText={setChatDraftMessage}
+                        value={actions.editing?actions.editText:chatDraftMessage}
+                        editable={voice.state.phase==='idle'&&!actions.busy}
+                        onChangeText={actions.editing?actions.setEditText:setChatDraftMessage}
+                        accessibilityLabel={actions.editing?'Editar texto del mensaje':'Escribe un mensaje de radio...'}
                         placeholder="Escribe un mensaje de radio..."
                         placeholderTextColor="#94a3b8"
                         multiline
                       />
 
                       {/* Botón dinámico: micrófono si está vacío, avión si hay texto */}
-                      {chatDraftMessage.trim() ? (
+                      {actions.editing||chatDraftMessage.trim() ? (
                         <TouchableOpacity
                           style={[styles.chatDynamicBtn, styles.chatSendBtnActive]}
-                          onPress={handleSendChatMessage}
+                          onPress={()=>void actions.send()}
+                          disabled={actions.busy||!(actions.editing?actions.editText:chatDraftMessage).trim()}
                           activeOpacity={0.8}
-                          accessibilityLabel="Enviar mensaje"
+                          accessibilityLabel={actions.editing?'Guardar cambios':'Enviar mensaje'}
                         >
                           <SendIcon size={18} color="#ffffff" />
                         </TouchableOpacity>
                       ) : (
                         <VoiceRecordButton style={[styles.chatDynamicBtn,styles.chatMicBtn,voice.state.phase==='recording'&&{backgroundColor:palette.accent}]}
-                          disabled={voice.state.phase==='processing'||voice.state.phase==='retry'} recording={voice.state.phase==='recording'||voice.state.phase==='preparing'}
+                          disabled={actions.busy||voice.state.phase==='processing'||voice.state.phase==='retry'} recording={voice.state.phase==='recording'||voice.state.phase==='preparing'}
                           start={voice.start} finish={voice.finish} cancel={voice.cancel}>
                           <MicIcon size={20} color={voice.state.phase==='recording'?'#ffffff':palette.accent} strokeWidth={2.2}/>
                         </VoiceRecordButton>
@@ -2846,6 +2876,9 @@ const position =
           </View>
         </View>
       </Modal>
+      <ForwardMessageDialog visible={!!actions.forwarding} busy={actions.busy} conversations={conversations} contacts={officersList} userId={currentUser?.id||''}
+        close={actions.closeForward} choose={actions.chooseForward} search={contactsDirectory.setQuery} more={contactsDirectory.loadMore} hasMore={contactsDirectory.hasMore}/>
+      <MessageMenu message={actions.menuMessage} point={actions.menuPoint} close={actions.closeMenu} choose={actions.choose}/>
     </SafeAreaView>
   );
 }

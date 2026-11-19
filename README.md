@@ -22,6 +22,10 @@ Para separar los mensajes por día, corregir la hora y resolver el 400 de cuenta
 seguir la [guía de fechas del chat](backend-alwaysdata/CHAT_FECHAS_DESPLIEGUE.md).
 Incluye la publicación coordinada de los PHP actuales sin modificar el historial.
 
+Las opciones de responder, reenviar, copiar, editar y eliminar al mantener presionado
+un mensaje se instalan siguiendo la [guía del menú de mensajes](backend-alwaysdata/CHAT_MENSAJES_OPCIONES_DESPLIEGUE.md).
+Requieren la migración 010, actualizar tres PHP y ejecutar `npm ci` en la app.
+
 ## Actualizar un equipo existente
 
 Desde la carpeta `Walkiet_React`, detener Expo con **Ctrl+C** y revisar primero:

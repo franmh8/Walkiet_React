@@ -1,3 +1,4 @@
+import type {ReplyPreview} from './actions/messageTypes';
 export interface OutboxEntry {
   clientId: string;
   serverId?: string;
@@ -8,6 +9,9 @@ export interface OutboxEntry {
   mediaUrl?: string;
   fileName?: string;
   saveImage?: boolean;
+  replyToId?: string;
+  reply?: ReplyPreview;
+  sourceMessageId?: string;
   queuedAt: string;
   failure?: string;
 }
