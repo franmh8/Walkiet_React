@@ -26,6 +26,9 @@ Las opciones de responder, reenviar, copiar, editar y eliminar al mantener presi
 un mensaje se instalan siguiendo la [guía del menú de mensajes](backend-alwaysdata/CHAT_MENSAJES_OPCIONES_DESPLIEGUE.md).
 Requieren la migración 010, actualizar tres PHP y ejecutar `npm ci` en la app.
 
+El [diseño de las ubicaciones del chat](CHAT_UBICACION_DISENO.md) usa una tarjeta
+con miniatura de mapa y acceso para abrirla. Solo requiere actualizar la app.
+
 ## Actualizar un equipo existente
 
 Desde la carpeta `Walkiet_React`, detener Expo con **Ctrl+C** y revisar primero:

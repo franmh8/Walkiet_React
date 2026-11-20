@@ -32,6 +32,7 @@ import {MessageMenu} from './chat/actions/MessageMenu';
 import {ForwardMessageDialog} from './chat/actions/ForwardMessageDialog';
 import {ReplyQuote} from './chat/actions/ReplyQuote';
 import {mediaLabel} from './chat/actions/messageTypes';
+import {LocationMessageCard} from './chat/location/LocationMessageCard';
 import {useChatPhotoGallery} from './chat/photos/useChatPhotoGallery';
 import type {ChatPhoto} from './chat/photos/photoTypes';
 import { useChatController } from './chat/ChatController';
@@ -1072,7 +1073,7 @@ const position =
             text: 'Enviar ubicación',
             onPress: () => sendMediaMessage(
               'location',
-              `📍 Ubicación Real [${lat.toFixed(5)}, ${lng.toFixed(5)}]`,
+              'Ubicación compartida',
               `https://www.google.com/maps?q=${lat},${lng}`,
               undefined,
               coords
@@ -1108,7 +1109,7 @@ const position =
             if (geoData?.display_name) addressLabel = geoData.display_name.split(',').slice(0, 3).join(', ');
           }
         } catch {}
-        sendMediaMessage('location', `📍 Ubicación Real [${lat.toFixed(5)}, ${lng.toFixed(5)}]`,
+        sendMediaMessage('location', 'Ubicación compartida',
           `https://www.google.com/maps?q=${lat},${lng}`, undefined,
           { latitude: lat, longitude: lng, address: addressLabel });
       },
@@ -2015,6 +2016,7 @@ const position =
                                 styles.chatBubble,
                                 isSelf ? styles.chatBubbleSelf : styles.chatBubbleOther,
                                 msg.mediaType === 'image' && {padding: 4, overflow: 'hidden'},
+                                msg.mediaType === 'location' && {width: 264, padding: 6, borderRadius: 18},
                                 msg.mediaType === 'voice' && {width: '82%', maxWidth: 340, borderRadius: 20, paddingHorizontal: 10, paddingVertical: 8},
                               ]}
                             >
@@ -2033,35 +2035,8 @@ const position =
                                   <Image source={{uri:msg.mediaUrl}} style={styles.chatBubbleMediaImage} resizeMode="cover" accessibilityLabel="Foto del chat"/>
                                 </TouchableOpacity>
                               ) : msg.mediaType === 'location' ? (
-                                <TouchableOpacity
-                                  style={styles.chatBubbleLocationBox}
-                                  activeOpacity={0.8}
-                                  onPress={() => {
-                                    if (Date.now()>=actions.suppressPress.current && msg.mediaUrl) {
-                                      Linking.openURL(msg.mediaUrl).catch(() => {});
-                                    }
-                                  }}
-                                >
-                                  <View style={styles.chatBubbleLocationHeader}>
-                                    <MapPinIcon size={16} color={isSelf ? '#86efac' : '#059669'} />
-                                    <Text
-                                      style={[
-                                        styles.chatBubbleLocationTitle,
-                                        isSelf && { color: '#ffffff' },
-                                      ]}
-                                    >
-                                      Posición GPS Táctica (Tocar para ver en Mapa)
-                                    </Text>
-                                  </View>
-                                  <Text
-                                    style={[
-                                      styles.chatBubbleText,
-                                      isSelf ? styles.chatBubbleTextSelf : styles.chatBubbleTextOther,
-                                    ]}
-                                  >
-                                    {msg.text}
-                                  </Text>
-                                </TouchableOpacity>
+                                <LocationMessageCard mediaUrl={msg.mediaUrl} text={msg.text} isSelf={isSelf}
+                                  visible={chatVisible.ids.includes(msg.id)} onOpen={url=>{if(Date.now()>=actions.suppressPress.current)void Linking.openURL(url).catch(()=>showNativeAlert('No se pudo abrir el mapa','Inténtalo de nuevo o copia el enlace desde las opciones del mensaje.'));}}/>
                               ) : msg.mediaType === 'document' ? (
                                 <TouchableOpacity
                                   style={styles.chatBubbleDocBox}
@@ -4414,20 +4389,6 @@ const baseStyles = StyleSheet.create({
   },
   chatBubbleMediaCaption: {
     marginTop: 4,
-  },
-  chatBubbleLocationBox: {
-    gap: 4,
-  },
-  chatBubbleLocationHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    marginBottom: 2,
-  },
-  chatBubbleLocationTitle: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#059669',
   },
   chatBubbleDocBox: {
     flexDirection: 'row',
