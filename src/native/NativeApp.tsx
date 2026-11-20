@@ -388,6 +388,7 @@ function NativeAppScreen() {
     if(saved)actions.afterSend(reply?.id);
     return saved;
   };
+  const totalUnreadCount = conversations.reduce((sum, c) => sum + (c.unreadCount || 0), 0);
   const chatScroll = useChatScroll(activeConversation?.id, activeConversation?.messages || []);
   const chatVisible=useVisibleChatMessages(activeConversation?.id,currentTab==='Chat'&&!!activeConversation&&!isNewChatModalOpen&&!isCreateGroupChatModalOpen&&!isLiveCameraModalOpen&&!viewedPhoto&&!actions.menuOpen&&!actions.forwarding);
   const incomingVisible=chatVisible.ids.filter(id=>activeConversation?.messages.some(message=>message.id===id&&!message.isSelf));
@@ -2428,11 +2429,18 @@ const position =
             onPress={() => setCurrentTab('Chat')}
             activeOpacity={0.7}
           >
-            <MessageSquareIcon
-              size={22}
-              color={currentTab === 'Chat' ? palette.accent : palette.muted}
-              strokeWidth={currentTab === 'Chat' ? 2.4 : 1.8}
-            />
+            <View style={{ position: 'relative' }}>
+              <MessageSquareIcon
+                size={22}
+                color={currentTab === 'Chat' ? palette.accent : palette.muted}
+                strokeWidth={currentTab === 'Chat' ? 2.4 : 1.8}
+              />
+              {totalUnreadCount > 0 && (
+                <View style={{ position: 'absolute', right: -10, top: -8, minWidth: 18, height: 18, borderRadius: 9, backgroundColor: '#E11D48', paddingHorizontal: 3, justifyContent: 'center', alignItems: 'center' }}>
+                  <Text style={{ color: '#fff', fontSize: 10, fontWeight: 'bold' }}>{totalUnreadCount > 99 ? '99+' : totalUnreadCount}</Text>
+                </View>
+              )}
+            </View>
             <Text style={[styles.cleanNavLabel, currentTab === 'Chat' && styles.cleanNavLabelActive]}>
               Chat
             </Text>

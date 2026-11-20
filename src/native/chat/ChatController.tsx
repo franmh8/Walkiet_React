@@ -64,7 +64,7 @@ export function useChatController({ serverUrl, currentUser, showAlert, playMessa
     targetUserId: t.targetUserId || undefined,
     participantCount: t.participantCount || 0,
     lastMessage: t.lastMessage || '', lastMessageTime: chatTime(t.lastMessageAt, t.lastMessageTime || ''),
-    unreadCount: 0, hasMessages: t.hasMessages, lastMessageStatus: t.lastMessageStatus || undefined, messages: [],
+    unreadCount: Math.max(0, Number(t.unreadCount) || 0), hasMessages: t.hasMessages, lastMessageStatus: t.lastMessageStatus || undefined, messages: [],
   }), []);
 
   const fromServerMessage = useCallback((m: ChatMessageDto): ChatMessage => ({

@@ -8,7 +8,7 @@ export function useChatAcknowledgements(api:Api|null, threadId:string|undefined,
   const receive=useRef(onIncoming);receive.current=onIncoming;
   const currentApi=useRef(api);currentApi.current=api;
   const visible=useRef(visibleIds);visible.current=visibleIds;
-  const enabled=useRef(readReceipts);enabled.current=readReceipts;
+  // El visto privado se registra aunque las palomitas públicas estén desactivadas.
   // Recepción en cualquier pestaña de la app; el servidor solo marca después
   // de que este dispositivo obtiene y valida la respuesta completa.
   useEffect(()=>{
@@ -31,13 +31,13 @@ export function useChatAcknowledgements(api:Api|null, threadId:string|undefined,
   },[api]);
   const key=visibleIds.join('|');
   useEffect(()=>{
-    if(!api||!threadId||!readReceipts)return;
+    if(!api||!threadId)return;
     let disposed=false,running=false;const confirmed=new Set<string>();
     const read=async()=>{
-      if(disposed||running||!chatForeground()||!enabled.current||!api.supportsReceipts)return;
+      if(disposed||running||!chatForeground()||!api.supportsReceipts)return;
       const ids=visible.current.filter(id=>!confirmed.has(id)).slice(0,100);
       if(!ids.length)return;running=true;
-      try{const response=await api.acknowledge(threadId,ids,true);if(response.read_recorded)ids.forEach(id=>confirmed.add(id));}catch{}finally{running=false;}
+      try{const response=await api.acknowledge(threadId,ids,true);if(response.seen_recorded)ids.forEach(id=>confirmed.add(id));}catch{}finally{running=false;}
     };
     const delay=setTimeout(()=>void read(),400);const timer=setInterval(()=>void read(),4000);
     return()=>{disposed=true;clearTimeout(delay);clearInterval(timer);};

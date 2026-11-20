@@ -17,6 +17,7 @@ export interface ChatThreadDto {
   lastMessageAt?: string | null;
   hasMessages?: boolean;
   lastMessageStatus?: MessageStatus | null;
+  unreadCount?: number;
 }
 
 export interface ChatMessageDto extends ChatDateFields {
@@ -127,7 +128,7 @@ export function createChatSyncApi(baseUrl: string, token: string, fetcher: typeo
       const known=new Map(mediaCache);
       return messages(await request('inbox',known.size?{known_media:[...known.keys()].join(',')}:{}),known);
     },
-    acknowledge(threadId: string, ids: string[], read=false): Promise<{read_recorded:boolean}> {
+    acknowledge(threadId: string, ids: string[], read=false): Promise<{read_recorded:boolean;seen_recorded:boolean}> {
       return request('receipts',{thread_id:threadId,message_ids:ids,read},'POST');
     },
     async listThreads(): Promise<ChatThreadDto[]> {

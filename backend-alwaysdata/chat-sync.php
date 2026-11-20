@@ -27,6 +27,9 @@ function chatThreads(PDO $pdo,$owner,$zone,$timestampColumn) {
  $deleted=$ready?'ann.deleted_at':'NULL';
  $stmt=$pdo->prepare("SELECT t.id,t.kind,t.name AS group_name,peer.id AS target_user_id,peer.name AS peer_name,personal.name AS contact_name,peer.callsign,peer.unit,peer.status,
   (SELECT COUNT(*) FROM chat_thread_members cm WHERE cm.thread_id=t.id) AS participants,
+  (SELECT COUNT(*) FROM chat_thread_messages unread
+    LEFT JOIN chat_message_receipts receipt ON receipt.message_id=unread.id AND receipt.user_id=?
+    WHERE unread.thread_id=t.id AND unread.sender_id<>? AND receipt.seen_at IS NULL) AS unread_count,
   last.id AS last_message_id,CASE WHEN $deleted IS NOT NULL THEN 'Mensaje eliminado' WHEN last.media_type='image' AND last.content='' THEN 'Foto' ELSE last.content END AS last_message,
   last.created_at AS last_message_at,UNIX_TIMESTAMP(last.created_at) AS last_message_epoch
   FROM chat_threads t INNER JOIN chat_thread_members mine ON mine.thread_id=t.id AND mine.user_id=?
@@ -35,7 +38,7 @@ function chatThreads(PDO $pdo,$owner,$zone,$timestampColumn) {
   LEFT JOIN contactos personal ON personal.owner_user_id=? AND personal.phone_number=BINARY peer.phone_number
   LEFT JOIN chat_thread_messages last ON last.id=(SELECT m.id FROM chat_thread_messages m WHERE m.thread_id=t.id $visible ORDER BY m.created_at DESC,m.id DESC LIMIT 1)
   $annotation WHERE t.kind<>'direct' OR last.id IS NOT NULL ORDER BY t.updated_at DESC,t.id DESC LIMIT 200");
- $args=[$owner,$owner,$owner];if($ready)$args[]=$owner;
+ $args=[$owner,$owner,$owner,$owner,$owner];if($ready)$args[]=$owner;
  $stmt->execute($args);$out=[];$threads=$stmt->fetchAll(PDO::FETCH_ASSOC);
  $lastIds=array_values(array_filter(array_column($threads,'last_message_id')));$statuses=[];
  if($lastIds){$marks=implode(',',array_fill(0,count($lastIds),'?'));foreach(chatMessageRows($pdo,"m.id IN ($marks)",$lastIds,200,true,true)as$row)$statuses[$row['id']]=chatMessageStatus($row,$owner);}
@@ -44,7 +47,7 @@ function chatThreads(PDO $pdo,$owner,$zone,$timestampColumn) {
   $out[]=['id'=>(string)$r['id'],'type'=>$r['kind'],'name'=>$r['kind']==='direct'?(trim($r['contact_name']??'')?:($r['peer_name']?:'Contacto')):($r['group_name']?:'Grupo'),
    'targetUserId'=>$r['target_user_id']!==null?(string)$r['target_user_id']:null,'callsign'=>$r['callsign'],'unit'=>$r['unit'],'participantCount'=>(int)$r['participants'],
    'isOnline'=>$r['status']==='online'||$r['status']==='transmitting','lastMessage'=>$r['last_message']?:'',
-   'lastMessageTime'=>$date['timestamp'],'lastMessageAt'=>$date['sent_at'],'hasMessages'=>$r['last_message_id']!==null];
+   'lastMessageTime'=>$date['timestamp'],'lastMessageAt'=>$date['sent_at'],'hasMessages'=>$r['last_message_id']!==null,'unreadCount'=>(int)$r['unread_count']];
   $out[count($out)-1]['lastMessageStatus']=$statuses[$r['last_message_id']]??null;
  }
  return $out;

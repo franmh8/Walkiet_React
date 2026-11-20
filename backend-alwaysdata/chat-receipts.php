@@ -61,6 +61,7 @@ function chatAcknowledge(PDO $db, array $data, $owner) {
     $thread = $data['thread_id'] ?? '';
     $ids = $data['message_ids'] ?? null;
     $read = $data['read'] ?? false;
+    $markSeen = $read; // Estado privado: independiente de la privacidad de palomitas.
     if (!chatString($thread,64) || $thread==='' || !is_bool($read) || !is_array($ids) ||
         array_values($ids)!==$ids || count($ids)<1 || count($ids)>100) {
         chatRespond(422,['success'=>false,'message'=>'Confirmación de mensajes inválida.']);
@@ -81,9 +82,9 @@ function chatAcknowledge(PDO $db, array $data, $owner) {
         $db->rollBack(); chatRespond(422,['success'=>false,'message'=>'Solo puedes confirmar mensajes recibidos en este chat.']);
     }
     $stamp=(new DateTimeImmutable('now',new DateTimeZone('UTC')))->format('Y-m-d H:i:s.u');
-    $stmt=$db->prepare('INSERT INTO chat_message_receipts(message_id,user_id,delivered_at,read_at) VALUES(?,?,?,?)
-        ON DUPLICATE KEY UPDATE read_at=COALESCE(read_at,VALUES(read_at))');
-    foreach ($ids as $id) $stmt->execute([$id,$owner,$stamp,$read ? $stamp : null]);
+    $stmt=$db->prepare('INSERT INTO chat_message_receipts(message_id,user_id,delivered_at,read_at,seen_at) VALUES(?,?,?,?,?)
+        ON DUPLICATE KEY UPDATE read_at=COALESCE(read_at,VALUES(read_at)),seen_at=COALESCE(seen_at,VALUES(seen_at))');
+    foreach ($ids as $id) $stmt->execute([$id,$owner,$stamp,$read ? $stamp : null,$markSeen ? $stamp : null]);
     $db->commit();
-    return ['success'=>true,'read_recorded'=>$read];
+    return ['success'=>true,'read_recorded'=>$read,'seen_recorded'=>$markSeen];
 }
