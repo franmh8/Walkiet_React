@@ -1,7 +1,9 @@
 <?php
+require_once __DIR__.'/chat-actions.php';
 // Las entregas son acuses del dispositivo, nunca una inferencia de presencia.
-function chatMessageRows(PDO $db, $where, array $args, $limit = 100, $descending = true, $summary = false, array $knownMedia = []) {
+function chatMessageRows(PDO $db, $where, array $args, $limit = 100, $descending = true, $summary = false, array $knownMedia = [], $viewer = null) {
     $direction = $descending ? 'DESC' : 'ASC';
+    $prefix=[];$joins='';$joinArgs=[];
     $fields=$summary ? 'm.id,m.sender_id,m.thread_id,m.created_at' : 'm.*';
     if (!$summary && $knownMedia) {
         $marks=implode(',',array_fill(0,count($knownMedia),'?'));
@@ -10,7 +12,17 @@ function chatMessageRows(PDO $db, $where, array $args, $limit = 100, $descending
         $fields="m.id,m.thread_id,m.sender_id,m.content,m.media_type,m.file_name,m.created_at,
           CASE WHEN m.id IN ($marks) THEN NULL ELSE m.media_url END AS media_url,
           (m.id IN ($marks) AND m.media_url IS NOT NULL) AS media_unchanged";
-        $args=array_merge($knownMedia,$knownMedia,$args);
+        $prefix=array_merge($knownMedia,$knownMedia);
+    }
+    if(!$summary && chatActionsReady($db)) {
+        $fields.=',a.reply_to_id,a.edited_at,a.deleted_at,a.forwarded,q.id AS reply_message_id,q.sender_id AS quote_sender_id,
+          qu.name AS quote_sender_name,q.content AS quote_text,q.media_type AS quote_media_type,qa.deleted_at AS quote_deleted,qh.message_id AS quote_hidden';
+        $joins=' LEFT JOIN chat_message_annotations a ON a.message_id=m.id
+          LEFT JOIN chat_thread_messages q ON q.id=a.reply_to_id AND q.thread_id=m.thread_id
+          LEFT JOIN users qu ON qu.id=q.sender_id
+          LEFT JOIN chat_message_annotations qa ON qa.message_id=q.id
+          LEFT JOIN chat_message_hidden qh ON qh.message_id=q.id AND qh.user_id=?';
+        $joinArgs=[$viewer];
     }
     $stmt = $db->prepare("SELECT $fields,u.name AS sender_name,u.callsign AS sender_callsign,
         (SELECT COUNT(*) FROM chat_thread_members cm WHERE cm.thread_id=m.thread_id AND cm.user_id<>m.sender_id) AS recipient_count,
@@ -20,9 +32,9 @@ function chatMessageRows(PDO $db, $where, array $args, $limit = 100, $descending
           LEFT JOIN account_read_privacy p ON p.user_id=r.user_id
           WHERE r.message_id=m.id AND r.user_id<>m.sender_id AND r.read_at IS NOT NULL AND COALESCE(p.read_receipts,1)=1) AS read_count,
         UNIX_TIMESTAMP(m.created_at) AS sent_epoch
-        FROM chat_thread_messages m LEFT JOIN users u ON u.id=m.sender_id
+        FROM chat_thread_messages m LEFT JOIN users u ON u.id=m.sender_id $joins
         WHERE $where ORDER BY m.created_at $direction,m.id $direction LIMIT $limit");
-    $stmt->execute($args);
+    $stmt->execute(array_merge($prefix,$joinArgs,$args));
     $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
     return $descending ? array_reverse($rows) : $rows;
 }
@@ -36,9 +48,11 @@ function chatMessageDto(array $row, $zone, $timestampColumn, $owner) {
     return array_merge([
         'id'=>(string)$row['id'], 'thread_id'=>(string)$row['thread_id'], 'sender_id'=>(string)$row['sender_id'],
         'sender_name'=>$row['sender_name'] ?: 'Oficial', 'sender_callsign'=>$row['sender_callsign'] ?: '',
-        'text'=>$row['content'], 'mediaType'=>$row['media_type'], 'mediaUrl'=>$row['media_url'],
-        'fileName'=>$row['file_name'], 'created_at'=>$row['created_at'],
-        'media_unchanged'=>!empty($row['media_unchanged']),
+        'text'=>!empty($row['deleted_at'])?'Mensaje eliminado':$row['content'], 'mediaType'=>!empty($row['deleted_at'])?'text':$row['media_type'], 'mediaUrl'=>!empty($row['deleted_at'])?null:$row['media_url'],
+        'fileName'=>!empty($row['deleted_at'])?null:$row['file_name'], 'created_at'=>$row['created_at'],
+        'media_unchanged'=>empty($row['deleted_at'])&&!empty($row['media_unchanged']),
+        'deleted'=>!empty($row['deleted_at']), 'editedAt'=>!empty($row['edited_at'])?str_replace(' ','T',$row['edited_at']).'Z':null,
+        'forwarded'=>empty($row['deleted_at'])&&!empty($row['forwarded']), 'reply'=>empty($row['deleted_at'])?chatReplyDto($row):null,
         // Solo el remitente obtiene la confirmación de sus propios mensajes.
         'status'=>chatMessageStatus($row,$owner),
     ],chatTimeFields($row['created_at'],$zone,$timestampColumn ? $row['sent_epoch'] : null));

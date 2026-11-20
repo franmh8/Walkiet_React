@@ -10,6 +10,8 @@ import { useChatOutbox } from './useChatOutbox';
 import {chatForeground} from './useChatOutbox';
 import {startChatPolling} from './chatPoller';
 import {watchChatWake} from './chatWake';
+import type {SendContext} from './actions/messageTypes';
+import {mediaLabel} from './actions/messageTypes';
 import type {ChatPhoto} from './photos/photoTypes';
 import type { OutboxEntry } from './chatOutbox';
 import { chatTime } from './chatDates';
@@ -45,6 +47,7 @@ export function useChatController({ serverUrl, currentUser, showAlert, playMessa
   const [newGroupName, setNewGroupName] = useState('');
   const [selectedGroupMembers, setSelectedGroupMembers] = useState<string[]>([]);
   const [createGroupError, setCreateGroupError] = useState<string | null>(null);
+  const refreshMessages=useRef<()=>void>(()=>{}),refreshThreads=useRef<()=>void>(()=>{});
   const [chatSyncError, setChatSyncError] = useState<string | null>(null);
 
   const chatApi = useMemo(() => currentUser?.id && currentUser?.authToken
@@ -69,16 +72,18 @@ export function useChatController({ serverUrl, currentUser, showAlert, playMessa
     senderCallsign: m.sender_callsign || undefined, text: m.text || '',
     timestamp: chatTime(m.sentAt, m.timestamp), sentAt: m.sentAt || null, isSelf: m.sender_id === currentUser?.id,
     status: m.status || 'sent', mediaType: m.mediaType || 'text',
-    mediaUrl: m.mediaUrl || undefined, fileName: m.fileName || undefined,
+    mediaUrl: m.mediaUrl || undefined, fileName: m.fileName || undefined,reply:m.reply||null,deleted:!!m.deleted,editedAt:m.editedAt||null,forwarded:!!m.forwarded,
   }), [currentUser?.id]);
 
   const outbox=useChatOutbox(serverUrl,currentUser?.id||'',chatApi,(entry,saved)=>{
     const user=currentUser;if(!user)return;
-    if(entry.saveImage && entry.mediaUrl) capturedPhoto.current?.({id:saved.id,dataUrl:entry.mediaUrl});
-    const message:ChatMessage={id:saved.id,senderId:user.id,senderName:user.name,text:entry.text,
+    if(!saved.deleted && entry.saveImage && entry.mediaUrl) capturedPhoto.current?.({id:saved.id,dataUrl:entry.mediaUrl});
+    const message:ChatMessage={id:saved.id,senderId:user.id,senderName:user.name,text:saved.text??entry.text,
       timestamp:chatTime(saved.sentAt||entry.queuedAt),sentAt:saved.sentAt||entry.queuedAt,isSelf:true,status:saved.status||'sent',
-      mediaType:entry.mediaType,mediaUrl:entry.mediaUrl,fileName:entry.fileName};
+      mediaType:saved.deleted?'text':entry.mediaType,mediaUrl:saved.deleted?undefined:entry.mediaUrl,fileName:saved.deleted?undefined:entry.fileName,
+      deleted:!!saved.deleted,editedAt:saved.editedAt||null,reply:saved.deleted?null:saved.reply||entry.reply||null,forwarded:!saved.deleted&&!!(saved.forwarded||entry.sourceMessageId)};
     const append=(c:Conversation)=>({...c,hasMessages:true,messages:c.messages.some(m=>m.id===message.id)?c.messages:[...c.messages,message],lastMessage:message.text,lastMessageTime:message.timestamp,lastMessageStatus:message.status});
+    refreshMessages.current();refreshThreads.current();
     setActiveConversation(c=>c?.id===entry.threadId?append(c):c);
     setConversations(old=>old.some(c=>c.id===entry.threadId) ? old.map(c=>c.id===entry.threadId?append(c):c) :
       [append({...entry.conversation,lastMessage:'',lastMessageTime:'',unreadCount:0,messages:[]}),...old]);
@@ -86,7 +91,7 @@ export function useChatController({ serverUrl, currentUser, showAlert, playMessa
   const pendingMessages=(threadId:string,known:ChatMessage[]):ChatMessage[]=>outbox.entries.filter(entry=>entry.threadId===threadId&&!known.some(message=>message.id===entry.serverId)).map(entry=>({
     id:'pending-'+entry.clientId,clientId:entry.clientId,senderId:currentUser?.id||'',senderName:currentUser?.name||'',
     text:entry.text,timestamp:chatTime(entry.queuedAt),sentAt:entry.queuedAt,isSelf:true,status:entry.failure?'failed':'pending',
-    mediaType:entry.mediaType,mediaUrl:entry.mediaUrl,fileName:entry.fileName,
+    mediaType:entry.mediaType,mediaUrl:entry.mediaUrl,fileName:entry.fileName,reply:entry.reply||null,forwarded:!!entry.sourceMessageId,
   }));
   const decorate=(conversation:Conversation):Conversation=>{
     const pending=pendingMessages(conversation.id,conversation.messages);const last=pending[pending.length-1];
@@ -131,8 +136,9 @@ export function useChatController({ serverUrl, currentUser, showAlert, playMessa
       }
     };
     const poller = startChatPolling(refresh, chatForeground, 3000);
+    refreshThreads.current=poller.wake;
     const unwatch = watchChatWake(poller.wake);
-    return () => { disposed = true; poller.stop(); unwatch(); };
+    return () => { disposed = true; refreshThreads.current=()=>{};poller.stop(); unwatch(); };
   }, [chatApi, currentUser?.id, fromServerThread]);
 
   // Actualiza el chat abierto también cuando otro dispositivo envía mensajes.
@@ -151,6 +157,7 @@ export function useChatController({ serverUrl, currentUser, showAlert, playMessa
             const sentAt = message.sentAt || known.get(message.id)?.sentAt || null;
             const next={ ...message, sentAt, timestamp: chatTime(sentAt, message.timestamp) };
             const old=known.get(message.id);
+            if(old&&JSON.stringify(old.reply)===JSON.stringify(next.reply))next.reply=old.reply;
             return old && Object.keys(next).every(key=>old[key as keyof ChatMessage]===next[key as keyof ChatMessage]) ? old : next;
           });
           if (messages.every(message => message.sentAt)) messages.sort((left, right) => Date.parse(left.sentAt!) - Date.parse(right.sentAt!));
@@ -169,8 +176,9 @@ export function useChatController({ serverUrl, currentUser, showAlert, playMessa
       }
     };
     const poller = startChatPolling(refresh, chatForeground, 1200);
+    refreshMessages.current=poller.wake;
     const unwatch = watchChatWake(poller.wake);
-    return () => { disposed = true; poller.stop(); unwatch(); };
+    return () => { disposed = true;refreshMessages.current=()=>{}; poller.stop(); unwatch(); };
   }, [chatApi, activeConversation?.id, fromServerMessage]);
 
   const filteredConversations = useMemo(() => allConversations.filter(c => {
@@ -253,7 +261,7 @@ export function useChatController({ serverUrl, currentUser, showAlert, playMessa
   const sendMediaMessage = async (
     mediaType: 'text' | 'image' | 'voice' | 'location' | 'document',
     caption: string, mediaUrl?: string, fileName?: string,
-    coords?: { latitude: number; longitude: number; address?: string }, saveImage=false
+    coords?: { latitude: number; longitude: number; address?: string }, saveImage=false, context: SendContext={}
   ): Promise<boolean> => {
     const conv = activeConversation;
     const user = currentUser;
@@ -267,7 +275,7 @@ export function useChatController({ serverUrl, currentUser, showAlert, playMessa
       const serverId=await serverMessageId(user.id,clientId);
       const entry:OutboxEntry={clientId,serverId,threadId:conv.id,
         conversation:{id:conv.id,type:conv.type,name:conv.name,targetUserId:conv.targetUserId},
-        mediaType,text:caption,mediaUrl,fileName,saveImage,queuedAt:new Date().toISOString()};
+        mediaType,text:caption,mediaUrl,fileName,saveImage,...context,queuedAt:new Date().toISOString()};
       await outbox.enqueue(entry);
       if(chatSessionScopeRef.current!==scope)return false;
       if(saveImage && mediaUrl) capturedPhoto.current?.({id:serverId,dataUrl:mediaUrl});
@@ -289,12 +297,34 @@ export function useChatController({ serverUrl, currentUser, showAlert, playMessa
     if (saved) setChatDraftMessage(prev => prev.trim() === text ? '' : prev);
   };
 
+  const changeMessage=async(id:string,change:{text:string}|{scope:'me'|'everyone'})=>{
+    if(!chatApi||!activeConversation)return;
+    const scope=chatSessionScopeRef.current,thread=activeConversation.id;
+    const result='text' in change?await chatApi.editMessage(thread,id,change.text):await chatApi.deleteMessage(thread,id,change.scope);
+    if(chatSessionScopeRef.current!==scope)return;
+    const merge=(c:Conversation):Conversation=>{
+      if(c.id!==thread)return c;
+      const messages='scope' in change&&change.scope==='me'?c.messages.filter(m=>m.id!==id):c.messages.map(m=>m.id!==id?m:'text' in change?{...m,text:change.text.trim(),editedAt:('editedAt' in result&&typeof result.editedAt==='string'?result.editedAt:undefined)||new Date().toISOString()}:{...m,text:'Mensaje eliminado',deleted:true,mediaType:'text' as const,mediaUrl:undefined,fileName:undefined,reply:null,forwarded:false});
+      const last=messages[messages.length-1];return {...c,messages,hasMessages:messages.length>0,lastMessage:last?.text||'',lastMessageTime:last?.timestamp||''};
+    };
+    setActiveConversation(c=>c?merge(c):c);setConversations(old=>old.map(merge));refreshMessages.current();refreshThreads.current();
+  };
+  const forwardMessage=async(source:ChatMessage,target:Conversation|ContactOfficer)=>{
+    if(!currentUser||!chatApi)throw new Error('Inicia sesión para reenviar.');
+    if(!('messages' in target)&&!target.registered_user_id)throw new Error('El contacto necesita una cuenta registrada.');
+    const scope=chatSessionScopeRef.current;await chatApi.requireMessageActions();
+    const conversation:Conversation='messages' in target?target:{id:await chatApi.startDirect(target.registered_user_id!),name:target.name,type:'direct',targetUserId:target.registered_user_id||undefined,messages:[],lastMessage:'',lastMessageTime:'',unreadCount:0};
+    if(chatSessionScopeRef.current!==scope)throw new Error('La sesión cambió.');
+    const clientId=randomUUID().toLowerCase(),serverId=await serverMessageId(currentUser.id,clientId);
+    await outbox.enqueue({clientId,serverId,threadId:conversation.id,conversation:{id:conversation.id,type:conversation.type,name:conversation.name,targetUserId:conversation.targetUserId},text:source.text||mediaLabel(source.mediaType),mediaType:source.mediaType||'text',fileName:source.fileName,sourceMessageId:source.id,queuedAt:new Date().toISOString()});
+  };
+
   const toggleGroupMemberSelection = (id: string) => setSelectedGroupMembers(prev =>
     prev.includes(id) ? prev.filter(value => value !== id) : [...prev, id]);
 
   return {
     conversations:allConversations, setConversations, activeConversation:displayedActive, setActiveConversation,
-    chatApi, retryPending:outbox.retry,
+    chatApi, retryPending:outbox.retry,cancelPending:outbox.cancel,changeMessage,forwardMessage,
     chatSearchQuery, setChatSearchQuery, selectedChatFilter, setSelectedChatFilter,
     chatDraftMessage, setChatDraftMessage,
     isNewChatModalOpen, setIsNewChatModalOpen,

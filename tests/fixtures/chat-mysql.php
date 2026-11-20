@@ -5,6 +5,7 @@ $db->exec("CREATE TABLE IF NOT EXISTS chat_threads(id VARCHAR(64) PRIMARY KEY,ki
 $db->exec('CREATE TABLE IF NOT EXISTS chat_thread_members(thread_id VARCHAR(64),user_id VARCHAR(64),PRIMARY KEY(thread_id,user_id)) ENGINE=InnoDB');
 $db->exec('CREATE TABLE IF NOT EXISTS chat_thread_messages(id VARCHAR(64) PRIMARY KEY,thread_id VARCHAR(64),sender_id VARCHAR(64),content TEXT,media_type VARCHAR(20),media_url MEDIUMTEXT,file_name VARCHAR(255),created_at DATETIME(6) DEFAULT CURRENT_TIMESTAMP(6),KEY chat_order(thread_id,created_at,id)) ENGINE=InnoDB');
 $migration=file_get_contents(__DIR__.'/../../backend-alwaysdata/migrations/008_chat_receipts.sql');foreach(explode(';',$migration)as$statement)if(trim($statement)!=='')$db->exec($statement);
+foreach(explode(';',file_get_contents(__DIR__.'/../../backend-alwaysdata/migrations/010_chat_message_actions.sql'))as$statement)if(trim($statement)!=='')$db->exec($statement);
 foreach(['chat_message_receipts','chat_thread_messages','chat_thread_members','chat_threads']as$table)$db->exec('DELETE FROM '.$table);
 $db->exec("INSERT INTO chat_threads(id,kind,creator_id)VALUES('timeline-thread','direct','account-a')");
 $db->exec("INSERT INTO chat_thread_members(thread_id,user_id)VALUES('timeline-thread','account-a'),('timeline-thread','account-b')");
