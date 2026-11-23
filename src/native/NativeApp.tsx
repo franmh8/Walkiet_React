@@ -18,6 +18,8 @@ import {
 } from 'react-native';
 import { SafeAreaView, SafeAreaProvider } from 'react-native-safe-area-context';
 import { safeStorage } from './storage';
+import {createRegistrationApi, RegistrationApiError} from '../services/registrationApi';
+import {VerificationCodeInput} from './profile/VerificationCodeInput';
 import { MessageReceipt, type MessageStatus } from './chat/MessageReceipt';
 import { useVisibleChatMessages } from './chat/useVisibleChatMessages';
 import { useChatAcknowledgements } from './chat/useChatAcknowledgements';
@@ -256,7 +258,7 @@ function NativeAppScreen() {
   const [showPassword, setShowPassword] = useState(false);
 
   // Modals de Registro y Recuperación de Contraseña
-  type RegisterStep = 'form' | 'sms_verification' | 'success';
+  type RegisterStep = 'form' | 'email_verification' | 'success';
   const [registerVisible, setRegisterVisible] = useState(false);
   const [registerStep, setRegisterStep] = useState<RegisterStep>('form');
   const [regName, setRegName] = useState('');
@@ -269,11 +271,13 @@ function NativeAppScreen() {
   const [regGeneralError, setRegGeneralError] = useState<string | null>(null);
   const [isRegistering, setIsRegistering] = useState(false);
 
-  // Verificación SMS de Registro
-  const [regGeneratedCode, setRegGeneratedCode] = useState('');
-  const [regSmsDigits, setRegSmsDigits] = useState('');
+  // Verificación de correo del registro
+  const [regChallenge, setRegChallenge] = useState('');
+  const [regCode, setRegCode] = useState('');
   const [regResendTimer, setRegResendTimer] = useState(0);
-  const regSmsInputRef = useRef<any>(null);
+  const registrationPending=useRef(false);
+  const registrationGeneration=useRef(0);
+  const registrationSuccessTimer=useRef<ReturnType<typeof setTimeout>|null>(null);
 
   useEffect(() => {
     if (regResendTimer > 0) {
@@ -287,6 +291,10 @@ function NativeAppScreen() {
   const [currentTab, setCurrentTab] = useState<'PTT' | 'Grupos' | 'Chat' | 'Contactos' | 'Perfil'>('PTT');
 
   const [serverUrl, setServerUrl] = useState('https://walkiet.alwaysdata.net');
+  useEffect(()=>{
+    ++registrationGeneration.current; registrationPending.current=false; setIsRegistering(false);
+    return ()=>{++registrationGeneration.current; if(registrationSuccessTimer.current)clearTimeout(registrationSuccessTimer.current);};
+  },[registerVisible,serverUrl]);
   const updateProfileUser = useCallback((profile: AccountUser) => {
     setCurrentUser(previous => {
       if (!previous || previous.id !== profile.id) return previous;
@@ -635,8 +643,8 @@ function NativeAppScreen() {
     setRegShowPassword(false);
     setRegShowConfirmPassword(false);
     setRegGeneralError(null);
-    setRegGeneratedCode('');
-    setRegSmsDigits('');
+    setRegChallenge('');
+    setRegCode('');
     setRegResendTimer(0);
     setIsRegistering(false);
     setRegisterVisible(true);
@@ -689,200 +697,47 @@ function NativeAppScreen() {
       return;
     }
 
-    setIsRegistering(true);
-    try {
-      let codeToUse = Math.floor(100000 + Math.random() * 900000).toString();
-      if (serverUrl) {
-        try {
-          const cleanUrl = serverUrl.replace(/\/+$/, '');
-          const headers = getSafePostHeaders();
-          const payload = JSON.stringify({ phone: cleanPhone });
+    await sendRegistrationCode();
+  };
 
-          // 1. Endpoint directo PHP en InfinityFree (evita preflight OPTIONS en web)
-          let res = await fetchWithTimeout(`${cleanUrl}/send-otp.php`, {
-            method: 'POST',
-            headers,
-            body: payload,
-          }, 4500).catch(() => null);
-
-          if (!res || res.status === 404) {
-            res = await fetchWithTimeout(`${cleanUrl}/api/send-otp.php`, {
-              method: 'POST',
-              headers,
-              body: payload,
-            }, 4500).catch(() => null);
-          }
-
-          if (!res || res.status === 404) {
-            res = await fetchWithTimeout(`${cleanUrl}/api/auth/send-otp`, {
-              method: 'POST',
-              headers,
-              body: payload,
-            }, 4500).catch(() => null);
-          }
-
-          const data = res ? await res.json().catch(() => ({})) : null;
-          if (data && data.code) {
-            codeToUse = data.code;
-          }
-        } catch {}
+  const runRegistration = async (operation:()=>Promise<void>) => {
+    if (registrationPending.current) return;
+    registrationPending.current=true; setIsRegistering(true); setRegGeneralError(null);
+    const version=registrationGeneration.current;
+    try { await operation(); }
+    catch (error) {
+      if (version===registrationGeneration.current) {
+        setRegGeneralError(error instanceof Error ? error.message : 'No se pudo completar el registro.');
+        if (error instanceof RegistrationApiError && error.retryAfter) setRegResendTimer(error.retryAfter);
       }
-
-      setRegGeneratedCode(codeToUse);
-      setRegSmsDigits('');
-      setRegResendTimer(30);
-      setRegisterStep('sms_verification');
-    } catch {
-      setRegGeneralError('Error al contactar el servicio de verificación SMS.');
     } finally {
-      setIsRegistering(false);
+      if (version===registrationGeneration.current) {registrationPending.current=false;setIsRegistering(false);}
     }
   };
 
-  const handleResendRegisterSms = async () => {
-    if (regResendTimer > 0) return;
-    setIsRegistering(true);
-    try {
-      const cleanPhone = regPhone.replace(/\D/g, '').trim();
-      let codeToUse = Math.floor(100000 + Math.random() * 900000).toString();
-      if (serverUrl) {
-        try {
-          const cleanUrl = serverUrl.replace(/\/+$/, '');
-          const headers = getSafePostHeaders();
-          const payload = JSON.stringify({ phone: cleanPhone });
+  const sendRegistrationCode = () => runRegistration(async()=>{
+    const version=registrationGeneration.current;
+    const result=await createRegistrationApi(serverUrl).sendCode(regEmail,regPhone.replace(/\D/g,''));
+    if (version!==registrationGeneration.current) return;
+    setRegChallenge(result.challenge_id); setRegCode(''); setRegResendTimer(result.resend_after); setRegisterStep('email_verification');
+  });
 
-          let res = await fetchWithTimeout(`${cleanUrl}/send-otp.php`, {
-            method: 'POST',
-            headers,
-            body: payload,
-          }, 4500).catch(() => null);
+  const handleResendRegisterEmail = () => { if (regResendTimer===0) void sendRegistrationCode(); };
 
-          if (!res || res.status === 404) {
-            res = await fetchWithTimeout(`${cleanUrl}/api/send-otp.php`, {
-              method: 'POST',
-              headers,
-              body: payload,
-            }, 4500).catch(() => null);
-          }
-
-          if (!res || res.status === 404) {
-            res = await fetchWithTimeout(`${cleanUrl}/api/auth/send-otp`, {
-              method: 'POST',
-              headers,
-              body: payload,
-            }, 4500).catch(() => null);
-          }
-
-          const data = res ? await res.json().catch(() => ({})) : null;
-          if (data && data.code) {
-            codeToUse = data.code;
-          }
-        } catch {}
-      }
-      setRegGeneratedCode(codeToUse);
-      setRegSmsDigits('');
-      setRegResendTimer(30);
-      setRegGeneralError(null);
-    } finally {
-      setIsRegistering(false);
-    }
-  };
-
-  const handleVerifyRegisterSms = async () => {
-    setRegGeneralError(null);
-    if (!regSmsDigits || regSmsDigits.length !== 6) {
-      setRegGeneralError('Ingresa los 6 dígitos del código SMS.');
-      return;
-    }
-
-    setIsRegistering(true);
-    const cleanPhone = regPhone.replace(/\D/g, '').trim();
-    const cleanEmail = regEmail.trim();
-    const cleanName = regName.trim();
-    const autoCallsign = `RADIO-${cleanPhone.slice(-4) || 'TAC'}`;
-
-    try {
-      let registeredSuccess = false;
-      let serverErrorMsg: string | null = null;
-
-      if (serverUrl) {
-        const cleanUrl = serverUrl.replace(/\/+$/, '');
-        const headers = getSafePostHeaders();
-        const payload = JSON.stringify({
-          name: cleanName,
-          phone_number: cleanPhone,
-          correo: cleanEmail,
-          callsign: autoCallsign,
-          unit: 'Sector Operativo Hidalgo',
-          password: regPassword.trim(),
-          role: 'Oficial de Radio',
-        });
-
-        try {
-          // 1. Endpoint directo PHP en InfinityFree (evita preflight OPTIONS en navegador)
-          let res = await fetchWithTimeout(`${cleanUrl}/register.php`, {
-            method: 'POST',
-            headers,
-            body: payload,
-          }, 5000).catch(() => null);
-
-          if (!res || res.status === 404) {
-            res = await fetchWithTimeout(`${cleanUrl}/auth/register.php`, {
-              method: 'POST',
-              headers,
-              body: payload,
-            }, 5000).catch(() => null);
-          }
-
-          if (!res || res.status === 404) {
-            res = await fetchWithTimeout(`${cleanUrl}/api/auth/register`, {
-              method: 'POST',
-              headers,
-              body: payload,
-            }, 5000).catch(() => null);
-          }
-
-          if (res) {
-            const rawText = await res.text().catch(() => '');
-            let data: any = null;
-            try {
-              data = JSON.parse(rawText);
-            } catch {}
-
-            if (res.ok && data && (data.success || data.user)) {
-              registeredSuccess = true;
-            } else if (data && data.message) {
-              serverErrorMsg = data.message;
-            } else if (rawText.includes('aes.js') || rawText.includes('__test') || rawText.includes('openresty')) {
-              serverErrorMsg = 'El servidor anterior devolvió un bloqueo. Asegúrate de tener https://walkiet.alwaysdata.net en Ajustes ⚙️';
-            } else {
-              serverErrorMsg = `El servidor respondió con código HTTP ${res.status}`;
-            }
-          } else {
-            serverErrorMsg = 'No fue posible contactar a walkiet.alwaysdata.net (error de red o timeout).';
-          }
-        } catch (e: any) {
-          serverErrorMsg = e.message || 'Error al comunicarse con la base de datos C5i.';
-        }
-      }
-
-      if (!registeredSuccess) {
-        setRegGeneralError(serverErrorMsg || 'Error al guardar el nuevo oficial en la base de datos MySQL.');
-        return;
-      }
-
-      setRegisterStep('success');
-      setTimeout(() => {
-        setIdentifier(cleanPhone);
-        setPassword(regPassword);
-        setSuccessMessage('¡Registro completado! Tu cuenta ha sido dada de alta en MySQL.');
-        setRegisterVisible(false);
-      }, 1300);
-    } catch (e: any) {
-      setRegGeneralError(e.message || 'Error en el proceso de alta en el servidor.');
-    } finally {
-      setIsRegistering(false);
-    }
+  const handleVerifyRegisterEmail = () => {
+    if (!regChallenge || regCode.length!==6) return;
+    void runRegistration(async()=>{
+      const version=registrationGeneration.current;
+      const cleanPhone=regPhone.replace(/\D/g,'');
+      await createRegistrationApi(serverUrl).complete({name:regName.trim(),phone_number:cleanPhone,correo:regEmail,password:regPassword,challenge_id:regChallenge,code:regCode});
+      if (version!==registrationGeneration.current) return;
+      setRegCode(''); setRegChallenge(''); setRegisterStep('success');
+      registrationSuccessTimer.current=setTimeout(()=>{
+        setIdentifier(cleanPhone); setPassword('');
+        setSuccessMessage('¡Registro completado! Tu correo quedó verificado. Ya puedes iniciar sesión.');
+        setRegisterVisible(false); setRegPassword(''); setRegConfirmPassword('');
+      },1300);
+    });
   };
 
   const openRecoveryModal = () => setRecoverVisible(true);
@@ -1493,7 +1348,7 @@ const position =
           visible={registerVisible}
           animationType="fade"
           transparent
-          onRequestClose={() => setRegisterVisible(false)}
+          onRequestClose={() => {if(!isRegistering)setRegisterVisible(false);}}
         >
           <KeyboardAvoidingView
             behavior={Platform.OS === 'ios' ? 'padding' : undefined}
@@ -1504,22 +1359,22 @@ const position =
               <View style={styles.recoveryHeader}>
                 <View style={styles.recoveryHeaderLeft}>
                   <View style={styles.recoveryKeyBadge}>
-                    {registerStep === 'sms_verification' ? (
-                      <PhoneIcon size={20} color={palette.accent} strokeWidth={1.8} />
+                    {registerStep === 'email_verification' ? (
+                      <MailIcon size={20} color={palette.accent} strokeWidth={1.8} />
                     ) : (
                       <UserPlusIcon size={20} color={palette.accent} strokeWidth={1.8} />
                     )}
                   </View>
                   <Text style={styles.recoveryTitle}>
-                    {registerStep === 'sms_verification'
-                      ? 'Verificar Celular'
+                    {registerStep === 'email_verification'
+                      ? 'Verificar correo'
                       : registerStep === 'success'
                       ? '¡Registro completado!'
                       : 'Registro'}
                   </Text>
                 </View>
                 <TouchableOpacity
-                  onPress={() => setRegisterVisible(false)}
+                  disabled={isRegistering} onPress={() => setRegisterVisible(false)}
                   style={styles.modalCloseBtn}
                   hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                 >
@@ -1550,7 +1405,7 @@ const position =
                       <View style={styles.recoveryInputIconBox}>
                         <UserIcon size={16} color="#94a3b8" />
                       </View>
-                      <TextInput
+                      <TextInput editable={!isRegistering}
                         style={styles.recoveryInput}
                         value={regName}
                         onChangeText={(val) => {
@@ -1576,7 +1431,7 @@ const position =
                       <View style={styles.recoveryInputIconBox}>
                         <PhoneIcon size={16} color="#94a3b8" />
                       </View>
-                      <TextInput
+                      <TextInput editable={!isRegistering}
                         style={styles.recoveryInput}
                         value={regPhone}
                         onChangeText={(val) => {
@@ -1604,7 +1459,7 @@ const position =
                       <View style={styles.recoveryInputIconBox}>
                         <MailIcon size={16} color="#94a3b8" />
                       </View>
-                      <TextInput
+                      <TextInput editable={!isRegistering}
                         style={styles.recoveryInput}
                         value={regEmail}
                         onChangeText={(val) => {
@@ -1633,7 +1488,7 @@ const position =
                         <View style={styles.recoveryInputIconBox}>
                           <LockIcon size={15} color="#94a3b8" />
                         </View>
-                        <TextInput
+                        <TextInput editable={!isRegistering}
                           style={styles.recoveryInput}
                           value={regPassword}
                           onChangeText={(val) => {
@@ -1665,7 +1520,7 @@ const position =
                         <View style={styles.recoveryInputIconBox}>
                           <LockIcon size={15} color="#94a3b8" />
                         </View>
-                        <TextInput
+                        <TextInput editable={!isRegistering}
                           style={styles.recoveryInput}
                           value={regConfirmPassword}
                           onChangeText={(val) => {
@@ -1721,7 +1576,7 @@ const position =
                   <View style={styles.recoveryButtonsRow}>
                     <TouchableOpacity
                       style={styles.recoveryCancelBtn}
-                      onPress={() => setRegisterVisible(false)}
+                      disabled={isRegistering} onPress={() => setRegisterVisible(false)}
                       activeOpacity={0.7}
                     >
                       <Text style={styles.recoveryCancelText}>Cancelar</Text>
@@ -1759,89 +1614,48 @@ const position =
                 </View>
               )}
 
-              {/* STEP 2: VERIFICACIÓN CELULAR (SMS OTP) */}
-              {registerStep === 'sms_verification' && (
+              {/* STEP 2: VERIFICACIÓN DE CORREO */}
+              {registerStep === 'email_verification' && (
                 <View>
                   <View style={styles.recoveryStepNavRow}>
                     <TouchableOpacity
                       style={styles.recoveryBackBtn}
-                      onPress={() => setRegisterStep('form')}
+                      disabled={isRegistering} onPress={() => {setRegisterStep('form');setRegGeneralError(null);}}
                       activeOpacity={0.7}
                     >
                       <ArrowLeftIcon size={14} color={palette.muted} />
                       <Text style={styles.recoveryBackText}>Volver</Text>
                     </TouchableOpacity>
 
-                    {regGeneratedCode ? (
-                      <TouchableOpacity
-                        onPress={() => setRegSmsDigits(regGeneratedCode)}
-                        activeOpacity={0.7}
-                      >
-                        <Text style={styles.recoveryCodeBadge}>Código: {regGeneratedCode}</Text>
-                      </TouchableOpacity>
-                    ) : null}
                   </View>
 
                   <Text style={styles.recoveryTokenTitle}>
-                    Ingresa el código enviado al +52 {regPhone}
+                    Ingresa el código enviado a {regEmail.trim()}
                   </Text>
 
-                  {/* Cajas de dígitos OTP sincronizadas */}
-                  <TouchableOpacity
-                    activeOpacity={1}
-                    onPress={() => regSmsInputRef.current?.focus()}
-                    style={styles.tokenBoxesRow}
-                  >
-                    {[0, 1, 2, 3, 4, 5].map((idx) => {
-                      const char = regSmsDigits[idx] || '';
-                      const isCurrent = regSmsDigits.length === idx;
-                      return (
-                        <View
-                          key={idx}
-                          style={[
-                            styles.tokenBox,
-                            Boolean(char) && styles.tokenBoxFilled,
-                            isCurrent && styles.tokenBoxActive,
-                          ]}
-                        >
-                          <Text style={styles.tokenDigitText}>{char}</Text>
-                        </View>
-                      );
-                    })}
-                  </TouchableOpacity>
+                  <VerificationCodeInput key={regChallenge} disabled={isRegistering} invalid={!!regGeneralError}
+                    onChange={value=>{setRegCode(value);setRegGeneralError(null);}} />
+                  <Text style={{fontSize:11,color:palette.muted,textAlign:'center',marginTop:10}}>
+                    Caduca en 3 minutos · Revisa también spam
+                  </Text>
 
-                  {/* Input nativo oculto para compatibilidad de teclado en iOS */}
-                  <TextInput
-                    ref={regSmsInputRef}
-                    style={styles.hiddenInput}
-                    value={regSmsDigits}
-                    onChangeText={(val) => {
-                      const cleaned = val.replace(/\D/g, '').slice(0, 6);
-                      setRegSmsDigits(cleaned);
-                      if (regGeneralError) setRegGeneralError(null);
-                    }}
-                    keyboardType="number-pad"
-                    maxLength={6}
-                    autoFocus
-                  />
-
-                  {/* Enlace para reenviar SMS con temporizador */}
                   <View style={styles.resendRow}>
                     <TouchableOpacity
                       style={styles.resendBtn}
-                      onPress={handleResendRegisterSms}
+                      onPress={handleResendRegisterEmail}
                       disabled={regResendTimer > 0 || isRegistering}
                     >
-                      <RotateCwIcon size={13} color={regResendTimer > 0 ? '#94a3b8' : '#0284c7'} />
+                      <RotateCwIcon size={13} color={regResendTimer > 0 ? palette.muted : palette.accent} />
                       <Text
                         style={[
                           styles.resendText,
+                          {color:palette.accent},
                           regResendTimer > 0 && styles.resendTextDisabled,
                         ]}
                       >
                         {regResendTimer > 0
                           ? `Reenviar en ${regResendTimer}s`
-                          : 'Reenviar SMS'}
+                          : 'Reenviar correo'}
                       </Text>
                     </TouchableOpacity>
                   </View>
@@ -1850,7 +1664,7 @@ const position =
                   <View style={styles.recoveryButtonsRow}>
                     <TouchableOpacity
                       style={styles.recoveryCancelBtn}
-                      onPress={() => setRegisterVisible(false)}
+                      disabled={isRegistering} onPress={() => setRegisterVisible(false)}
                       activeOpacity={0.7}
                     >
                       <Text style={styles.recoveryCancelText}>Cancelar</Text>
@@ -1859,11 +1673,11 @@ const position =
                     <TouchableOpacity
                       style={[
                         styles.recoverySubmitBtn,
-                        (regSmsDigits.length !== 6 || isRegistering) &&
+                        (regCode.length !== 6 || isRegistering) &&
                           styles.recoverySubmitBtnDisabled,
                       ]}
-                      onPress={handleVerifyRegisterSms}
-                      disabled={regSmsDigits.length !== 6 || isRegistering}
+                      onPress={handleVerifyRegisterEmail}
+                      disabled={regCode.length !== 6 || isRegistering}
                       activeOpacity={0.88}
                     >
                       {isRegistering ? (
@@ -1884,7 +1698,7 @@ const position =
                   </View>
                   <Text style={styles.successTitleText}>¡Registro completado!</Text>
                   <Text style={styles.successSubText}>
-                    Número validado. Redirigiendo al inicio de sesión...
+                    Correo verificado. Redirigiendo al inicio de sesión...
                   </Text>
                 </View>
               )}

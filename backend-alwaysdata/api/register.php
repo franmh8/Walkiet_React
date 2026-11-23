@@ -1,2 +1,2 @@
 <?php
-require_once __DIR__ . '/../register.php';
+require __DIR__.'/../register.php';

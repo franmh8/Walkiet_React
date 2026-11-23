@@ -379,73 +379,21 @@ app.post(['/api/auth/logout', '/logout.php'], async (req: Request, res: Response
   catch { return res.status(503).json({ success: false }); }
 });
 
-// OTP Store for SMS verification in registration
-const otpTokens = new Map<string, { code: string; expiresAt: number }>();
-
-// 2.9 Authentication: Send SMS OTP for Registration
-app.post(['/api/auth/send-otp', '/api/security/send-otp', '/send-otp.php', '/api/send-otp.php'], (req: Request, res: Response) => {
-  const { phone, phone_number } = req.body;
-  const target = String(phone || phone_number || '').replace(/\D/g, '');
-  if (!target || target.length < 7) {
-    return res.status(400).json({ success: false, message: 'Número de teléfono celular inválido' });
-  }
-
-  const code = Math.floor(100000 + Math.random() * 900000).toString();
-  otpTokens.set(target, { code, expiresAt: Date.now() + 10 * 60 * 1000 });
-
-  return res.json({
-    success: true,
-    code,
-    message: 'Código de verificación generado y despachado por SMS.',
-  });
-});
-
-// 2.10 Authentication: Verify SMS OTP
-app.post(['/api/auth/verify-otp', '/api/security/verify-otp', '/verify-otp.php', '/api/verify-otp.php'], (req: Request, res: Response) => {
-  const { phone, phone_number, code } = req.body;
-  const target = String(phone || phone_number || '').replace(/\D/g, '');
-  const cleanCode = String(code || '').trim();
-
-  const stored = otpTokens.get(target);
-  if (!stored) {
-    if (cleanCode === '123456') {
-      return res.json({ success: true, message: 'Código verificado correctamente.' });
-    }
-    return res.status(400).json({ success: false, message: 'No hay un código pendiente para este número.' });
-  }
-
-  if (Date.now() > stored.expiresAt) {
-    return res.status(400).json({ success: false, message: 'El código ha expirado. Solicita uno nuevo.' });
-  }
-
-  if (stored.code !== cleanCode && cleanCode !== '123456') {
-    return res.status(400).json({ success: false, message: 'Código incorrecto. Verifica los 6 dígitos.' });
-  }
-
-  return res.json({ success: true, message: 'Código verificado correctamente.' });
-});
-
-// 3. Authentication: Register
-app.post(['/api/auth/register', '/api/security/register', '/register.php', '/api/register.php'], async (req: Request, res: Response) => {
-  if (!isMysqlConnected || !mysqlPool) return res.status(503).json({ success: false, message: 'MySQL no está disponible para registrar la cuenta.' });
-  const name = String(req.body?.name || '').trim();
-  const phone = String(req.body?.phone_number || '').replace(/\D/g, '');
-  const email = String(req.body?.correo || req.body?.email || '').trim();
-  const password = String(req.body?.password || '').trim();
-  if (!name || name.length > 120 || !/^\d{10,15}$/.test(phone) || password.length < 6 || Buffer.byteLength(password, 'utf8') > 72 || email.length > 120) {
-    return res.status(422).json({ success: false, message: 'Verifica nombre, teléfono y contraseña (mínimo 6 caracteres).' });
-  }
+// Registro y envío real por correo comparten la autoridad PHP con recuperación.
+async function proxyRegistration(req: Request, res: Response, action?: string) {
+  res.setHeader('Cache-Control', 'no-store');
+  const origin=(process.env.SECURITY_PHP_ORIGIN || process.env.ACCOUNT_PHP_ORIGIN || process.env.PTT_PHP_ORIGIN)?.replace(/\/+$/, '');
+  if (!origin || !/^https:\/\/[a-z0-9.-]+(?::\d+)?$/i.test(origin) && !/^http:\/\/(127\.0\.0\.1|localhost):\d+$/.test(origin)) return res.status(503).json({success:false,message:'Configura SECURITY_PHP_ORIGIN con el backend PHP de verificación por correo.'});
   try {
-    const id = `usr-${randomUUID()}`;
-    const callsign = `RADIO-${phone.slice(-4)}`;
-    await mysqlPool.execute('INSERT INTO users (id, phone_number, name, correo, password_hash, callsign, unit) VALUES (?, ?, ?, ?, ?, ?, ?)',
-      [id, phone, name, email || null, await bcrypt.hash(password, 12), callsign, String(req.body?.unit || 'Sector Operativo Hidalgo')]);
-    return res.status(201).json({ success: true, user: { id, name, phone_number: phone, callsign } });
-  } catch (error: any) {
-    return res.status(error.code === 'ER_DUP_ENTRY' ? 409 : 503).json({ success: false,
-      message: error.code === 'ER_DUP_ENTRY' ? 'El teléfono ya está registrado.' : 'No se pudo guardar la cuenta en MySQL.' });
-  }
-});
+    const result=await fetch(origin+'/registration.php',{method:'POST',redirect:'error',signal:AbortSignal.timeout(25000),headers:{'Content-Type':'application/json'},body:JSON.stringify({...req.body,...(action?{action}:{})})});
+    if (result.status===429) res.setHeader('Retry-After',result.headers.get('Retry-After') || '60');
+    return res.status(result.status).json(await result.json());
+  } catch { return res.status(502).json({success:false,message:'No se pudo contactar al servicio de registro por correo.'}); }
+}
+app.post(['/api/registration','/registration.php'],(req,res)=>proxyRegistration(req,res));
+app.post(['/api/auth/send-otp','/api/security/send-otp','/send-otp.php','/api/send-otp.php'],(req,res)=>proxyRegistration(req,res,'request'));
+app.post(['/api/auth/register','/api/security/register','/register.php','/api/register.php','/auth/register.php'],(req,res)=>proxyRegistration(req,res,'complete'));
+app.post(['/api/auth/verify-otp','/api/security/verify-otp','/verify-otp.php','/api/verify-otp.php'],(_req,res)=>res.status(410).json({success:false,message:'Actualiza la app y verifica tu correo para completar el registro.'}));
 
 // La recuperación anónima requiere un canal verificado; no se entregan códigos al solicitante.
 app.post(['/api/auth/forgot-password', '/api/security/forgot-password', '/api/auth/find-user', '/api/auth/verify-token', '/api/security/verify-token'], (_req: Request, res: Response) => {

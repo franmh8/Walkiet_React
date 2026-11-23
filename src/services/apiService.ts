@@ -1,3 +1,4 @@
+import {createRegistrationApi} from './registrationApi';
 // C5i Tactical API Service for Web - Conectado a Alwaysdata MySQL (walkiet_c5i en mysql-walkiet.alwaysdata.net)
 
 // URL base del servidor backend remoto en Alwaysdata:
@@ -56,23 +57,13 @@ export const ApiService = {
   },
 
   async register(userData: {
-    name: string;
-    phone_number: string;
-    callsign: string;
-    unit?: string;
-    password?: string;
+    name: string; phone_number: string; callsign: string; correo?: string;
+    unit?: string; password?: string; challenge_id?: string; code?: string;
   }) {
-    const base = getBackendUrl();
     try {
-      const res = await fetch(`${base}/api/auth/register`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(userData),
-      });
-      return await res.json();
-    } catch {
-      return { success: false, message: 'Error de conexión' };
-    }
+      const user=await createRegistrationApi(getBackendUrl()).complete({name:userData.name,phone_number:userData.phone_number,correo:userData.correo||'',password:userData.password||'',challenge_id:userData.challenge_id||'',code:userData.code||''});
+      return {success:true,user};
+    } catch(error) {return {success:false,message:error instanceof Error?error.message:'No se pudo completar el registro.'};}
   },
 
   async getChannels() {
