@@ -13,8 +13,9 @@ import {
   ArrowLeft,
   RotateCw,
 } from 'lucide-react';
-import { useAuth } from '../context/AuthContext';
-import { findUserByIdentifier, sendPhoneOtpApi, verifyPhoneOtpApi } from '../api/authApi';
+import {getBackendUrl} from '../services/apiService';
+import {createRegistrationApi, RegistrationApiError} from '../services/registrationApi';
+import { findUserByIdentifier } from '../api/authApi';
 import {
   evaluatePassword,
   isPasswordStrong,
@@ -37,10 +38,10 @@ export const RegisterModal: React.FC<RegisterModalProps> = ({
   onSuccess,
 }) => {
   const isModalOpen = isOpen ?? visible ?? false;
-  const { register } = useAuth();
+  const api=createRegistrationApi(getBackendUrl());
 
-  // Step state: 'form' | 'sms_verification' | 'success'
-  const [step, setStep] = useState<'form' | 'sms_verification' | 'success'>('form');
+  // Step state: 'form' | 'email_verification' | 'success'
+  const [step, setStep] = useState<'form' | 'email_verification' | 'success'>('form');
 
   // Form Fields
   const [name, setName] = useState('');
@@ -49,9 +50,12 @@ export const RegisterModal: React.FC<RegisterModalProps> = ({
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
 
-  // 6-digit SMS verification state
-  const [generatedCode, setGeneratedCode] = useState('');
-  const [smsDigits, setSmsDigits] = useState(['', '', '', '', '', '']);
+  // 6-digit correo verification state
+  const [challengeId, setChallengeId] = useState('');
+  const [codeDigits, setCodeDigits] = useState(['', '', '', '', '', '']);
+  const pending=useRef(false);
+  const generation=useRef(0);
+  const successTimer=useRef<ReturnType<typeof setTimeout>|null>(null);
   const digitRefs = useRef<(HTMLInputElement | null)[]>([]);
   const [resendTimer, setResendTimer] = useState(0);
 
@@ -66,6 +70,7 @@ export const RegisterModal: React.FC<RegisterModalProps> = ({
 
   // Reset modal on open
   useEffect(() => {
+    ++generation.current; pending.current=false;
     if (isModalOpen) {
       setStep('form');
       setName('');
@@ -73,16 +78,17 @@ export const RegisterModal: React.FC<RegisterModalProps> = ({
       setCorreo('');
       setPassword('');
       setConfirmPassword('');
-      setGeneratedCode('');
-      setSmsDigits(['', '', '', '', '', '']);
+      setChallengeId('');
+      setCodeDigits(['', '', '', '', '', '']);
       setResendTimer(0);
       setErrors({});
       setGeneralError(null);
       setLoading(false);
     }
+    return ()=>{++generation.current;if(successTimer.current)clearTimeout(successTimer.current);};
   }, [isModalOpen]);
 
-  // Timer countdown for resending SMS
+  // Timer countdown for resending correo
   useEffect(() => {
     let interval: any;
     if (resendTimer > 0) {
@@ -155,53 +161,50 @@ export const RegisterModal: React.FC<RegisterModalProps> = ({
     return Object.keys(newErrors).length === 0;
   };
 
-  // Enviar SMS de verificación
+  // Enviar correo de verificación
   const handleProceedToVerification = async (e: React.FormEvent) => {
     e.preventDefault();
     setGeneralError(null);
 
-    if (!validateForm()) return;
+    if (pending.current || !validateForm()) return;
 
+    pending.current=true;const version=generation.current;
     setLoading(true);
 
-    const cleanPhone = phoneNumber.replace(/\D/g, '').trim();
-    const res = await sendPhoneOtpApi(cleanPhone);
-
-    setLoading(false);
-
-    if (res.success && res.code) {
-      setGeneratedCode(res.code);
-      setSmsDigits(['', '', '', '', '', '']);
-      setResendTimer(30);
-      setStep('sms_verification');
-    } else {
-      setGeneralError(res.message || 'Error al conectar con el servicio SMS.');
-    }
+    try {
+      const result=await api.sendCode(correo,phoneNumber.replace(/\D/g,''));
+      if(version!==generation.current)return;
+      setChallengeId(result.challenge_id); setCodeDigits(Array(6).fill(''));
+      setResendTimer(result.resend_after); setStep('email_verification');
+    } catch (error) {
+      if(version!==generation.current)return;
+      setGeneralError(error instanceof Error?error.message:'No se pudo enviar el correo.');
+      if(error instanceof RegistrationApiError && error.retryAfter)setResendTimer(error.retryAfter);
+    } finally { if(version===generation.current){pending.current=false;setLoading(false);} }
   };
 
-  // Reenviar SMS
-  const handleResendSms = async () => {
-    if (resendTimer > 0) return;
-    setLoading(true);
-    const cleanPhone = phoneNumber.replace(/\D/g, '').trim();
-    const res = await sendPhoneOtpApi(cleanPhone);
-    setLoading(false);
-
-    if (res.success && res.code) {
-      setGeneratedCode(res.code);
-      setSmsDigits(['', '', '', '', '', '']);
-      setResendTimer(30);
-      setErrors({});
-    }
+  const handleResendEmail = async () => {
+    if (resendTimer>0 || pending.current) return;
+    pending.current=true;const version=generation.current;
+    setLoading(true); setGeneralError(null);
+    try {
+      const result=await api.sendCode(correo,phoneNumber.replace(/\D/g,''));
+      if(version!==generation.current)return;
+      setChallengeId(result.challenge_id); setCodeDigits(Array(6).fill('')); setResendTimer(result.resend_after); setErrors({});
+    } catch(error) {
+      if(version!==generation.current)return;
+      setGeneralError(error instanceof Error?error.message:'No se pudo reenviar el correo.');
+      if(error instanceof RegistrationApiError && error.retryAfter)setResendTimer(error.retryAfter);
+    } finally {if(version===generation.current){pending.current=false;setLoading(false);}}
   };
 
   // Handle digit input for 6-box OTP
   const handleDigitChange = (index: number, val: string) => {
     const clean = val.replace(/\D/g, '').slice(-1);
-    const newArr = [...smsDigits];
+    const newArr = [...codeDigits];
     newArr[index] = clean;
-    setSmsDigits(newArr);
-    if (errors.sms) setErrors({});
+    setCodeDigits(newArr);
+    if (errors.code) setErrors({});
 
     if (clean && index < 5) {
       digitRefs.current[index + 1]?.focus();
@@ -209,7 +212,7 @@ export const RegisterModal: React.FC<RegisterModalProps> = ({
   };
 
   const handleDigitKeyDown = (index: number, e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Backspace' && !smsDigits[index] && index > 0) {
+    if (e.key === 'Backspace' && !codeDigits[index] && index > 0) {
       digitRefs.current[index - 1]?.focus();
     }
   };
@@ -222,7 +225,7 @@ export const RegisterModal: React.FC<RegisterModalProps> = ({
       for (let i = 0; i < pasted.length; i++) {
         newArr[i] = pasted[i];
       }
-      setSmsDigits(newArr);
+      setCodeDigits(newArr);
       const nextFocus = Math.min(5, pasted.length);
       digitRefs.current[nextFocus]?.focus();
     }
@@ -234,55 +237,23 @@ export const RegisterModal: React.FC<RegisterModalProps> = ({
 
     const cleanInput = codeToVerify.trim();
     if (!cleanInput || cleanInput.length < 6) {
-      setErrors({ sms: 'Ingresa los 6 dígitos del código.' });
+      setErrors({ code: 'Ingresa los 6 dígitos del código.' });
       return;
     }
 
+    if(pending.current)return;pending.current=true;const version=generation.current;
     setLoading(true);
 
-    const cleanPhone = phoneNumber.replace(/\D/g, '').trim();
-    const verifyRes = await verifyPhoneOtpApi(cleanPhone, cleanInput);
-
-    if (!verifyRes.success) {
-      setLoading(false);
-      setErrors({ sms: verifyRes.message || 'Código incorrecto. Verifica los 6 dígitos.' });
-      return;
-    }
-
-    // Código validado: dar de alta el usuario
-    const cleanEmail = correo.trim();
-    const cleanName = name.trim();
-    const cleanPass = password;
-
-    const autoDigits = cleanPhone.slice(-4) || 'TAC';
-    const autoCallsign = `RADIO-${autoDigits}`;
-
-    const regResult = await register({
-      name: cleanName,
-      phone_number: cleanPhone,
-      correo: cleanEmail,
-      password: cleanPass,
-      callsign: autoCallsign,
-      unit: 'Sector Operativo Hidalgo',
-      role: 'Oficial de Radio',
-    });
-
-    setLoading(false);
-
-    if (regResult) {
-      setStep('success');
-      setTimeout(() => {
-        if (onRegisteredSuccess) {
-          onRegisteredSuccess(cleanPhone);
-        }
-        if (onSuccess) {
-          onSuccess();
-        }
-        onClose();
-      }, 1200);
-    } else {
-      setGeneralError('Error al completar el registro. Intenta de nuevo.');
-    }
+    const cleanPhone=phoneNumber.replace(/\D/g,'');
+    try {
+      await api.complete({name:name.trim(),phone_number:cleanPhone,correo,password,challenge_id:challengeId,code:cleanInput});
+      if(version!==generation.current)return;
+      setStep('success'); setCodeDigits(Array(6).fill(''));
+      successTimer.current=setTimeout(()=>{onRegisteredSuccess?.(cleanPhone);onSuccess?.();onClose();},1200);
+    } catch(error) {
+      if(version!==generation.current)return;
+      setGeneralError(error instanceof Error?error.message:'No se pudo completar el registro.');
+    } finally {if(version===generation.current){pending.current=false;setLoading(false);}}
   };
 
   return (
@@ -293,22 +264,22 @@ export const RegisterModal: React.FC<RegisterModalProps> = ({
         <div className="flex items-center justify-between mb-5">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-2xl bg-[#691c32]/10 border border-[#691c32]/25 flex items-center justify-center text-[#8a1a36] dark:text-[#eb527c]">
-              {step === 'sms_verification' ? (
-                <Phone className="w-5 h-5" />
+              {step === 'email_verification' ? (
+                <Mail className="w-5 h-5" />
               ) : (
                 <UserPlus className="w-5 h-5" />
               )}
             </div>
             <div>
               <h2 className="text-base font-bold text-slate-900 dark:text-white tracking-tight">
-                {step === 'sms_verification' ? 'Verificar Celular' : 'Registro'}
+                {step === 'email_verification' ? 'Verificar correo' : 'Registro'}
               </h2>
             </div>
           </div>
 
           <button
             type="button"
-            onClick={onClose}
+            disabled={loading} onClick={onClose}
             className="p-1.5 text-slate-400 hover:text-slate-700 dark:hover:text-white rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800/60 transition-colors cursor-pointer"
             title="Cerrar"
           >
@@ -339,7 +310,7 @@ export const RegisterModal: React.FC<RegisterModalProps> = ({
               </div>
               <div className="relative flex items-center">
                 <UserIcon className="absolute left-3.5 w-4 h-4 text-slate-400 dark:text-slate-500" />
-                <input
+                <input disabled={loading}
                   id="reg-input-name"
                   type="text"
                   required
@@ -375,7 +346,7 @@ export const RegisterModal: React.FC<RegisterModalProps> = ({
               </div>
               <div className="relative flex items-center">
                 <Phone className="absolute left-3.5 w-4 h-4 text-slate-400 dark:text-slate-500" />
-                <input
+                <input disabled={loading}
                   id="reg-input-phone"
                   type="tel"
                   required
@@ -408,7 +379,7 @@ export const RegisterModal: React.FC<RegisterModalProps> = ({
               </div>
               <div className="relative flex items-center">
                 <Mail className="absolute left-3.5 w-4 h-4 text-slate-400 dark:text-slate-500" />
-                <input
+                <input disabled={loading}
                   id="reg-input-email"
                   type="email"
                   required
@@ -435,7 +406,7 @@ export const RegisterModal: React.FC<RegisterModalProps> = ({
                 </label>
                 <div className="relative flex items-center">
                   <Lock className="absolute left-2.5 w-3.5 h-3.5 text-slate-400 dark:text-slate-500" />
-                  <input
+                  <input disabled={loading}
                     id="reg-input-password"
                     type={showPassword ? 'text' : 'password'}
                     required
@@ -463,7 +434,7 @@ export const RegisterModal: React.FC<RegisterModalProps> = ({
                 </label>
                 <div className="relative flex items-center">
                   <Lock className="absolute left-2.5 w-3.5 h-3.5 text-slate-400 dark:text-slate-500" />
-                  <input
+                  <input disabled={loading}
                     id="reg-input-confirm"
                     type={showConfirmPassword ? 'text' : 'password'}
                     required
@@ -501,7 +472,7 @@ export const RegisterModal: React.FC<RegisterModalProps> = ({
             <div className="pt-2 flex items-center gap-2.5">
               <button
                 type="button"
-                onClick={onClose}
+                disabled={loading} onClick={onClose}
                 className="flex-1 py-2.5 px-4 text-xs font-semibold text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800/80 dark:hover:bg-slate-800 transition-colors cursor-pointer"
               >
                 Cancelar
@@ -522,66 +493,57 @@ export const RegisterModal: React.FC<RegisterModalProps> = ({
           </form>
         )}
 
-        {/* STEP 2: VERIFICAR CELULAR */}
-        {step === 'sms_verification' && (
+        {/* STEP 2: VERIFICAR CORREO */}
+        {step === 'email_verification' && (
           <form
             onSubmit={(e) => {
               e.preventDefault();
-              executeVerification(smsDigits.join(''));
+              executeVerification(codeDigits.join(''));
             }}
             className="space-y-4 animate-fadeIn"
           >
             <div className="flex items-center justify-between">
               <button
                 type="button"
+                disabled={loading}
                 onClick={() => {
                   setStep('form');
                   setErrors({});
                   setGeneralError(null);
                 }}
-                className="text-slate-500 dark:text-slate-400 hover:text-sky-600 dark:hover:text-sky-400 text-xs flex items-center gap-1 cursor-pointer transition-colors"
+                className="text-slate-500 dark:text-slate-400 hover:text-[#691c32] dark:hover:text-[#f1a1b9] text-xs flex items-center gap-1 cursor-pointer transition-colors"
               >
                 <ArrowLeft className="w-3.5 h-3.5" />
                 <span>Volver</span>
               </button>
 
-              {generatedCode && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setSmsDigits(generatedCode.split(''));
-                    setErrors({});
-                  }}
-                  className="text-[11px] font-mono text-sky-600 dark:text-sky-400 hover:underline cursor-pointer"
-                >
-                  Código: {generatedCode}
-                </button>
-              )}
             </div>
 
-            {errors.sms && (
+            {errors.code && (
               <div className="p-2.5 bg-rose-50 dark:bg-[#2a0e17]/95 border border-rose-200 dark:border-rose-900/70 rounded-xl text-rose-800 dark:text-rose-200 text-xs flex items-center gap-2 animate-fadeIn">
                 <AlertTriangle className="w-4 h-4 text-rose-600 dark:text-rose-400 shrink-0" />
-                <span className="flex-1 text-xs">{errors.sms}</span>
+                <span className="flex-1 text-xs">{errors.code}</span>
               </div>
             )}
 
             <div className="text-center">
               <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-3">
-                Código de verificación (6 dígitos)
+                Ingresa el código enviado a {correo.trim()}
               </label>
 
               <div
                 className="flex items-center justify-center gap-2 my-2"
                 onPaste={handlePasteOtp}
               >
-                {smsDigits.map((digit, idx) => (
+                {codeDigits.map((digit, idx) => (
                   <input
                     key={idx}
                     ref={(el) => {
                       digitRefs.current[idx] = el;
                     }}
-                    id={`input-sms-digit-${idx}`}
+                    id={`input-email-digit-${idx}`}
+                    aria-label={`Dígito ${idx+1} del código`}
+                    disabled={loading}
                     type="text"
                     inputMode="numeric"
                     maxLength={1}
@@ -595,16 +557,17 @@ export const RegisterModal: React.FC<RegisterModalProps> = ({
               </div>
             </div>
 
+            <p className="text-center text-xs text-slate-500">Caduca en 3 minutos · Revisa también spam</p>
             <div className="text-center pt-1">
               <button
                 type="button"
-                onClick={handleResendSms}
-                disabled={resendTimer > 0}
-                className="text-xs text-slate-500 dark:text-slate-400 hover:text-sky-600 dark:hover:text-sky-400 disabled:text-slate-300 dark:disabled:text-slate-600 inline-flex items-center gap-1.5 cursor-pointer disabled:cursor-not-allowed transition-colors"
+                onClick={handleResendEmail}
+                disabled={resendTimer > 0 || loading}
+                className="text-xs text-slate-500 dark:text-slate-400 hover:text-[#691c32] dark:hover:text-[#f1a1b9] disabled:text-slate-300 dark:disabled:text-slate-600 inline-flex items-center gap-1.5 cursor-pointer disabled:cursor-not-allowed transition-colors"
               >
                 <RotateCw className="w-3 h-3" />
                 <span>
-                  {resendTimer > 0 ? `Reenviar en ${resendTimer}s` : 'Reenviar código'}
+                  {resendTimer > 0 ? `Reenviar en ${resendTimer}s` : 'Reenviar correo'}
                 </span>
               </button>
             </div>
@@ -612,15 +575,15 @@ export const RegisterModal: React.FC<RegisterModalProps> = ({
             <div className="pt-2 flex items-center gap-2.5">
               <button
                 type="button"
-                onClick={onClose}
+                disabled={loading} onClick={onClose}
                 className="flex-1 py-2.5 px-4 text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white text-xs font-semibold rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800/80 dark:hover:bg-slate-800 transition-colors cursor-pointer"
               >
                 Cancelar
               </button>
               <button
-                id="btn-confirm-sms-register"
+                id="btn-confirm-email-register"
                 type="submit"
-                disabled={loading || smsDigits.join('').trim().length !== 6}
+                disabled={loading || codeDigits.join('').trim().length !== 6}
                 className="flex-1 py-2.5 px-4 bg-gradient-to-r from-[#691c32] via-[#8a1a36] to-[#691c32] hover:from-[#7a1834] hover:via-[#9f2241] active:scale-[0.99] text-white text-xs font-bold rounded-xl shadow-md shadow-[#691c32]/25 transition-all flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
               >
                 {loading ? (
@@ -641,7 +604,7 @@ export const RegisterModal: React.FC<RegisterModalProps> = ({
             </div>
             <h3 className="text-base font-bold text-slate-900 dark:text-white">¡Registro completado!</h3>
             <p className="text-xs text-slate-500 dark:text-slate-400">
-              Número validado. Redirigiendo al inicio de sesión...
+              Correo verificado. Redirigiendo al inicio de sesión...
             </p>
           </div>
         )}

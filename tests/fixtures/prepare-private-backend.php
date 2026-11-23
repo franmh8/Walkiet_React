@@ -5,7 +5,7 @@ if (strpos($dsn, 'dbname=contacts_test_') === false) throw new RuntimeException(
 $destination = $argv[1] ?? '';
 if (!$destination || !is_dir($destination)) throw new RuntimeException('Indica un directorio temporal existente como primer argumento.');
 $source = __DIR__ . '/../../backend-alwaysdata';
-foreach (['security.php','security-handler.php','security-mail.php','security-mail-template.php','security-smtp.php','account.php','account-handler.php','account-presence.php','chat-sync.php','chat-time.php','chat-receipts.php','chat-voice.php','chat-actions.php','ptt.php','ptt-worker.php','ptt-handler.php','ptt-livekit.php','voice-messages.php','channels.php','channels-handler.php','contacts.php','contacts-handler.php','auth-session.php','login.php','logout.php','reset-password.php','cors.php'] as $name) copy($source . '/' . $name, $destination . '/' . $name);
+foreach (['registration.php','registration-handler.php','register.php','send-otp.php','verify-otp.php','security.php','security-handler.php','security-mail.php','security-mail-template.php','security-smtp.php','account.php','account-handler.php','account-presence.php','chat-sync.php','chat-time.php','chat-receipts.php','chat-voice.php','chat-actions.php','ptt.php','ptt-worker.php','ptt-handler.php','ptt-livekit.php','voice-messages.php','channels.php','channels-handler.php','contacts.php','contacts-handler.php','auth-session.php','login.php','logout.php','reset-password.php','cors.php'] as $name) copy($source . '/' . $name, $destination . '/' . $name);
 if (!is_dir($destination.'/lib/PHPMailer/src')) mkdir($destination.'/lib/PHPMailer/src',0700,true);
 foreach (['Exception.php','SMTP.php','PHPMailer.php'] as $name) copy($source.'/lib/PHPMailer/src/'.$name,$destination.'/lib/PHPMailer/src/'.$name);
 file_put_contents($destination . '/conexion.php', <<<'CONNECTION'
@@ -19,6 +19,8 @@ CONNECTION
 file_put_contents($destination . '/router.php', <<<'ROUTER'
 <?php
 $path = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
+if ($path === '/api/registration') { require __DIR__.'/registration.php'; return true; }
+if (in_array($path,['/registration.php','/register.php','/send-otp.php','/verify-otp.php'],true)) return false;
 if ($path === '/api/security') { require __DIR__ . '/security.php'; return true; }
 if ($path === '/api/account') { require __DIR__ . '/account.php'; return true; }
 if ($path === '/api/ptt') { require __DIR__ . '/ptt.php'; return true; }

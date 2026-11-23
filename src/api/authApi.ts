@@ -1,4 +1,3 @@
-import { getBackendUrl } from '../services/apiService';
 import { User } from '../types';
 
 export const findUserByIdentifier = (identifier: string): User | null => {
@@ -33,42 +32,4 @@ export const findUserByIdentifier = (identifier: string): User | null => {
   }
 
   return null;
-};
-
-export const sendPhoneOtpApi = async (phone: string): Promise<{ success: boolean; code?: string; message?: string }> => {
-  try {
-    const base = getBackendUrl();
-    const res = await fetch(`${base}/api/auth/send-otp`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ phone }),
-    });
-    const data = await res.json();
-    if (res.ok && data.success) {
-      return { success: true, code: data.code, message: data.message };
-    }
-    return { success: false, message: data.message || 'Error al enviar código' };
-  } catch {
-    // Fallback táctico autónomo
-    const mockCode = Math.floor(100000 + Math.random() * 900000).toString();
-    return { success: true, code: mockCode, message: 'Código generado' };
-  }
-};
-
-export const verifyPhoneOtpApi = async (phone: string, code: string): Promise<{ success: boolean; message?: string }> => {
-  try {
-    const base = getBackendUrl();
-    const res = await fetch(`${base}/api/auth/verify-otp`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ phone, code }),
-    });
-    const data = await res.json();
-    if (res.ok && data.success) {
-      return { success: true, message: data.message };
-    }
-    return { success: false, message: data.message || 'Código incorrecto' };
-  } catch {
-    return { success: true, message: 'Código verificado' };
-  }
 };

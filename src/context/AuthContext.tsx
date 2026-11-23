@@ -7,6 +7,8 @@ interface RegisterData {
   phone_number: string;
   callsign: string;
   correo?: string;
+  challenge_id?: string;
+  code?: string;
   password?: string;
   unit?: string;
   role?: string;
@@ -156,48 +158,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const register = async (data: RegisterData): Promise<boolean> => {
-    try {
-      // Send to backend DB
-      const res = await ApiService.register({
-        name: data.name,
-        phone_number: data.phone_number,
-        callsign: data.callsign.toUpperCase(),
-        unit: data.unit,
-        password: data.password,
-      });
-
-      if (res && res.success && res.user) {
-        setUser(res.user);
-        localStorage.setItem('c5i_user', JSON.stringify(res.user));
-        return true;
-      }
-    } catch (_) {}
-
-    // Fallback store
-    const newUser: User = {
-      id: `usr-${Date.now()}`,
-      name: data.name,
-      phone_number: data.phone_number,
-      callsign: data.callsign.toUpperCase(),
-      correo: data.correo || (data.phone_number.includes('@') ? data.phone_number : undefined),
-      password: data.password || '123',
-      unit: data.unit || 'Sector Operativo Hidalgo',
-      role: data.role || 'Oficial Operativo',
-      status: 'online',
-    };
-
-    const storedUsersRaw = localStorage.getItem('c5i_users_db');
-    const users: User[] = storedUsersRaw ? JSON.parse(storedUsersRaw) : DEFAULT_USERS;
-
-    const filtered = users.filter(
-      (u) => u.phone_number !== newUser.phone_number && u.callsign !== newUser.callsign
-    );
-    filtered.push(newUser);
-
-    localStorage.setItem('c5i_users_db', JSON.stringify(filtered));
-    setUser(newUser);
-    localStorage.setItem('c5i_user', JSON.stringify(newUser));
-    return true;
+    const result=await ApiService.register(data);
+    // El registro necesita el código del correo; nunca se crea una cuenta local de respaldo.
+    return result.success===true;
   };
 
   const logout = async () => {

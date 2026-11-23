@@ -7,8 +7,9 @@ Todos los endpoints PHP para el servidor Alwaysdata (`https://walkiet.alwaysdata
 - `status.php`: Endpoint de salud verificado que devuelve `{ "status": "ONLINE", "users_count": 3 }`.
 - `login.php`: Inicio de sesión seguro con soporte para SHA-512, salting y usuarios semilla (`123`).
 - `register.php`: Registro de oficiales con creación de usuario y perfil de ajustes.
-- `send-otp.php`: Generación de código SMS de 6 dígitos.
-- `verify-otp.php`: Validación de código temporal.
+- `registration.php`: Envío real de código al correo y creación de cuenta al validarlo. Ver [REGISTRO_CORREO.md](REGISTRO_CORREO.md) y migración 011.
+- `send-otp.php`: Alias de envío por correo para registro.
+- `verify-otp.php`: Ruta anterior retirada; actualizar la app al registro por correo.
 - `channels.php`: Canales de comunicación tácticos.
 - `cors.php`: Encabezados CORS abiertos para permitir llamadas desde la app web y móvil sin bloqueos.
 

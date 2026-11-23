@@ -3,8 +3,10 @@
 function securityMailTemplate($code,$purpose) {
     if (!is_string($code) || !preg_match('/^\d{6}$/D',$code)) throw new RuntimeException('mail_invalid_code');
     $change=$purpose==='email_change';
-    $title=$change?'Verifica tu nuevo correo':'Recupera tu acceso';
+    $registration=$purpose==='registration';
+    $title=$registration?'Verifica tu correo':($change?'Verifica tu nuevo correo':'Recupera tu acceso');
     $intro=$change?'Estás a un paso de actualizar el correo de tu cuenta. Ingresa este código en Walkiet para confirmar tu nueva dirección.':'Vamos a ayudarte a volver a tu cuenta. Ingresa este código en Walkiet para elegir una contraseña nueva.';
+    if ($registration) $intro='Bienvenido a Walkiet. Ingresa este código en la app para verificar tu correo y completar el registro de tu cuenta.';
     $text=$title." - Walkiet\n\n".$intro."\n\nTu código de verificación es: ".$code."\n\nCaduca en 3 minutos y solo puede usarse una vez. No lo compartas.\nSi no solicitaste este cambio, ignora este mensaje. Tu cuenta se conserva sin cambios.";
     $safeTitle=htmlspecialchars($title,ENT_QUOTES,'UTF-8');$safeIntro=htmlspecialchars($intro,ENT_QUOTES,'UTF-8');
     $html=<<<HTML
