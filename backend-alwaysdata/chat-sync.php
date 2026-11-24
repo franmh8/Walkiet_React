@@ -32,7 +32,8 @@ function chatThreads(PDO $pdo,$owner,$zone,$timestampColumn) {
  $visible=$ready?' AND NOT EXISTS(SELECT 1 FROM chat_message_hidden h WHERE h.message_id=m.id AND h.user_id=?)':'';
  $annotation=$ready?' LEFT JOIN chat_message_annotations ann ON ann.message_id=last.id':'';
  $deleted=$ready?'ann.deleted_at':'NULL';
- $stmt=$pdo->prepare("SELECT t.id,t.kind,$groupName AS group_name,peer.id AS target_user_id,peer.name AS peer_name,personal.name AS contact_name,peer.callsign,peer.unit,peer.status,
+ $stmt=$pdo->prepare("SELECT t.id,t.kind,$groupName AS group_name,peer.id AS target_user_id,peer.name AS peer_name,peer.phone_number AS peer_phone,personal.id AS contact_id,personal.name AS contact_name,peer.callsign,peer.unit,peer.status,
+  EXISTS(SELECT 1 FROM chat_thread_messages incoming WHERE incoming.thread_id=t.id AND incoming.sender_id=peer.id) AS has_incoming,
   $participants AS participants,
   (SELECT COUNT(*) FROM chat_thread_messages unread
     LEFT JOIN chat_message_receipts receipt ON receipt.message_id=unread.id AND receipt.user_id=?
@@ -48,6 +49,18 @@ function chatThreads(PDO $pdo,$owner,$zone,$timestampColumn) {
   $annotation WHERE (t.kind<>'direct' OR last.id IS NOT NULL) AND $access ORDER BY t.updated_at DESC,t.id DESC LIMIT 200");
  $args=[$owner,$owner,$owner,$owner,$owner];if($ready)$args[]=$owner;
  $stmt->execute($args);$out=[];$threads=$stmt->fetchAll(PDO::FETCH_ASSOC);
+ // Una consulta por lote, acotada a interlocutores sin guardar que ya escribieron.
+ // La agenda del servidor es la fuente de verdad, aunque el móvil tenga solo una página.
+ $unknownPeers=[];$commonChannels=[];
+ foreach($threads as$r)if($r['kind']==='direct'&&$r['target_user_id']!==null&&$r['contact_id']===null&&(bool)$r['has_incoming'])$unknownPeers[]=$r['target_user_id'];
+ $unknownPeers=array_values(array_unique($unknownPeers));
+ if($unknownPeers){
+  $marks=implode(',',array_fill(0,count($unknownPeers),'?'));
+  $common=$pdo->prepare("SELECT other.user_id,COUNT(DISTINCT c.id) AS common_count FROM channel_members mine
+   JOIN channels c ON c.id=mine.channel_id JOIN channel_members other ON other.channel_id=c.id
+   WHERE mine.user_id=? AND other.user_id IN ($marks) GROUP BY other.user_id");
+  $common->execute(array_merge([$owner],$unknownPeers));foreach($common->fetchAll(PDO::FETCH_ASSOC)as$row)$commonChannels[(string)$row['user_id']]=(int)$row['common_count'];
+ }
  $lastIds=array_values(array_filter(array_column($threads,'last_message_id')));$statuses=[];
  if($lastIds){$marks=implode(',',array_fill(0,count($lastIds),'?'));foreach(chatMessageRows($pdo,"m.id IN ($marks)",$lastIds,200,true,true)as$row)$statuses[$row['id']]=chatMessageStatus($row,$owner);}
  foreach($threads as$r) {
@@ -57,6 +70,10 @@ function chatThreads(PDO $pdo,$owner,$zone,$timestampColumn) {
    'isOnline'=>$r['status']==='online'||$r['status']==='transmitting','lastMessage'=>$r['last_message']?:'',
    'lastMessageTime'=>$date['timestamp'],'lastMessageAt'=>$date['sent_at'],'hasMessages'=>$r['last_message_id']!==null,'unreadCount'=>(int)$r['unread_count']];
   $out[count($out)-1]['lastMessageStatus']=$statuses[$r['last_message_id']]??null;
+  if($r['kind']==='direct'&&$r['target_user_id']!==null)$out[count($out)-1]['peer']=[
+   'id'=>(string)$r['target_user_id'],'registeredName'=>$r['peer_name']?:'Oficial','phoneNumber'=>$r['peer_phone']?:'',
+   'isContact'=>$r['contact_id']!==null,'hasIncoming'=>(bool)$r['has_incoming'],
+   'commonChannelCount'=>$commonChannels[(string)$r['target_user_id']]??0];
  }
  return $out;
 }

@@ -42,6 +42,7 @@ import { ChatDateSeparator } from './chat/ChatDateSeparator';
 import { chatDay } from './chat/chatDates';
 import { useChatScroll } from './chat/useChatScroll';
 import { ChatAttachmentsMenu } from './chat/ChatAttachmentsMenu';
+import {UnknownSenderBanner, senderPhone} from './chat/UnknownSenderBanner';
 /* WALKIET_CHAT_MODULAR_V1 */
 
 /* WALKIET_CHAT_SYNC_V1 */
@@ -221,6 +222,7 @@ export interface Conversation {
   callsign?: string;
   unit?: string;
   targetUserId?: string;
+  peer?: import('../services/chatSyncApi').ChatPeerInfo;
   participantCount?: number;
   lastMessage: string;
   lastMessageTime: string;
@@ -366,6 +368,7 @@ function NativeAppScreen() {
 
   const { showNativeAlert, showTacticalToast, feedback } = useNativeFeedback();
   const [viewedPhoto, setViewedPhoto] = useState<ChatPhoto|null>(null);
+  const [isSenderContactModalOpen, setIsSenderContactModalOpen] = useState(false);
   const photoGallery=useChatPhotoGallery(serverUrl,currentUser?.id||'',account.loaded,account.settings.autoSavePhotos,message=>showNativeAlert('Guardar fotos',message));
   useEffect(()=>{setViewedPhoto(null);},[serverUrl,currentUser?.id,currentUser?.authToken]);
   const {
@@ -398,7 +401,7 @@ function NativeAppScreen() {
   };
   const totalUnreadCount = conversations.reduce((sum, c) => sum + (c.unreadCount || 0), 0);
   const chatScroll = useChatScroll(activeConversation?.id, activeConversation?.messages || []);
-  const chatVisible=useVisibleChatMessages(activeConversation?.id,currentTab==='Chat'&&!!activeConversation&&!isNewChatModalOpen&&!isCreateGroupChatModalOpen&&!isLiveCameraModalOpen&&!viewedPhoto&&!actions.menuOpen&&!actions.forwarding);
+  const chatVisible=useVisibleChatMessages(activeConversation?.id,currentTab==='Chat'&&!!activeConversation&&!isNewChatModalOpen&&!isCreateGroupChatModalOpen&&!isLiveCameraModalOpen&&!viewedPhoto&&!actions.menuOpen&&!actions.forwarding&&!isSenderContactModalOpen);
   const incomingVisible=chatVisible.ids.filter(id=>activeConversation?.messages.some(message=>message.id===id&&!message.isSelf));
   useChatAcknowledgements(chatApi,activeConversation?.id,incomingVisible,account.loaded&&account.settings.readReceipts,photoGallery.receive);
   const contactsDirectory = useContactsDirectory(serverUrl, currentUser ? { userId: currentUser.id, token: currentUser.authToken || '' } : null);
@@ -469,7 +472,7 @@ function NativeAppScreen() {
   // Conversaciones y mensajes: useChatController (src/native/chat).
 
   const radio = useLiveRadio(serverUrl, currentUser?.id || '', currentUser?.authToken || '', selectedChannel);
-  const voiceEnabled=currentTab==='Chat'&&!!activeConversation&&!isAttachMenuOpen&&!isLiveCameraModalOpen&&!isNewChatModalOpen&&!isCreateGroupChatModalOpen&&!viewedPhoto&&!actions.menuOpen&&!actions.forwarding&&!actions.editing&&!actions.busy;
+  const voiceEnabled=currentTab==='Chat'&&!!activeConversation&&!isAttachMenuOpen&&!isLiveCameraModalOpen&&!isNewChatModalOpen&&!isCreateGroupChatModalOpen&&!viewedPhoto&&!actions.menuOpen&&!actions.forwarding&&!actions.editing&&!actions.busy&&!isSenderContactModalOpen;
   const voice=useVoiceNote(JSON.stringify([serverUrl,currentUser?.id,currentUser?.authToken,activeConversation?.id]),voiceEnabled,
     clip=>sendMediaMessage('voice',`Nota de voz (${voiceTime(Math.max(1,Math.floor(clip.durationMs/1000)))})`,clip.dataUrl,clip.fileName),
     ()=>radio.disconnect(),message=>showNativeAlert('Nota de voz',message));
@@ -1777,7 +1780,7 @@ const position =
 
                   <View style={styles.chatActiveInfo}>
                     <Text style={styles.chatActiveTitle} numberOfLines={1}>
-                      {activeConversation.name}
+                      {activeConversation.peer?.hasIncoming && !activeConversation.peer.isContact ? senderPhone(activeConversation.peer.phoneNumber) || activeConversation.name : activeConversation.name}
                     </Text>
                     <Text style={styles.chatActiveSubtitle} numberOfLines={2}>
                       {activeConversation.type === 'group' ? 'Conversación de grupo' : presenceLabel(presence.peers[activeConversation.targetUserId || ''], presence.now)}
@@ -1800,6 +1803,12 @@ const position =
                   ]}
                   showsVerticalScrollIndicator={false}
                 >
+                  {activeConversation.type==='direct'&&activeConversation.peer?.hasIncoming&&!activeConversation.peer.isContact&&
+                    <UnknownSenderBanner key={JSON.stringify([serverUrl,currentUser.id,currentUser.authToken,activeConversation.id])}
+                      peer={activeConversation.peer} callsign={activeConversation.callsign} unit={activeConversation.unit}
+                      avatar={peerAvatars[activeConversation.targetUserId||'']} createContact={contactsDirectory.create}
+                      onDialogChange={setIsSenderContactModalOpen}
+                      onSaved={contact=>{handleContactUpdated(contact);showTacticalToast('Contacto guardado en tu agenda.','success');}}/>}
                   {activeConversation.messages.length === 0 ? (
                     // Estado vacío limpio exacto a Imagen 1
                     <View style={styles.chatActiveEmptyWrap}>

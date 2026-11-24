@@ -66,6 +66,7 @@ export function useChatController({ serverUrl, currentUser, showAlert, playMessa
     id: t.id, type: t.type, name: t.name,
     callsign: t.callsign || undefined, unit: t.unit || undefined,
     targetUserId: t.targetUserId || undefined,
+    peer: t.peer,
     participantCount: t.participantCount || 0,
     lastMessage: t.lastMessage || '', lastMessageTime: chatTime(t.lastMessageAt, t.lastMessageTime || ''),
     unreadCount: Math.max(0, Number(t.unreadCount) || 0), hasMessages: t.hasMessages, lastMessageStatus: t.lastMessageStatus || undefined, messages: [],
@@ -258,9 +259,10 @@ export function useChatController({ serverUrl, currentUser, showAlert, playMessa
 
   const handleContactUpdated = (contact: ContactOfficer) => {
     setConversations(prev => prev.map(c => c.type === 'direct' && c.targetUserId === contact.registered_user_id
-      ? { ...c, name: contact.name, callsign: contact.callsign } : c));
+      ? { ...c, name: contact.name, callsign: contact.callsign, peer: c.peer ? {...c.peer,isContact:true} : undefined } : c));
     setActiveConversation(prev => prev?.type === 'direct' && prev.targetUserId === contact.registered_user_id
-      ? { ...prev, name: contact.name, callsign: contact.callsign } : prev);
+      ? { ...prev, name: contact.name, callsign: contact.callsign, peer: prev.peer ? {...prev.peer,isContact:true} : undefined } : prev);
+    refreshThreads.current();
   };
 
   const sendMediaMessage = async (
