@@ -63,6 +63,7 @@ function chatSourceMessage(PDO $db,$id,$owner,$thread=null) {
       AND NOT EXISTS(SELECT 1 FROM chat_message_hidden h WHERE h.message_id=m.id AND h.user_id=?)'.$inThread.' FOR UPDATE');
     $stmt->execute($args);$row=$stmt->fetch(PDO::FETCH_ASSOC);
     if(!$row)throw new ChatActionError(403,'El mensaje de origen no está disponible en esta conversación.');
+    if(!chatIsMember($db,$row['thread_id'],$owner))throw new ChatActionError(403,'Ya no tienes acceso al grupo del mensaje de origen.');
     return $row;
 }
 function chatReplyDto(array $row) {

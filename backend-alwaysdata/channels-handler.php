@@ -1,4 +1,5 @@
 <?php
+require_once __DIR__ . '/chat-channels.php';
 // La identidad proviene de auth_sessions. No se crean cuentas ni canales de ejemplo.
 class ChannelsRequestError extends RuntimeException {
     public $status;
@@ -77,10 +78,17 @@ function handleChannels(PDO $pdo, $method, array $data, array $query, $owner) {
             if ($action === 'delete' && (string)$creator !== $owner) throw new ChannelsRequestError(403, 'Solo el creador puede eliminar el grupo.');
             if ($action === 'leave') {
                 $pdo->prepare('DELETE FROM channel_members WHERE channel_id = ? AND user_id = ?')->execute([$id, $owner]);
+                if (chatChannelThreadsReady($pdo)) $pdo->prepare('DELETE cm FROM chat_thread_members cm JOIN chat_channel_threads link ON link.thread_id=cm.thread_id WHERE link.channel_id=? AND cm.user_id=?')->execute([$id, $owner]);
             } else {
+                if (chatChannelThreadsReady($pdo)) $pdo->prepare('DELETE cm FROM chat_thread_members cm JOIN chat_channel_threads link ON link.thread_id=cm.thread_id WHERE link.channel_id=?')->execute([$id]);
                 $pdo->prepare('DELETE FROM channel_members WHERE channel_id = ?')->execute([$id]);
                 $pdo->prepare('DELETE FROM channels WHERE id = ?')->execute([$id]);
             }
+        }
+        if (in_array($action, ['create', 'join'], true) && chatChannelThreadsReady($pdo)) {
+            $stmt = $pdo->prepare('SELECT id,name,created_by FROM channels WHERE id=? FOR UPDATE');
+            $stmt->execute([$id]);
+            chatEnsureChannelThread($pdo, $stmt->fetch(PDO::FETCH_ASSOC));
         }
         $pdo->commit();
         return in_array($action, ['create', 'join'], true)
