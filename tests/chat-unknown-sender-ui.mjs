@@ -1,0 +1,64 @@
+import assert from 'node:assert/strict';
+import {createRequire} from 'node:module';
+import mysql from 'mysql2/promise';
+const {chromium}=createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODULE||'playwright');
+const base=process.env.ACCOUNT_TEST_BACKEND;
+if(base!=='http://127.0.0.1:8103'||!process.env.CONTACTS_TEST_SOCKET?.startsWith('/tmp/'))throw Error('Usa solo contacts_test_account local.');
+const db=await mysql.createConnection({socketPath:process.env.CONTACTS_TEST_SOCKET,user:'root',database:'contacts_test_account'});
+const browser=await chromium.launch({headless:true,executablePath:process.env.CHROMIUM_PATH,args:['--no-sandbox']});
+const errors=[];
+const post=async(path,token,data)=>{const r=await fetch(base+path,{method:'POST',headers:{'Content-Type':'text/plain',...(token?{Authorization:'Bearer '+token}:{})},body:JSON.stringify(data)});assert.ok(r.ok,await r.clone().text());return r.json();};
+const open=async session=>{
+  const context=await browser.newContext({viewport:{width:430,height:932}});
+  await context.route('**/walkiet.alwaysdata.net/**',r=>r.abort());
+  await context.route('**/api/ptt',r=>r.fulfill({status:503,contentType:'application/json',body:'{"success":false,"message":"Radio de prueba detenida"}'}));
+  await context.addInitScript(({user,token})=>{localStorage.setItem('c5i_native_server_url','http://127.0.0.1:8103');localStorage.setItem('c5i_native_user',JSON.stringify({...user,authToken:token}));},session);
+  const page=await context.newPage();page.setDefaultTimeout(15000);page.on('pageerror',e=>errors.push(e.message));await page.goto(process.env.ACCOUNT_UI_URL||'http://localhost:3002');await page.getByText('PTT',{exact:true}).waitFor();return page;
+};
+const openChat=async(page,name)=>{await page.getByText('Chat',{exact:true}).last().click();await page.getByText(name,{exact:true}).click();await page.getByPlaceholder('Escribe un mensaje de radio...',{exact:true}).waitFor();};
+try {
+  const [[seed]]=await db.query("SELECT COUNT(*) n FROM contactos WHERE owner_user_id='account-a'");assert.equal(Number(seed.n),0);
+  const sessions=await Promise.all(['7710000301','7710000302','7710000303'].map(phone=>post('/login.php',null,{phone_number:phone,password:'profile-test-password'})));
+  const [a,b,c]=sessions.map(s=>s.token);
+  const ab=(await post('/chat-sync.php',b,{action:'direct',target_user_id:'account-a'})).thread_id;
+  await post('/chat-sync.php',b,{action:'send',thread_id:ab,mediaType:'text',text:'Hola, soy tu compañero del canal'});
+  const page=await open(sessions[0]);await openChat(page,'Prueba Perfil B');
+  const banner=page.getByTestId('unknown-sender-banner');await banner.waitFor();
+  await banner.getByText('+52 771 000 0302',{exact:true}).waitFor();await banner.getByText('Prueba Perfil B',{exact:true}).waitFor();
+  await banner.getByText('No está en tus contactos',{exact:true}).waitFor();await banner.getByText('ACCOUNT-B · Unidad de pruebas',{exact:true}).waitFor();await banner.getByText('1 canal en común',{exact:true}).waitFor();
+  await page.screenshot({path:'/tmp/unknown-sender-light.png',fullPage:true});
+  await page.setViewportSize({width:320,height:740});
+  const rect=await banner.boundingBox();assert.ok(rect.width<=320&&rect.x>=0&&rect.x+rect.width<=320);
+  await page.screenshot({path:'/tmp/unknown-sender-small.png',fullPage:true});await page.setViewportSize({width:430,height:932});
+  let saves=0,release,started;const gate=new Promise(resolve=>{release=resolve;}),secondStarted=new Promise(resolve=>{started=resolve;});
+  await page.route('**/api/contacts',async route=>{
+    if(route.request().method()!=='POST')return route.continue();
+    saves++;
+    if(saves===1)return route.fulfill({status:503,contentType:'application/json',body:'{"success":false,"message":"Agenda temporalmente no disponible"}'});
+    started();await gate;return route.continue();
+  });
+  await banner.getByLabel('Añadir remitente a contactos',{exact:true}).click();
+  await page.getByLabel('Nombre o apodo del remitente',{exact:true}).fill('Compa de patrulla');
+  await page.getByRole('button',{name:'Guardar contacto',exact:true}).click();await page.getByText('Agenda temporalmente no disponible',{exact:true}).waitFor();assert.equal(await banner.count(),1);
+  const hidden=await post('/chat-sync.php',b,{action:'send',thread_id:ab,mediaType:'text',text:'Mensaje mientras agregas el contacto'});
+  await page.getByText('Mensaje mientras agregas el contacto',{exact:true}).waitFor({state:'attached'});
+  const [[receipt]]=await db.execute('SELECT read_at FROM chat_message_receipts WHERE message_id=? AND user_id=?',[hidden.id,'account-a']);assert.equal(receipt?.read_at??null,null,'El modal no marca mensajes cubiertos como leídos.');
+  await page.getByRole('button',{name:'Guardar contacto',exact:true}).evaluate(el=>{el.click();el.click();});
+  await secondStarted;
+  await page.waitForFunction(()=>document.querySelector('[aria-label="Guardar contacto"]')?.getAttribute('aria-disabled')==='true');
+  assert.equal(saves,2);release();
+  await banner.waitFor({state:'hidden'});await page.getByText('Compa de patrulla',{exact:true}).waitFor();await page.getByText('Hola, soy tu compañero del canal',{exact:true}).waitFor();
+  const [[saved]]=await db.query("SELECT name FROM contactos WHERE owner_user_id='account-a' AND phone_number='7710000302'");assert.equal(saved.name,'Compa de patrulla');
+  const [[official]]=await db.query("SELECT name FROM users WHERE id='account-b'");assert.equal(official.name,'Prueba Perfil B');
+  await page.reload();await page.getByText('PTT',{exact:true}).waitFor();await openChat(page,'Compa de patrulla');assert.equal(await banner.count(),0);
+  // Un chat de grupo nunca muestra esta tarjeta.
+  await page.getByLabel('Volver a los chats',{exact:true}).click();await page.getByText('GRUPO DE PRUEBA DE PERFIL',{exact:true}).click();assert.equal(await banner.count(),0);
+  const ca=(await post('/chat-sync.php',c,{action:'direct',target_user_id:'account-a'})).thread_id;
+  await post('/chat-sync.php',c,{action:'send',thread_id:ca,mediaType:'text',text:'Hola desde otro grupo'});
+  await db.query("UPDATE user_settings SET theme_mode='dark' WHERE user_id='account-a'");
+  await page.reload();await page.getByText('PTT',{exact:true}).waitFor();await openChat(page,'Prueba Perfil C');await banner.getByText('Ningún canal en común',{exact:true}).waitFor();
+  await page.screenshot({path:'/tmp/unknown-sender-dark.png',fullPage:true});
+  const sender=await open(sessions[1]);await openChat(sender,'Prueba Perfil A');assert.equal(await sender.getByTestId('unknown-sender-banner').count(),0,'No aparece si el usuario solo envió mensajes.');
+  assert.deepEqual(errors,[]);
+  console.log('OK tarjeta desconocido UI: datos reales y canal común, claro/oscuro/320 px, añadir con apodo, error y reintento sin duplicados, lecturas suspendidas en modal, persistencia sin perder mensajes, grupos y chat solo saliente sin tarjeta.');
+} finally {await browser.close();await db.end();}

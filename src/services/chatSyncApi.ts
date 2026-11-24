@@ -4,6 +4,14 @@ import { peerId } from './peerIds';
 import { chatInstant, type ChatDateFields } from '../native/chat/chatDates';
 // Chat persistente por cuenta. La base de datos del servidor es la fuente de verdad.
 // No guardar mensajes ni adjuntos de otros usuarios en una clave local compartida.
+export interface ChatPeerInfo {
+  id: string;
+  registeredName: string;
+  phoneNumber: string;
+  isContact: boolean;
+  hasIncoming: boolean;
+  commonChannelCount: number;
+}
 export interface ChatThreadDto {
   id: string;
   type: 'direct' | 'group';
@@ -18,6 +26,7 @@ export interface ChatThreadDto {
   hasMessages?: boolean;
   lastMessageStatus?: MessageStatus | null;
   unreadCount?: number;
+  peer?: ChatPeerInfo;
 }
 
 export interface ChatMessageDto extends ChatDateFields {
@@ -140,6 +149,10 @@ export function createChatSyncApi(baseUrl: string, token: string, fetcher: typeo
       return data.threads.map((thread: any) => {
         const id = peerId(thread?.id); if (!id || !['direct','group'].includes(thread.type)) throw new Error('El servidor devolvió una conversación inválida.');
         return { ...thread, id, targetUserId: peerId(thread.targetUserId),
+          peer: thread.type === 'direct' && thread.peer && peerId(thread.peer.id) && peerId(thread.peer.id) === peerId(thread.targetUserId) &&
+            typeof thread.peer.registeredName === 'string' && typeof thread.peer.phoneNumber === 'string' &&
+            typeof thread.peer.isContact === 'boolean' && typeof thread.peer.hasIncoming === 'boolean'
+            ? { ...thread.peer, commonChannelCount: Number.isSafeInteger(thread.peer.commonChannelCount) ? Math.max(0,thread.peer.commonChannelCount) : 0 } : undefined,
           // Compatibilidad con el PHP anterior: un adjunto sin texto también
           // tiene fecha/hora. No usar el guion de presentación como prueba.
           hasMessages: typeof thread.hasMessages === 'boolean' ? thread.hasMessages : Boolean(thread.lastMessageAt || thread.last_message_at || thread.lastMessageTime || thread.lastMessage),
