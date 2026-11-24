@@ -129,7 +129,7 @@ export function useLiveRadio(server: string, userId: string, token: string, chan
       lease.current!.timer = setInterval(() => {
         if (!valid()) return;
         const seconds = Math.floor((Date.now()-grantedAt)/1000); setDuration(seconds);
-        if (seconds >= 44) { void stop(); return; }
+        if (seconds >= 30) { void stop(); return; }
         if (++ticks % 16 === 0 && !heartbeating) {
           heartbeating = true;
           void liveClient.heartbeat(liveId).catch(cause => {

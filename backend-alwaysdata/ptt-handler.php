@@ -57,7 +57,7 @@ function handlePtt(PDO $db, array $data, $owner, $token) {
             ->execute([$channelId, $identity, $owner, hash('sha256', $token), gmdate('Y-m-d H:i:s')]);
         return ['success'=>true, 'url'=>$config['url'], 'room'=>pttRoom($channelId), 'identity'=>$identity,
             'token'=>pttJwt($config, ['sub'=>$identity, 'name'=>$name, 'video'=>['roomJoin'=>true, 'room'=>pttRoom($channelId),
-                'canSubscribe'=>true, 'canPublish'=>false, 'canPublishData'=>false, 'canPublishSources'=>['microphone']]]), 'max_transmission_seconds'=>45];
+                'canSubscribe'=>true, 'canPublish'=>false, 'canPublishData'=>false, 'canPublishSources'=>['microphone']]]), 'max_transmission_seconds'=>30];
     }
     if ($action === 'notify') {
         $transmission = $data['transmission_id'] ?? '';
@@ -99,8 +99,8 @@ function handlePtt(PDO $db, array $data, $owner, $token) {
             $db->commit(); return ['success'=>true];
         }
         if ($action === 'heartbeat') {
-            if (!$current || !$active || strtotime($floor['started_at'] . ' UTC') + 45 <= $now) throw new PttRequestError(409, 'La transmisión terminó. Suelta el botón para volver a hablar.');
-            $expires = min($now+12, strtotime($floor['started_at'] . ' UTC')+45);
+            if (!$current || !$active || strtotime($floor['started_at'] . ' UTC') + 30 <= $now) throw new PttRequestError(409, 'La transmisión terminó. Suelta el botón para volver a hablar.');
+            $expires = min($now+12, strtotime($floor['started_at'] . ' UTC')+30);
             $db->prepare('UPDATE ptt_floor SET expires_at = ? WHERE channel_id = ?')->execute([gmdate('Y-m-d H:i:s', $expires), $channelId]);
             $db->commit(); return ['success'=>true, 'expires_at'=>$expires];
         }
