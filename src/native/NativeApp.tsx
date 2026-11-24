@@ -42,7 +42,8 @@ import { ChatDateSeparator } from './chat/ChatDateSeparator';
 import { chatDay } from './chat/chatDates';
 import { useChatScroll } from './chat/useChatScroll';
 import { ChatAttachmentsMenu } from './chat/ChatAttachmentsMenu';
-import {UnknownSenderBanner, senderPhone} from './chat/UnknownSenderBanner';
+import {UnknownSenderBanner} from './chat/UnknownSenderBanner';
+import {chatContactLabel} from './chat/chatContactLabel';
 /* WALKIET_CHAT_MODULAR_V1 */
 
 /* WALKIET_CHAT_SYNC_V1 */
@@ -1780,7 +1781,7 @@ const position =
 
                   <View style={styles.chatActiveInfo}>
                     <Text style={styles.chatActiveTitle} numberOfLines={1}>
-                      {activeConversation.peer?.hasIncoming && !activeConversation.peer.isContact ? senderPhone(activeConversation.peer.phoneNumber) || activeConversation.name : activeConversation.name}
+                      {chatContactLabel(activeConversation)}
                     </Text>
                     <Text style={styles.chatActiveSubtitle} numberOfLines={2}>
                       {activeConversation.type === 'group' ? 'Conversación de grupo' : presenceLabel(presence.peers[activeConversation.targetUserId || ''], presence.now)}
@@ -2183,7 +2184,7 @@ const position =
                         <View style={styles.chatConvContent}>
                           <View style={styles.chatConvHeaderRow}>
                             <Text style={styles.chatConvName} numberOfLines={1}>
-                              {conv.name}
+                              {chatContactLabel(conv)}
                             </Text>
                             <Text style={styles.chatConvTime}>{conv.lastMessageTime}</Text>
                           </View>

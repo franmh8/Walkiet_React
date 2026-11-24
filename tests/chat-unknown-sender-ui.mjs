@@ -22,7 +22,16 @@ try {
   const [a,b,c]=sessions.map(s=>s.token);
   const ab=(await post('/chat-sync.php',b,{action:'direct',target_user_id:'account-a'})).thread_id;
   await post('/chat-sync.php',b,{action:'send',thread_id:ab,mediaType:'text',text:'Hola, soy tu compañero del canal'});
-  const page=await open(sessions[0]);await openChat(page,'Prueba Perfil B');
+  const page=await open(sessions[0]);
+  await page.getByText('Chat',{exact:true}).last().click();
+  await page.getByText('+52 771 000 0302',{exact:true}).waitFor();
+  assert.equal(await page.getByText('Prueba Perfil B',{exact:true}).count(),0,'La lista muestra el teléfono para quien no está guardado.');
+  await page.getByPlaceholder('Buscar chats o mensajes...',{exact:true}).fill('7710000302');
+  await page.getByText('+52 771 000 0302',{exact:true}).waitFor();
+  await page.getByPlaceholder('Buscar chats o mensajes...',{exact:true}).fill('+52 771 000 0302');
+  await page.getByText('+52 771 000 0302',{exact:true}).waitFor();
+  await page.getByPlaceholder('Buscar chats o mensajes...',{exact:true}).fill('');
+  await page.getByText('+52 771 000 0302',{exact:true}).click();
   const banner=page.getByTestId('unknown-sender-banner');await banner.waitFor();
   await banner.getByText('+52 771 000 0302',{exact:true}).waitFor();await banner.getByText('Prueba Perfil B',{exact:true}).waitFor();
   await banner.getByText('No está en tus contactos',{exact:true}).waitFor();await banner.getByText('ACCOUNT-B · Unidad de pruebas',{exact:true}).waitFor();await banner.getByText('1 canal en común',{exact:true}).waitFor();
@@ -56,9 +65,9 @@ try {
   const ca=(await post('/chat-sync.php',c,{action:'direct',target_user_id:'account-a'})).thread_id;
   await post('/chat-sync.php',c,{action:'send',thread_id:ca,mediaType:'text',text:'Hola desde otro grupo'});
   await db.query("UPDATE user_settings SET theme_mode='dark' WHERE user_id='account-a'");
-  await page.reload();await page.getByText('PTT',{exact:true}).waitFor();await openChat(page,'Prueba Perfil C');await banner.getByText('Ningún canal en común',{exact:true}).waitFor();
+  await page.reload();await page.getByText('PTT',{exact:true}).waitFor();await openChat(page,'+52 771 000 0303');await banner.getByText('Ningún canal en común',{exact:true}).waitFor();
   await page.screenshot({path:'/tmp/unknown-sender-dark.png',fullPage:true});
-  const sender=await open(sessions[1]);await openChat(sender,'Prueba Perfil A');assert.equal(await sender.getByTestId('unknown-sender-banner').count(),0,'No aparece si el usuario solo envió mensajes.');
+  const sender=await open(sessions[1]);await openChat(sender,'+52 771 000 0301');assert.equal(await sender.getByTestId('unknown-sender-banner').count(),0,'No aparece si el usuario solo envió mensajes.');
   assert.deepEqual(errors,[]);
   console.log('OK tarjeta desconocido UI: datos reales y canal común, claro/oscuro/320 px, añadir con apodo, error y reintento sin duplicados, lecturas suspendidas en modal, persistencia sin perder mensajes, grupos y chat solo saliente sin tarjeta.');
 } finally {await browser.close();await db.end();}
