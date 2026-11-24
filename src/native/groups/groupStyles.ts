@@ -88,6 +88,24 @@ export const groupStyles = StyleSheet.create({
   },
   channelMemberInfo: {
     flex: 1,
+    minWidth: 0,
+  },
+  channelMemberMessage: {
+    width: 48,
+    minHeight: 48,
+    flexShrink: 0,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 3,
+    backgroundColor: '#f8edf0',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  channelMemberMessageText: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: '#691c32',
   },
   channelMemberName: {
     fontSize: 14,
