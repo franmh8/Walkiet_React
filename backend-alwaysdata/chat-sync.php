@@ -7,10 +7,11 @@ require_once __DIR__.'/auth-session.php';
 require_once __DIR__.'/chat-time.php';
 require_once __DIR__.'/chat-receipts.php';
 require_once __DIR__.'/chat-voice.php';
+require_once __DIR__.'/chat-channels.php';
 header('Cache-Control: no-store');
 function chatRespond($status,array $body) { http_response_code($status); echo json_encode($body,JSON_UNESCAPED_UNICODE|JSON_INVALID_UTF8_SUBSTITUTE); exit(); }
 function chatString($value,$max=120) { return is_string($value)&&strlen($value)<=($max*4)&&(function_exists('mb_strlen')?mb_strlen($value)<=$max:strlen($value)<=($max*4)); }
-function chatIsMember(PDO $pdo,$thread,$owner) { $stmt=$pdo->prepare('SELECT 1 FROM chat_thread_members WHERE thread_id=? AND user_id=? LIMIT 1');$stmt->execute([$thread,$owner]);return (bool)$stmt->fetchColumn(); }
+function chatIsMember(PDO $pdo,$thread,$owner) { $access=chatChannelAccessSql($pdo,'mine.thread_id','mine.user_id');$stmt=$pdo->prepare("SELECT 1 FROM chat_thread_members mine WHERE mine.thread_id=? AND mine.user_id=? AND $access LIMIT 1");$stmt->execute([$thread,$owner]);return (bool)$stmt->fetchColumn(); }
 function chatKnownMedia() {
  $raw=$_GET['known_media']??'';
  if(!is_string($raw)||strlen($raw)>6500)chatRespond(422,['success'=>false,'message'=>'Caché de archivos inválida.']);
@@ -21,23 +22,30 @@ function chatKnownMedia() {
  return array_values(array_unique($ids));
 }
 function chatThreads(PDO $pdo,$owner,$zone,$timestampColumn) {
+ chatBackfillChannelThreads($pdo,$owner);
+ $channelReady=chatChannelThreadsReady($pdo);
+ $channelJoin=$channelReady?' LEFT JOIN chat_channel_threads channel_link ON channel_link.thread_id=t.id LEFT JOIN channels channel ON channel.id=channel_link.channel_id':'';
+ $groupName=$channelReady?'COALESCE(channel.name,t.name)':'t.name';
+ $participants=$channelReady?'CASE WHEN channel_link.thread_id IS NOT NULL THEN (SELECT COUNT(*) FROM channel_members cm WHERE cm.channel_id=channel_link.channel_id) ELSE (SELECT COUNT(*) FROM chat_thread_members cm WHERE cm.thread_id=t.id) END':'(SELECT COUNT(*) FROM chat_thread_members cm WHERE cm.thread_id=t.id)';
+ $access=chatChannelAccessSql($pdo,'t.id','mine.user_id');
  $ready=chatActionsReady($pdo);
  $visible=$ready?' AND NOT EXISTS(SELECT 1 FROM chat_message_hidden h WHERE h.message_id=m.id AND h.user_id=?)':'';
  $annotation=$ready?' LEFT JOIN chat_message_annotations ann ON ann.message_id=last.id':'';
  $deleted=$ready?'ann.deleted_at':'NULL';
- $stmt=$pdo->prepare("SELECT t.id,t.kind,t.name AS group_name,peer.id AS target_user_id,peer.name AS peer_name,personal.name AS contact_name,peer.callsign,peer.unit,peer.status,
-  (SELECT COUNT(*) FROM chat_thread_members cm WHERE cm.thread_id=t.id) AS participants,
+ $stmt=$pdo->prepare("SELECT t.id,t.kind,$groupName AS group_name,peer.id AS target_user_id,peer.name AS peer_name,personal.name AS contact_name,peer.callsign,peer.unit,peer.status,
+  $participants AS participants,
   (SELECT COUNT(*) FROM chat_thread_messages unread
     LEFT JOIN chat_message_receipts receipt ON receipt.message_id=unread.id AND receipt.user_id=?
     WHERE unread.thread_id=t.id AND unread.sender_id<>? AND receipt.seen_at IS NULL) AS unread_count,
   last.id AS last_message_id,CASE WHEN $deleted IS NOT NULL THEN 'Mensaje eliminado' WHEN last.media_type='image' AND last.content='' THEN 'Foto' ELSE last.content END AS last_message,
   last.created_at AS last_message_at,UNIX_TIMESTAMP(last.created_at) AS last_message_epoch
   FROM chat_threads t INNER JOIN chat_thread_members mine ON mine.thread_id=t.id AND mine.user_id=?
+  $channelJoin
   LEFT JOIN chat_thread_members opposite ON opposite.thread_id=t.id AND opposite.user_id<>? AND t.kind='direct'
   LEFT JOIN users peer ON peer.id=opposite.user_id
   LEFT JOIN contactos personal ON personal.owner_user_id=? AND personal.phone_number=BINARY peer.phone_number
   LEFT JOIN chat_thread_messages last ON last.id=(SELECT m.id FROM chat_thread_messages m WHERE m.thread_id=t.id $visible ORDER BY m.created_at DESC,m.id DESC LIMIT 1)
-  $annotation WHERE t.kind<>'direct' OR last.id IS NOT NULL ORDER BY t.updated_at DESC,t.id DESC LIMIT 200");
+  $annotation WHERE (t.kind<>'direct' OR last.id IS NOT NULL) AND $access ORDER BY t.updated_at DESC,t.id DESC LIMIT 200");
  $args=[$owner,$owner,$owner,$owner,$owner];if($ready)$args[]=$owner;
  $stmt->execute($args);$out=[];$threads=$stmt->fetchAll(PDO::FETCH_ASSOC);
  $lastIds=array_values(array_filter(array_column($threads,'last_message_id')));$statuses=[];
@@ -70,8 +78,9 @@ try {
   chatRespond(200,['success'=>true,'time_zone'=>$zone,'messages'=>$messages]);
  }
  if($method==='GET'&&$action==='inbox') {
+  $access=chatChannelAccessSql($pdo,'m.thread_id','cm.user_id');
   $hidden=chatActionsReady($pdo)?' AND NOT EXISTS(SELECT 1 FROM chat_message_hidden h WHERE h.message_id=m.id AND h.user_id=?)':'';
-  $rows=chatMessageRows($pdo,'m.sender_id<>? AND EXISTS(SELECT 1 FROM chat_thread_members cm WHERE cm.thread_id=m.thread_id AND cm.user_id=?) AND NOT EXISTS(SELECT 1 FROM chat_message_receipts r WHERE r.message_id=m.id AND r.user_id=?)'.$hidden,chatActionsReady($pdo)?[$owner,$owner,$owner,$owner]:[$owner,$owner,$owner],20,false,false,chatKnownMedia(),$owner);
+  $rows=chatMessageRows($pdo,"m.sender_id<>? AND EXISTS(SELECT 1 FROM chat_thread_members cm WHERE cm.thread_id=m.thread_id AND cm.user_id=? AND $access) AND NOT EXISTS(SELECT 1 FROM chat_message_receipts r WHERE r.message_id=m.id AND r.user_id=?)".$hidden,chatActionsReady($pdo)?[$owner,$owner,$owner,$owner]:[$owner,$owner,$owner],20,false,false,chatKnownMedia(),$owner);
   chatRespond(200,['success'=>true,'time_zone'=>$zone,'messages'=>array_map(fn($row)=>chatMessageDto($row,$zone,$timestampColumn,$owner),$rows)]);
  }
  if($method==='POST'&&in_array($action,['edit','delete'],true))chatRespond(200,chatMutateMessage($pdo,$data,$owner));

@@ -51,6 +51,7 @@ export function useChatController({ serverUrl, currentUser, showAlert, playMessa
   const [selectedGroupMembers, setSelectedGroupMembers] = useState<string[]>([]);
   const [createGroupError, setCreateGroupError] = useState<string | null>(null);
   const refreshMessages=useRef<()=>void>(()=>{}),refreshThreads=useRef<()=>void>(()=>{});
+  const refreshChats = useCallback(() => refreshThreads.current(), []);
   const [chatSyncError, setChatSyncError] = useState<string | null>(null);
 
   const chatApi = useMemo(() => currentUser?.id && currentUser?.authToken
@@ -328,7 +329,7 @@ export function useChatController({ serverUrl, currentUser, showAlert, playMessa
 
   return {
     conversations:allConversations, setConversations, activeConversation:displayedActive, setActiveConversation,
-    chatApi, retryPending:outbox.retry,cancelPending:outbox.cancel,changeMessage,forwardMessage,
+    chatApi, refreshChats, retryPending:outbox.retry,cancelPending:outbox.cancel,changeMessage,forwardMessage,
     chatSearchQuery, setChatSearchQuery, selectedChatFilter, setSelectedChatFilter,
     chatDraftMessage, setChatDraftMessage,
     isNewChatModalOpen, setIsNewChatModalOpen,

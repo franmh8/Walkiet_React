@@ -377,7 +377,7 @@ function NativeAppScreen() {
     newGroupName, setNewGroupName,
     selectedGroupMembers, setSelectedGroupMembers,
     createGroupError, setCreateGroupError,
-    chatApi, retryPending, chatSyncError, filteredConversations,
+    chatApi, refreshChats, retryPending, chatSyncError, filteredConversations,
     totalChatCount, groupsChatCount, directChatCount,
     handleStartDirectChat, handleCreateGroupChatSubmit, handleContactUpdated,
     sendMediaMessage: sendRawMediaMessage, cancelPending, changeMessage, forwardMessage, toggleGroupMemberSelection,
@@ -406,6 +406,8 @@ function NativeAppScreen() {
   const { channels, refresh: refreshChannels } = channelsDirectory;
   const channelSelection = useChannelSelection(serverUrl, currentUser, channelsDirectory);
   const { selectedChannel, choose: chooseAndRememberChannel } = channelSelection;
+  // Sintonizar cambia la radio; los chats de los canales anteriores permanecen.
+  useEffect(() => { refreshChats(); }, [selectedChannel?.id, channelsDirectory.scope, refreshChats]);
   const officersList = contactsDirectory.contacts;
   const channelMemberContacts = useMemo(() => new Map(
     officersList.filter(contact => contact.registered_user_id)
