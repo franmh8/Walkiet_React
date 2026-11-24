@@ -2,7 +2,7 @@
 
 Actualizar `chat-sync.php` en Alwaysdata y descargar la versión nueva de la app. Este cambio no requiere SQL nuevo. Mantener los auxiliares y las migraciones que ya utiliza el servicio (incluida 012 para chats de canal).
 
-En conversaciones privadas, si el interlocutor ya envió mensajes y no está en la agenda del usuario, la app muestra su foto disponible, teléfono, nombre registrado, indicativo, unidad y cantidad de canales en común. El teléfono también se muestra en la cabecera. Los canales comunes se calculan con las membresías actuales del servidor, sin duplicar los chats vinculados a ellos.
+En conversaciones privadas, si el interlocutor ya envió mensajes y no está en la agenda del usuario, la app muestra su foto disponible, teléfono, nombre registrado, indicativo, unidad y cantidad de canales en común. Los chats de personas sin guardar muestran el teléfono tanto en la lista principal como en la cabecera; la búsqueda acepta el número con o sin espacios y prefijo. Los contactos guardados conservan su nombre o apodo. Los canales comunes se calculan con las membresías actuales del servidor, sin duplicar los chats vinculados a ellos.
 
 «Añadir a contactos» permite elegir un nombre o apodo antes de guardar en la agenda privada. La tarjeta desaparece y la cabecera usa el apodo; el perfil registrado del compañero no se modifica. Los errores conservan el formulario y permiten reintentar. Mientras está abierto el formulario no se confirman como leídos los mensajes cubiertos.
 

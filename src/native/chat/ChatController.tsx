@@ -15,6 +15,7 @@ import {mediaLabel} from './actions/messageTypes';
 import type {ChatPhoto} from './photos/photoTypes';
 import type { OutboxEntry } from './chatOutbox';
 import { chatTime } from './chatDates';
+import {chatContactLabel, senderPhone} from './chatContactLabel';
 import type { AlertButton } from 'react-native';
 import { ChatApiError, createChatSyncApi, type ChatThreadDto, type ChatMessageDto } from '../../services/chatSyncApi';
 import type { DirectoryContact as ContactOfficer } from '../../services/contactsApi';
@@ -190,7 +191,9 @@ export function useChatController({ serverUrl, currentUser, showAlert, playMessa
     if (selectedChatFilter === 'Grupos' && c.type !== 'group') return false;
     if (selectedChatFilter === 'Directos' && c.type !== 'direct') return false;
     const q = chatSearchQuery.trim().toLowerCase();
-    return !q || c.name.toLowerCase().includes(q) ||
+    const digits=q.replace(/\D/g,'');
+    const phoneMatch=!!digits&&/^[+\d\s().-]+$/.test(q)&&c.type==='direct'&&!!c.peer&&senderPhone(c.peer.phoneNumber).replace(/\D/g,'').includes(digits);
+    return !q || chatContactLabel(c).toLowerCase().includes(q) || c.name.toLowerCase().includes(q) || phoneMatch ||
       Boolean(c.callsign?.toLowerCase().includes(q)) || c.lastMessage.toLowerCase().includes(q);
   }), [allConversations, selectedChatFilter, chatSearchQuery]);
 

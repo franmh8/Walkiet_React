@@ -6,12 +6,7 @@ import {DialogAction, TacticalDialog} from '../components/TacticalDialog';
 import {UserPlusIcon, UsersIcon} from '../icons';
 import {useAppTheme} from '../profile/AppTheme';
 import {PeerAvatar} from '../profile/PeerAvatar';
-
-export function senderPhone(phone: string) {
-  const digits=phone.replace(/\D/g,'');
-  const national=digits.length===10?digits:digits.length===12&&digits.startsWith('52')?digits.slice(2):null;
-  return national?`+52 ${national.slice(0,3)} ${national.slice(3,6)} ${national.slice(6)}`:digits?`+${digits}`:'';
-}
+import {senderPhone} from './chatContactLabel';
 
 export function UnknownSenderBanner({peer, callsign, unit, avatar, createContact, onSaved, onDialogChange}: {
   peer: ChatPeerInfo; callsign?: string; unit?: string; avatar?: string|null;
