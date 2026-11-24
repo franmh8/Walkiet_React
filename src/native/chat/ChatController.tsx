@@ -27,6 +27,9 @@ interface ChatUser {
   callsign?: string;
   badge?: string;
 }
+// Un miembro de canal ya tiene cuenta; no necesita teléfono ni una ficha en la agenda.
+type DirectChatRecipient = Pick<ContactOfficer, 'name' | 'registered_user_id'> &
+  Partial<Pick<ContactOfficer, 'callsign' | 'unit'>>;
 interface ChatControllerOptions {
   serverUrl: string;
   currentUser: ChatUser | null;
@@ -193,11 +196,12 @@ export function useChatController({ serverUrl, currentUser, showAlert, playMessa
   const groupsChatCount = allConversations.filter(c => c.type === 'group').length;
   const directChatCount = allConversations.filter(c => c.type === 'direct').length;
 
-  const handleStartDirectChat = async (officer: ContactOfficer): Promise<boolean> => {
+  const handleStartDirectChat = async (officer: DirectChatRecipient): Promise<boolean> => {
     if (!officer.registered_user_id) {
       showAlert('Contacto sin cuenta', 'Este contacto aún no tiene cuenta en la app. Podrás enviarle mensajes cuando se registre.');
       return false;
     }
+    if (officer.registered_user_id === currentUser?.id) return false;
     if (!chatApi) {
       showAlert('Chat no disponible', 'Inicia sesión para sincronizar conversaciones.');
       return false;

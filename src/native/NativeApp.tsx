@@ -407,6 +407,13 @@ function NativeAppScreen() {
   const channelSelection = useChannelSelection(serverUrl, currentUser, channelsDirectory);
   const { selectedChannel, choose: chooseAndRememberChannel } = channelSelection;
   const officersList = contactsDirectory.contacts;
+  const channelMemberContacts = useMemo(() => new Map(
+    officersList.filter(contact => contact.registered_user_id)
+      .map(contact => [contact.registered_user_id!, contact])
+  ), [officersList]);
+  const channelMemberNames = useMemo(() => Object.fromEntries(
+    [...channelMemberContacts].map(([id, contact]) => [id, contact.name])
+  ), [channelMemberContacts]);
   const contactsScreenRef = useRef<ContactsScreenHandle>(null);
   const avatarIds = [
     ...conversations.filter(conversation => conversation.type === 'direct').map(conversation => conversation.targetUserId || ''),
@@ -2294,6 +2301,16 @@ const position =
 
       <ChannelMembersModal key={channelsDirectory.scope} visible={isMembersModalOpen}
         channel={selectedChannel} userId={currentUser.id} api={channelsDirectory.api}
+        memberNames={channelMemberNames}
+        onMessage={async member => {
+          const savedContact = channelMemberContacts.get(member.id);
+          const opened = await handleStartDirectChat(savedContact || {
+            registered_user_id: member.id, name: member.name,
+            callsign: member.callsign, unit: member.unit,
+          });
+          if (opened) { setIsMembersModalOpen(false); setCurrentTab('Chat'); }
+          return opened;
+        }}
         onClose={() => setIsMembersModalOpen(false)} />
 
       {/* 6. MODAL: NUEVA CONVERSACIÓN (IDÉNTICO A CAPTURA 2) */}
