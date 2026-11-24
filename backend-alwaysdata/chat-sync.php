@@ -8,6 +8,7 @@ require_once __DIR__.'/chat-time.php';
 require_once __DIR__.'/chat-receipts.php';
 require_once __DIR__.'/chat-voice.php';
 require_once __DIR__.'/chat-channels.php';
+require_once __DIR__.'/chat-push-dispatch.php';
 header('Cache-Control: no-store');
 function chatRespond($status,array $body) { http_response_code($status); echo json_encode($body,JSON_UNESCAPED_UNICODE|JSON_INVALID_UTF8_SUBSTITUTE); exit(); }
 function chatString($value,$max=120) { return is_string($value)&&strlen($value)<=($max*4)&&(function_exists('mb_strlen')?mb_strlen($value)<=$max:strlen($value)<=($max*4)); }
@@ -152,7 +153,7 @@ try {
   $pdo->prepare('UPDATE chat_threads SET updated_at=CURRENT_TIMESTAMP(6) WHERE id=?')->execute([$thread]);
   // La confirmación usa exactamente la fecha persistida, igual que el sondeo.
   $stmt=$pdo->prepare('SELECT created_at,UNIX_TIMESTAMP(created_at) AS sent_epoch FROM chat_thread_messages WHERE id=?');$stmt->execute([$id]);$saved=$stmt->fetch(PDO::FETCH_ASSOC);$pdo->commit();
-  chatRespond(201,array_merge(['success'=>true,'id'=>$id,'status'=>'sent','created_at'=>$saved['created_at']],chatTimeFields($saved['created_at'],$zone,$timestampColumn?$saved['sent_epoch']:null)));
+  walkietRespondSavedWithPush($pdo,array_merge(['success'=>true,'id'=>$id,'status'=>'sent','created_at'=>$saved['created_at']],chatTimeFields($saved['created_at'],$zone,$timestampColumn?$saved['sent_epoch']:null)),(string)$thread,(string)$owner);
  }
  chatRespond(405,['success'=>false,'message'=>'Acción de chat no soportada.']);
 }catch(ChatActionError$error) {

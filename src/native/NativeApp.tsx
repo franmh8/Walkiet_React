@@ -92,6 +92,7 @@ import { soundEngine } from '../services/soundEngine';
 import { PttScreen } from './ptt/PttScreen';
 import { useLiveRadio } from './ptt/useLiveRadio';
 import { useRadioNotifications } from './ptt/useRadioNotifications';
+import { useChatPushNotifications } from './chat/useChatPushNotifications';
 import { ProfileScreen } from './profile/ProfileScreen';
 import { SecurityCodeModal } from './profile/SecurityCodeModal';
 import { useAccountProfile } from './profile/useAccountProfile';
@@ -390,6 +391,23 @@ function NativeAppScreen() {
     showAlert: showNativeAlert,
     playMessageSound: () => soundEngine.playIncomingChirp(),
   });
+  // Notificaciones de mensajes recibidas fuera de la app (APK/IPA propia).
+  const pendingPushThreadId = useRef<string | null>(null);
+  const openPushConversation = useCallback((threadId: string) => {
+    pendingPushThreadId.current = threadId;
+    setCurrentTab('Chat');
+  }, []);
+  const chatPush = useChatPushNotifications(
+    serverUrl, currentUser?.id || '', currentUser?.authToken || '', openPushConversation,
+  );
+  useEffect(() => {
+    const id = pendingPushThreadId.current;
+    if (!id) return;
+    const conversation = conversations.find(item => item.id === id);
+    if (!conversation) return;
+    pendingPushThreadId.current = null;
+    setActiveConversation(conversation);
+  }, [conversations, setActiveConversation]);
   const actions=useMessageActions({scope:JSON.stringify([serverUrl,currentUser?.id,currentUser?.authToken,activeConversation?.id]),
     conversation:activeConversation,userId:currentUser?.id||'',api:chatApi,draft:chatDraftMessage,setDraft:setChatDraftMessage,
     send:(text,context)=>sendRawMediaMessage('text',text,undefined,undefined,undefined,false,context),
@@ -756,6 +774,7 @@ function NativeAppScreen() {
   const openRecoveryModal = () => setRecoverVisible(true);
 
   const handleLogout = async (forgetAccount = false) => {
+    await chatPush.unregister();
     void logoutContactSession(serverUrl, currentUser?.authToken).catch(() => {});
     setConversations([]);
     setActiveConversation(null);
