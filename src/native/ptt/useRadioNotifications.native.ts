@@ -10,14 +10,18 @@ export function useRadioNotifications(server: string, token: string, userId: str
   const active = useRef(scope); active.current = scope;
   const registered = useRef<{ token: string; api: ReturnType<typeof createPttApi> } | null>(null);
   const open = useRef(onOpen); open.current = onOpen; const sound = useRef(sounds); sound.current = sounds;
+  const allowedNow = useRef(allowed); allowedNow.current = allowed;
   const pending = useRef(false);
   const supported = Constants.executionEnvironment !== 'storeClient';
+  const projectId = Constants.easConfig?.projectId || Constants.expoConfig?.extra?.eas?.projectId;
+  const available = supported && !!projectId;
+  const unavailableReason = !supported ? 'Requiere la app instalada.' : !projectId ? 'Avisos push sin configurar.' : null;
   useEffect(() => {
     pending.current = false; setEnabled(false); setError(null); setBusy(false);
     if (!token || !supported) return;
     let notifications: typeof import('expo-notifications');
     try { notifications = require('expo-notifications'); } catch { setError('Actualiza la compilación de la app para recibir avisos.'); return; }
-    notifications.setNotificationHandler({ handleNotification: async () => ({ shouldShowBanner: true, shouldShowList: true, shouldPlaySound: sound.current, shouldSetBadge: false }) });
+    notifications.setNotificationHandler({ handleNotification: async () => ({ shouldShowBanner: allowedNow.current, shouldShowList: allowedNow.current, shouldPlaySound: allowedNow.current && sound.current, shouldSetBadge: false }) });
     let alive = true;
     const handle = (response: import('expo-notifications').NotificationResponse) => {
       const data = response.notification.request.content.data;
@@ -38,6 +42,7 @@ export function useRadioNotifications(server: string, token: string, userId: str
     setBusy(true); setError(null);
     try {
       if (!supported) throw new Error('Para recibir avisos instala la compilación de pruebas. Expo Go no admite estas notificaciones.');
+      if (!projectId) throw new Error('Avisos push sin configurar.');
       const { isDevice } = require('expo-device') as typeof import('expo-device');
       if (!isDevice) throw new Error('Activa los avisos desde un teléfono físico.');
       const notifications = require('expo-notifications') as typeof import('expo-notifications');
@@ -48,8 +53,6 @@ export function useRadioNotifications(server: string, token: string, userId: str
       let permissions = await notifications.getPermissionsAsync();
       if (!permissions.granted) permissions = await notifications.requestPermissionsAsync();
       if (!permissions.granted) throw new Error('Autoriza las notificaciones en los ajustes del teléfono.');
-      const projectId = Constants.easConfig?.projectId || Constants.expoConfig?.extra?.eas?.projectId;
-      if (!projectId) throw new Error('El administrador necesita configurar el proyecto de notificaciones de esta app.');
       const result = await notifications.getExpoPushTokenAsync({ projectId });
       if (active.current !== scope) return false;
       const api = createPttApi(server, token, '', '');
@@ -58,7 +61,7 @@ export function useRadioNotifications(server: string, token: string, userId: str
       registered.current = { token: result.data, api }; setEnabled(true); return true;
     } catch (cause) { if (active.current === scope) setError(cause instanceof Error ? cause.message : 'No se pudieron activar los avisos.'); return false; }
     finally { if (active.current === scope) { setBusy(false); pending.current = false; } }
-  }, [server, token, scope, supported]);
+  }, [server, token, scope, supported, projectId]);
   const disable = useCallback(async () => {
     const previous = registered.current;
     setError(null); setBusy(true);
@@ -67,12 +70,12 @@ export function useRadioNotifications(server: string, token: string, userId: str
     finally { if (active.current === scope) setBusy(false); }
   }, [scope]);
   useEffect(() => {
-    if (!allowed || !token || !supported) return;
+    if (!allowed || !token || !available) return;
     let alive = true;
     try { const n = require('expo-notifications') as typeof import('expo-notifications'); void n.getPermissionsAsync().then(p => { if (alive && p.granted) void enable(); }).catch(() => {}); } catch {}
     return () => { alive = false; };
-  }, [allowed, token, supported, enable]);
+  }, [allowed, token, available, enable]);
   useEffect(() => { if (!allowed && registered.current) void disable(); }, [allowed, disable]);
   const notify = useCallback((_names: string[], _channelId: string) => {}, []);
-  return { enabled: allowed && enabled, busy, error, available: supported, enable, disable, notify };
+  return { enabled: allowed && enabled, busy, error, available, unavailableReason, enable, disable, notify };
 }

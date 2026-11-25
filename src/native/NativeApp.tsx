@@ -309,8 +309,8 @@ function NativeAppScreen() {
     });
   }, []);
   const account = useAccountProfile(serverUrl, currentUser?.id || '', currentUser?.authToken || '', updateProfileUser, () => { setInlineWarning('Tu sesión venció. Vuelve a iniciar sesión.'); void handleLogout(); });
-  useEffect(() => { setMode(account.settings.theme); }, [account.settings.theme, setMode]);
-  useEffect(() => { soundEngine.setMessageSounds(account.settings.messageSounds); soundEngine.setRogerBeep(account.settings.rogerBeep); }, [account.settings.messageSounds, account.settings.rogerBeep]);
+  useEffect(() => { if (account.loaded) setMode(account.settings.theme); }, [account.loaded, account.settings.theme, setMode]);
+  useEffect(() => { soundEngine.setMessageSounds(account.loaded && account.settings.messageSounds); soundEngine.setRogerBeep(account.loaded && account.settings.rogerBeep); }, [account.loaded, account.settings.messageSounds, account.settings.rogerBeep]);
 
   const [isMembersModalOpen, setIsMembersModalOpen] = useState(false);
 
@@ -422,7 +422,8 @@ function NativeAppScreen() {
   const chatScroll = useChatScroll(activeConversation?.id, activeConversation?.messages || []);
   const chatVisible=useVisibleChatMessages(activeConversation?.id,currentTab==='Chat'&&!!activeConversation&&!isNewChatModalOpen&&!isCreateGroupChatModalOpen&&!isLiveCameraModalOpen&&!viewedPhoto&&!actions.menuOpen&&!actions.forwarding&&!isSenderContactModalOpen);
   const incomingVisible=chatVisible.ids.filter(id=>activeConversation?.messages.some(message=>message.id===id&&!message.isSelf));
-  useChatAcknowledgements(chatApi,activeConversation?.id,incomingVisible,account.loaded&&account.settings.readReceipts,photoGallery.receive);
+  useChatAcknowledgements(chatApi,activeConversation?.id,incomingVisible,account.loaded&&account.settings.readReceipts,photoGallery.receive,
+    () => { if (account.loaded && account.settings.messageSounds) soundEngine.playIncomingChirp(); });
   const contactsDirectory = useContactsDirectory(serverUrl, currentUser ? { userId: currentUser.id, token: currentUser.authToken || '' } : null);
   const channelsDirectory = useChannelsDirectory(serverUrl, currentUser?.id || '', currentUser?.authToken || '');
   const { channels, refresh: refreshChannels } = channelsDirectory;
