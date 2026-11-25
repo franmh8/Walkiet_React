@@ -9,6 +9,15 @@ declare const process: {
 // Solo estos valores públicos van a la app.
 export default {
   ...app.expo,
+
+  runtimeVersion: {
+    policy: 'appVersion',
+  },
+
+  updates: {
+    url: 'https://u.expo.dev/ff72cbc8-da97-417e-8c25-054a81a0f9ee',
+  },
+
   plugins: [
     ...app.expo.plugins.filter((plugin) => (Array.isArray(plugin) ? plugin[0] : plugin) !== 'expo-image-picker'),
     ['expo-image-picker', { photosPermission: 'Autoriza tus fotos para elegir tu imagen de perfil y compartir fotos en el chat.', cameraPermission: 'Autoriza la cámara para tomar tu foto de perfil y compartir fotos en el chat.' }],
