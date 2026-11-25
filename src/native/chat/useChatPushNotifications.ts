@@ -42,9 +42,8 @@ export function useChatPushNotifications(
       try {
         const Notifications:NotificationsModule=await import('expo-notifications');
         if(disposed)return;
-        Notifications.setNotificationHandler({
-          handleNotification:async()=>({shouldShowBanner:true,shouldShowList:true,shouldPlaySound:true,shouldSetBadge:false}),
-        });
+        // La presentación y el sonido los coordina useRadioNotifications para
+        // que chat y radio no sobrescriban las preferencias del otro.
         listener=Notifications.addNotificationResponseReceivedListener(handleResponse);
         const last=await Notifications.getLastNotificationResponseAsync();
         if(!disposed)handleResponse(last);
@@ -64,6 +63,10 @@ export function useChatPushNotifications(
           await Notifications.setNotificationChannelAsync('messages',{
             name:'Mensajes de Walkiet', importance:Notifications.AndroidImportance.MAX,
             vibrationPattern:[0,200,100,200],sound:'default',
+          });
+          await Notifications.setNotificationChannelAsync('messages-silent',{
+            name:'Mensajes sin sonido', importance:Notifications.AndroidImportance.MAX,
+            sound:null,enableVibrate:false,
           });
         }
         let perm=await Notifications.getPermissionsAsync();

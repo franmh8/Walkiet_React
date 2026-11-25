@@ -21,7 +21,12 @@ export function useRadioNotifications(server: string, token: string, userId: str
     if (!token || !supported) return;
     let notifications: typeof import('expo-notifications');
     try { notifications = require('expo-notifications'); } catch { setError('Actualiza la compilación de la app para recibir avisos.'); return; }
-    notifications.setNotificationHandler({ handleNotification: async () => ({ shouldShowBanner: allowedNow.current, shouldShowList: allowedNow.current, shouldPlaySound: allowedNow.current && sound.current, shouldSetBadge: false }) });
+    notifications.setNotificationHandler({ handleNotification: async notification => {
+      const chat = notification?.request.content.data?.kind === 'chat';
+      const show = chat || allowedNow.current;
+      // El chat reproduce su aviso al recibir el mensaje; evita un segundo tono.
+      return { shouldShowBanner: show, shouldShowList: show, shouldPlaySound: !chat && show && sound.current, shouldSetBadge: false };
+    } });
     let alive = true;
     const handle = (response: import('expo-notifications').NotificationResponse) => {
       const data = response.notification.request.content.data;

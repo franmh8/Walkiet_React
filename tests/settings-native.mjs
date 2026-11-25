@@ -45,6 +45,9 @@ try{
  let display=await page.evaluate(()=>window.notificationHandler.handleNotification());assert.equal(display.shouldShowBanner,true);assert.equal(display.shouldPlaySound,false);
  await page.evaluate(()=>window.reconfigure('synthetic-project',false));await page.waitForFunction(()=>!window.notifications.enabled);
  display=await page.evaluate(()=>window.notificationHandler.handleNotification());assert.equal(display.shouldShowBanner,false);assert.equal(display.shouldPlaySound,false);
+ display=await page.evaluate(()=>window.notificationHandler.handleNotification({request:{content:{data:{kind:'chat'}}}}));
+ assert.equal(display.shouldShowBanner,true,'Desactivar avisos de radio no oculta los mensajes de chat.');
+ assert.equal(display.shouldPlaySound,false,'El push en primer plano no duplica el tono del chat.');
  await page.waitForFunction(()=>window.calls.includes('unregister_device'));
  await page.evaluate(async()=>{window.sounds.setMessageSounds(false);window.sounds.setRogerBeep(false);window.sounds.playIncomingChirp();window.sounds.playRogerBeep();await Promise.resolve();});
  assert.equal(await page.evaluate(()=>window.played),0);
