@@ -5,10 +5,22 @@ import {createRegistrationApi} from './registrationApi';
 export const ALWAYSDATA_SERVER_URL = 'https://walkiet.alwaysdata.net';
 export const DEFAULT_SERVER_URL = ALWAYSDATA_SERVER_URL; 
 
+export const resolveBackendUrl = (saved: string | null): string => {
+  if (saved === null) return DEFAULT_SERVER_URL;
+  const url = saved.trim();
+  try {
+    // Trasladar las instalaciones que conservaron la dirección retirada.
+    if (new URL(url).hostname === 'walkt.gt.tc') return DEFAULT_SERVER_URL;
+  } catch { /* Una URL relativa puede usar el servidor Node local. */ }
+  return url;
+};
+
 export const getBackendUrl = (): string => {
   try {
     const saved = localStorage.getItem('c5i_backend_url');
-    return saved !== null ? saved : DEFAULT_SERVER_URL;
+    const resolved = resolveBackendUrl(saved);
+    if (saved !== null && resolved !== saved) localStorage.setItem('c5i_backend_url', resolved);
+    return resolved;
   } catch {
     return DEFAULT_SERVER_URL;
   }
@@ -31,14 +43,10 @@ export const ApiService = {
         return await res.json();
       }
       const resApi = await fetch(`${base}/api/database/status`);
+      if (!resApi.ok) throw new Error('Estado del servidor no disponible.');
       return await resApi.json();
     } catch {
-      return {
-        database_name: 'walkiet_c5i',
-        server_host: 'mysql-walkiet.alwaysdata.net',
-        status: 'ONLINE',
-        tables: { users: 3, channels: 4, channel_members: 5, contacts: 3, voice_messages: 2 },
-      };
+      throw new Error('No se pudo consultar el estado del servidor.');
     }
   },
 

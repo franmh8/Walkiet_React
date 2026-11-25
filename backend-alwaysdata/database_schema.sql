@@ -1,11 +1,9 @@
 -- ========================================================
 -- Esquema de Base de Datos para C5i Walkie-Talkie
--- Base de Datos: if0_42687378_walkt
--- Compatible con InfinityFree (MySQL / phpMyAdmin)
+-- Seleccionar en phpMyAdmin la base de datos de Alwaysdata antes de importar.
+-- Esquema inicial de tablas. No crea ni selecciona una base de datos.
 -- ========================================================
 
-CREATE DATABASE IF NOT EXISTS `if0_42687378_walkt` DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-USE `if0_42687378_walkt`;
 
 -- 1. Tabla de Usuarios y Oficiales C5i
 CREATE TABLE IF NOT EXISTS `users` (

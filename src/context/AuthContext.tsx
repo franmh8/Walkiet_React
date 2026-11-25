@@ -92,7 +92,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const cleanPass = pass.trim();
 
     try {
-      // 1. Authenticate with backend API (connected to if0_42687378_walkiet_db)
+      // 1. Autenticar con la API de Alwaysdata.
       const remoteRes = await ApiService.login(cleanId, cleanPass);
       if (remoteRes && remoteRes.success && (remoteRes.user || remoteRes.usuario)) {
         const loggedUser = remoteRes.user || remoteRes.usuario;

@@ -1,50 +1,33 @@
-# Guía de Conexión a Base de Datos C5i Walkie-Talkie
+# Instalación del backend Alwaysdata
 
-Este paquete contiene todo lo necesario para conectar el Login y el Registro directamente con la base de datos MySQL `if0_42687378_walkt`.
+El backend activo está en `backend-alwaysdata/`. La app utiliza por defecto
+`https://walkiet.alwaysdata.net` y conserva los servidores personalizados elegidos
+por el usuario.
 
----
+## Conexión
 
-## OPCIÓN 1: En tu Servidor InfinityFree (`http://walkt.gt.tc`)
+La conexión PDO de la instalación se administra en `conexion.php`. Conservar sus
+credenciales privadas en el servidor. `config.php` es únicamente un alias de esa
+conexión; no crea una conexión alternativa.
 
-Como InfinityFree bloquea conexiones remotas externas al puerto MySQL 3306, la forma nativa de conectar es colocar los archivos PHP en tu hosting:
+## Publicación
 
-### Paso 1: Subir archivos
-Copia la carpeta `backend-infinityfree` a la carpeta `htdocs` de tu servidor en InfinityFree (mediante FTP o el Administrador de Archivos de cPanel):
-```text
-htdocs/
-  ├── config.php
-  └── api/
-      ├── login.php
-      ├── register.php
-      ├── send-otp.php
-      ├── verify-otp.php
-      └── status.php
-```
+1. En Alwaysdata, confirmar el directorio raíz del sitio y seleccionar su base de
+   datos desde phpMyAdmin.
+2. Subir los conjuntos coordinados de PHP descritos en las guías de cada módulo,
+   manteniendo la estructura de `api/` y `auth/` cuando se utilicen sus alias.
+3. Aplicar las migraciones que falten según sus dependencias. El esquema inicial
+   `database_schema.sql` crea tablas dentro de la base seleccionada: no crea ni
+   selecciona una base por su nombre y no sustituye las migraciones posteriores.
+4. Conservar `conexion.php`, las configuraciones privadas y los datos de la
+   instalación. Registrar el resultado y comprobar la app actualizada.
 
-### Paso 2: Configurar la contraseña
-Abre `config.php` y escribe la contraseña de tu base de datos de InfinityFree:
-```php
-$db_pass = 'TU_CONTRASEÑA_DE_CPANEL';
-```
+Consultar [README_ALWAYSDATA.md](README_ALWAYSDATA.md) para las guías por módulo y
+[las instrucciones del gestor de archivos](INSTRUCCIONES_GESTOR_ARCHIVOS.md).
 
-### Paso 3: Importar la Base de Datos
-1. Entra a tu cPanel de InfinityFree -> **phpMyAdmin**.
-2. Selecciona la base de datos `if0_42687378_walkt`.
-3. Haz clic en la pestaña **Importar** y selecciona el archivo `database_schema.sql`.
-4. ¡Listo! Las tablas `users`, `channels`, `channel_members`, `voice_messages` y `sms_otps` estarán creadas con los mandos iniciales.
+## Desarrollo Node
 
----
-
-## OPCIÓN 2: Conexión Directa desde el Servidor Node (`server.ts`)
-
-Si tienes una base de datos MySQL en un servidor (VPS, Railway, Supabase, PlanetScale, etc.) o InfinityFree con acceso externo, configura tu archivo `.env`:
-
-```env
-DB_HOST=sql206.infinityfree.com
-DB_NAME=if0_42687378_walkt
-DB_USER=if0_42687378
-DB_PASSWORD=tu_contraseña_aqui
-DB_PORT=3306
-```
-
-El servidor Node `server.ts` se conectará automáticamente, creará las tablas si no existen, y procesará el Login y Registro directamente sobre la base de datos MySQL.
+El servidor Node es una alternativa de desarrollo. Copiar `.env.example` a `.env`
+y completar solo las variables necesarias para la base local autorizada.
+`.env` no se versiona. La app que consume los PHP no necesita credenciales MySQL
+expuestas en el cliente.
