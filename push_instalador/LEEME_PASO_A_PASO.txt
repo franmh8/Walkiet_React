@@ -1,0 +1,117 @@
+WALKIET C5i — NOTIFICACIONES DE CHAT CON APP CERRADA
+Versión 2. Primer objetivo: Android con APK propia.
+
+IMPORTANTE: Es una integración de código probada con un ejemplo de estructura,
+NO un sistema ya desplegado. Para recibir notificaciones deben configurarse
+Firebase + EAS, hacer una APK y publicar los PHP/SQL.
+
+No funciona en Expo Go (SDK 58). No borra mensajes ni cambia el contador.
+
+PREPARACIÓN
+1. Abre Git Bash en la raíz de Walkiet_React.
+2. Ejecuta:
+   git status
+   npm ls expo-notifications expo-device expo-constants
+3. Si aún tienes cambios locales, NO los descartes. Haz un commit o respaldo antes.
+4. Extrae este ZIP para obtener la carpeta push_instalador dentro de Walkiet_React.
+   Tiene que existir: Walkiet_React/push_instalador/activar_push_walkiet_v2.cjs
+5. Ejecuta:
+   node push_instalador/activar_push_walkiet_v2.cjs --dry-run
+   Si aparece VALIDADO, sigue con:
+   node push_instalador/activar_push_walkiet_v2.cjs
+   npx tsc --noEmit
+6. Si TypeScript devuelve errores, NO publiques los PHP. Envía el error para revisión.
+   El script crea automáticamente un respaldo en WalkietRespaldos, al lado del proyecto.
+
+QUÉ MODIFICA EL INSTALADOR
+- src/native/NativeApp.tsx (registra teléfono, maneja clic, revoca al cerrar sesión)
+- backend-alwaysdata/chat-sync.php (dispara push solo después de nuevo mensaje guardado)
+- Crea src/native/chat/useChatPushNotifications.ts
+- Crea backend-alwaysdata/chat-push-devices.php
+- Crea backend-alwaysdata/chat-push-dispatch.php
+- Crea sql/01_chat_push_devices.sql
+NO modifica package.json, app.config.ts, imágenes, sincronización del contador,
+ni ejecuta consultas SQL ni instala Firebase automáticamente.
+
+CONFIGURACIÓN NECESARIA DE FIREBASE / EXPO / EAS (después de validar)
+1. Crea proyecto en https://console.firebase.google.com y registra Android con
+   nombre de paquete EXACTO com.c5i.hidalgo.walkiet
+2. Descarga google-services.json (configuración pública del cliente) y ponlo
+   en la raíz Walkiet_React/google-services.json. NO lo confundas con
+   la clave JSON PRIVADA de una cuenta de servicio.
+3. En Firebase Project Settings > Service accounts genera la clave privada FCM v1.
+   Sube esa clave a las credenciales de Expo EAS (no a GitHub ni a Alwaysdata):
+   npx eas-cli credentials
+   (Android > production > Google Service Account > FCM V1)
+4. Inicia sesión en Expo y vincula el proyecto:
+   npx eas-cli login
+   npx eas-cli init
+   Toma nota del UUID projectId que entrega EAS.
+5. El archivo app.config.ts de Walkiet utiliza dos variables durante la compilación:
+   GOOGLE_SERVICES_JSON=./google-services.json
+   EXPO_PUBLIC_EAS_PROJECT_ID=<TU_UUID_PROJECT_ID>
+   Para EAS cloud build agrega ambas en eas.json dentro de build.preview.env,
+   conservando los demás campos. Ejemplo:
+   "preview": {
+     "distribution": "internal", "android": { "buildType": "apk" },
+     "env": {
+       "GOOGLE_SERVICES_JSON": "./google-services.json",
+       "EXPO_PUBLIC_EAS_PROJECT_ID": "EL_UUID_REAL_DE_EAS"
+     }
+   }
+   Verifica que google-services.json esté incluido en los archivos que EAS sube
+   al compilar (si está ignorado por Git o .easignore, corrígelo).
+   La cuenta de servicio FCM v1 NO debe subir a GitHub.
+6. Comprueba configuración:
+   npx expo config --type public
+   Confirma que extra.eas.projectId esté presente, y
+   android.googleServicesFile apunte a ./google-services.json
+7. Construye tu APK (no Expo Go):
+   npx eas-cli build --platform android --profile preview
+   Instálala en Android, entra con tu cuenta y concede el permiso de notificaciones.
+   Después prueba con la aplicación minimizada y con la aplicación cerrada desde
+   la vista de aplicaciones recientes (NO forzada a detener desde Ajustes).
+
+MYSQL + ALWAYSdata (DESPUÉS de validar la app)
+1. Haz respaldo de walkiet_c5i y de los PHP del directorio www.
+2. Ejecuta UNA sola vez el SQL que creó el script:
+   sql/01_chat_push_devices.sql
+3. Copia a la carpeta www del servidor de Alwaysdata ESTOS 3 archivos
+   de tu proyecto local:
+   backend-alwaysdata/chat-push-devices.php
+   backend-alwaysdata/chat-push-dispatch.php
+   backend-alwaysdata/chat-sync.php (EL ACTUAL, ya integrado; respalda primero)
+4. NO reemplaces chat-actions.php ni chat-receipts.php. No modifiques la columna seen_at.
+5. En phpMyAdmin confirma que exista la tabla chat_push_devices.
+6. Abre el APK, inicia sesión, permite notificaciones. En consola debería aparecer:
+   [push] Dispositivo registrado correctamente (sin mostrar el token).
+7. En phpMyAdmin comprueba que exista al menos una fila en chat_push_devices
+   para el usuario; nunca compartas el valor de expo_token en capturas.
+8. Desde otra cuenta envía un mensaje y prueba la notificación con Walkiet en
+   segundo plano y luego cerrada. Debe salir "Walkiet C5i - Tienes un mensaje nuevo".
+   Al tocarla debería abrir el chat.
+
+SI NO LLEGA
+- Comprueba que NO estás usando Expo Go.
+- Revisa Ajustes > Aplicaciones > Walkiet > Notificaciones (permitidas).
+- Comprueba que existe token para el usuario correcto en chat_push_devices.
+- Revisa logs PHP de Alwaysdata buscando [chat-push].
+- Comprueba que la clave privada FCM v1 y google-services.json son del mismo
+  proyecto Firebase y que EAS está vinculado al UUID correcto.
+- Recuerda: un ticket 'ok' de Expo no garantiza entrega; la entrega real
+  requiere revisar los recibos de Expo y añadir reintentos, en producción.
+
+LIMITACIONES Y SEGURIDAD
+- Android puede bloquear avisos por restricciones de batería o si el usuario
+  fuerza la detención de la aplicación. No existe garantía al 100%.
+- iOS requiere una build iOS firmada y credenciales APNs/Apple Developer.
+- Web cerrada requiere Web Push independiente.
+- No se incluye texto privado en las notificaciones, solo aviso genérico.
+- Las claves privadas FCM/APNs deben quedar exclusivamente en EAS.
+- Revisa las credenciales de base de datos existentes en conexion.php del repo:
+  conviene rotarlas y pasarlas a variables de entorno fuera de GitHub.
+
+DOCUMENTACIÓN OFICIAL
+https://docs.expo.dev/versions/v58.0.0/sdk/notifications/
+https://docs.expo.dev/push-notifications/push-notifications-setup/
+https://docs.expo.dev/push-notifications/fcm-credentials/

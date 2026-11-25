@@ -1384,10 +1384,16 @@ const position =
           onRequestClose={() => {if(!isRegistering)setRegisterVisible(false);}}
         >
           <KeyboardAvoidingView
-            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
             style={styles.modalOverlay}
           >
-            <View style={styles.recoveryCard}>
+            <ScrollView
+              style={{ alignSelf: 'stretch' }}
+              contentContainerStyle={{ flexGrow: 1, justifyContent: 'center', alignItems: 'center', paddingVertical: 16 }}
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={false}
+            >
+              <View style={styles.recoveryCard}>
               {/* Header with icon badge, title and close button */}
               <View style={styles.recoveryHeader}>
                 <View style={styles.recoveryHeaderLeft}>
@@ -1735,7 +1741,8 @@ const position =
                   </Text>
                 </View>
               )}
-            </View>
+              </View>
+            </ScrollView>
           </KeyboardAvoidingView>
         </Modal>
 
@@ -1774,7 +1781,10 @@ const position =
           <View style={styles.chatTabContainer}>
             {activeConversation ? (
               // VISTA DE CONVERSACIÓN ACTIVA (ESTILO WHATSAPP TÁCTICO)
-              <View style={styles.chatActiveView}>
+              
+
+     <View style={styles.chatActiveView}>
+
                 {/* Header de conversación activa idéntico a Imagen 1 */}
                 <View style={styles.chatActiveHeader}>
                   <TouchableOpacity
@@ -1973,10 +1983,13 @@ const position =
                 ) : isAttachMenuOpen ? renderChatAttachMenu() : null}
 
                 {/* Barra de entrada dinámica idéntica a Imagen 1 */}
-                <KeyboardAvoidingView
-                  behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-                  keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
-                >
+                             
+<KeyboardAvoidingView
+  behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+  keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
+>
+
+
                   <View style={styles.chatInputBarWrapper}>
                     {(actions.reply||actions.editing)&&<View style={{flexDirection:'row',alignItems:'center',justifyContent:'space-between',paddingHorizontal:16,paddingTop:8,gap:12}}>
                       <View style={{flex:1}}>{actions.editing?<><Text style={{color:palette.accent,fontSize:12,fontWeight:'700'}}>Editar mensaje</Text><Text numberOfLines={1} style={{color:palette.muted,fontSize:12,marginTop:3}}>{actions.editing.text}</Text></>:actions.reply&&<ReplyQuote reply={actions.reply} name={actions.replyName}/>}</View>
@@ -2043,9 +2056,11 @@ const position =
                       )}
                     </View>
                   </View>
+
                 </KeyboardAvoidingView>
               </View>
             ) : (
+
               // LISTA DE CHATS (EXACTA A CAPTURA 1)
               <View style={styles.chatListView}>
                 {/* Encabezado de chat con acceso a nueva conversación */}

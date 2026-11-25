@@ -25,7 +25,7 @@ export function useRadioNotifications(server: string, token: string, userId: str
       const chat = notification?.request.content.data?.kind === 'chat';
       const show = chat || allowedNow.current;
       // El chat reproduce su aviso al recibir el mensaje; evita un segundo tono.
-      return { shouldShowBanner: show, shouldShowList: show, shouldPlaySound: !chat && show && sound.current, shouldSetBadge: false };
+      return { shouldShowBanner: show, shouldShowList: show, shouldPlaySound: show && (chat || sound.current), shouldSetBadge: false };
     } });
     let alive = true;
     const handle = (response: import('expo-notifications').NotificationResponse) => {
