@@ -31,6 +31,11 @@ con miniatura de mapa y acceso para abrirla. Solo requiere actualizar la app.
 
 ## Actualizar un equipo existente
 
+Si tienes cambios locales en `package.json` o configuración antigua y una carpeta
+`ios/` sin seguimiento, usa primero [la guía de actualización con respaldo](ACTUALIZAR_EQUIPO.md).
+La configuración `.env` y los proyectos nativos generados se conservan localmente
+y quedan fuera del seguimiento de Git.
+
 Desde la carpeta `Walkiet_React`, detener Expo con **Ctrl+C** y revisar primero:
 
 ```sh

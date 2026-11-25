@@ -34,9 +34,9 @@ export function ProfileScreen() {
       setDbStatus(data);
     } catch (_) {
       setDbStatus({
-        database_name: 'if0_42687378_walkiet_db',
-        status: 'ONLINE',
-        tables: { users: 4, channels: 4, channel_members: 5, contacts: 3, voice_messages: 2 },
+        database_name: 'No disponible',
+        status: 'OFFLINE',
+        tables: {},
       });
     } finally {
       setIsCheckingDb(false);

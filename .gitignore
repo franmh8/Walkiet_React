@@ -19,6 +19,11 @@ web-build/
 /backend-alwaysdata/security-config.php
 
 # Configuración local y archivos de servicios móviles
+.env
 .env.local
 google-services.json
 GoogleService-Info.plist
+
+# Proyectos nativos generados localmente por Expo; conservarlos en el equipo.
+/ios/
+/android/

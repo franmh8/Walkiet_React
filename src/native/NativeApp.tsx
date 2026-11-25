@@ -18,6 +18,7 @@ import {
 } from 'react-native';
 import { SafeAreaView, SafeAreaProvider } from 'react-native-safe-area-context';
 import { safeStorage } from './storage';
+import { resolveBackendUrl } from '../services/apiService';
 import {createRegistrationApi, RegistrationApiError} from '../services/registrationApi';
 import {VerificationCodeInput} from './profile/VerificationCodeInput';
 import { MessageReceipt, type MessageStatus } from './chat/MessageReceipt';
@@ -467,13 +468,9 @@ function NativeAppScreen() {
           safeStorage.getItem('c5i_native_user'), safeStorage.getItem('c5i_native_server_url'),
         ]);
         if (savedUrl) {
-          // Si el usuario tenía guardado el servidor anterior con fallos, migrar automáticamente a Alwaysdata
-          if (savedUrl.includes('walkt.gt.tc') || savedUrl.includes('infinityfree')) {
-            setServerUrl('https://walkiet.alwaysdata.net');
-            await safeStorage.setItem('c5i_native_server_url', 'https://walkiet.alwaysdata.net');
-          } else {
-            setServerUrl(savedUrl);
-          }
+          const resolvedUrl = resolveBackendUrl(savedUrl);
+          setServerUrl(resolvedUrl);
+          if (resolvedUrl !== savedUrl) await safeStorage.setItem('c5i_native_server_url', resolvedUrl);
         }
         if (savedUser) setCurrentUser(JSON.parse(savedUser));
       } catch (e) {
@@ -565,7 +562,7 @@ function NativeAppScreen() {
           const headers = getSafePostHeaders();
           const payload = JSON.stringify({ identificador: cleanIdentifier, password: cleanPassword });
 
-          // 1. Endpoint directo PHP en InfinityFree (evita preflight en web)
+          // 1. Endpoint directo PHP en Alwaysdata (evita preflight en web)
           let res = await fetchWithTimeout(`${cleanUrl}/login.php`, {
             method: 'POST',
             headers,

@@ -21,7 +21,7 @@ app.use(cors());
 app.use(express.json({ limit: '25mb', type: ['application/json', 'text/plain'] }));
 
 // Database configuration
-const DB_NAME = process.env.DB_NAME || 'if0_42687378_walkt';
+const DB_NAME = process.env.DB_NAME || 'walkiet_c5i';
 const DB_HOST = process.env.DB_HOST;
 const DB_SOCKET = process.env.DB_SOCKET;
 const DB_USER = process.env.DB_USER;
@@ -122,7 +122,7 @@ async function initMysql() {
 }
 initMysql();
 
-// Local persistent store matching the exact ER schema: if0_42687378_walkiet_db
+// Almacenamiento local compatible con el esquema de Walkiet.
 // Tables: users, channels, channel_members, contacts, voice_messages
 const DB_FILE = path.join(__dirname, '.walkiet_db.json');
 
@@ -323,7 +323,7 @@ function saveDatabase(db: DbSchema) {
 }
 
 // -------------------------------------------------------------
-// REST API ENDPOINTS MATCHING EXACT SCHEMA: if0_42687378_walkiet_db
+// Rutas API de Walkiet.
 // -------------------------------------------------------------
 
 // 1. Health & Database Status
