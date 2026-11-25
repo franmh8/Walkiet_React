@@ -19,6 +19,6 @@ export function useRadioNotifications(_server: string, _token: string, _userId: 
     notification.onclick = () => { window.focus(); open.current(channelId); notification.close(); };
     setTimeout(() => notification.close(), 8000);
   }, [available, allowed, permission, sounds]);
-  return { enabled: allowed && permission === 'granted', busy, available, error, enable, disable, notify };
+  return { enabled: allowed && permission === 'granted', busy, available, unavailableReason: available ? null : 'Este navegador no admite avisos.', error, enable, disable, notify };
 }
 export type RadioNotifications = ReturnType<typeof useRadioNotifications>;

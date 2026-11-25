@@ -2,29 +2,34 @@
 /** Envío simple de push una vez confirmado el mensaje en MySQL.
  * Nota: para producción es recomendable añadir cola persistente, reintentos y comprobación de recibos Expo.
  */
-function walkietSendChatPush(PDO $pdo, string $threadId, string $senderId): void {
-  if (!function_exists('curl_init')) {
-    error_log('[chat-push] La extensión cURL no está habilitada.');
-    return;
-  }
-  $stmt = $pdo->prepare('SELECT DISTINCT d.expo_token,d.user_id FROM chat_push_devices d
+function walkietChatPushMessages(PDO $pdo, string $threadId, string $senderId): array {
+  $stmt = $pdo->prepare('SELECT DISTINCT d.expo_token,d.user_id,COALESCE(s.channel_message_sounds,1) AS sounds FROM chat_push_devices d
     INNER JOIN chat_thread_members m ON m.user_id=d.user_id
+    LEFT JOIN user_settings s ON s.user_id=d.user_id
     WHERE m.thread_id=? AND m.user_id<>? AND d.enabled=1');
   $stmt->execute([$threadId, $senderId]);
   $tokens = $stmt->fetchAll(PDO::FETCH_ASSOC);
-  if (!$tokens) return;
   $messages = [];
   foreach ($tokens as $device) {
     $messages[] = [
       'to'=>$device['expo_token'],
       'title'=>'Walkiet C5i',
       'body'=>'Tienes un mensaje nuevo', // No exponer contenidos de chats en pantalla bloqueada.
-      'sound'=>'default',
+      'sound'=>(bool)$device['sounds'] ? 'default' : null,
       'priority'=>'high',
-      'channelId'=>'messages',
+      'channelId'=>(bool)$device['sounds'] ? 'messages' : 'messages-silent',
       'data'=>['kind'=>'chat','threadId'=>$threadId,'recipientUserId'=>(string)$device['user_id']],
     ];
   }
+  return $messages;
+}
+
+function walkietSendChatPush(PDO $pdo, string $threadId, string $senderId): void {
+  if (!function_exists('curl_init')) {
+    error_log('[chat-push] La extensión cURL no está habilitada.');
+    return;
+  }
+  $messages = walkietChatPushMessages($pdo, $threadId, $senderId);
   foreach (array_chunk($messages, 100) as $batch) {
     $handle = curl_init('https://exp.host/--/api/v2/push/send');
     $headers = ['Content-Type: application/json', 'Accept: application/json'];

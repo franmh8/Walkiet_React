@@ -4,8 +4,9 @@ import {chatForeground} from './useChatOutbox';
 import {startChatPolling} from './chatPoller';
 import {watchChatWake} from './chatWake';
 type Api=ReturnType<typeof createChatSyncApi>;
-export function useChatAcknowledgements(api:Api|null, threadId:string|undefined, visibleIds:string[], readReceipts:boolean, onIncoming?: (messages: ChatMessageDto[]) => void) {
+export function useChatAcknowledgements(api:Api|null, threadId:string|undefined, visibleIds:string[], readReceipts:boolean, onIncoming?: (messages: ChatMessageDto[]) => void, onNewIncoming?: () => void) {
   const receive=useRef(onIncoming);receive.current=onIncoming;
+  const alert=useRef(onNewIncoming);alert.current=onNewIncoming;
   const currentApi=useRef(api);currentApi.current=api;
   const visible=useRef(visibleIds);visible.current=visibleIds;
   // El visto privado se registra aunque las palomitas públicas estén desactivadas.
@@ -13,7 +14,8 @@ export function useChatAcknowledgements(api:Api|null, threadId:string|undefined,
   // de que este dispositivo obtiene y valida la respuesta completa.
   useEffect(()=>{
     if(!api)return;
-    let disposed=false,running=false;
+    let disposed=false,running=false,primed=false;
+    const received=new Set<string>();
     const poll=async()=>{
       if(disposed||running||!chatForeground()||!api.supportsReceipts)return;
       running=true;
@@ -21,6 +23,12 @@ export function useChatAcknowledgements(api:Api|null, threadId:string|undefined,
         const incoming=await api.inbox();
         if(disposed||currentApi.current!==api||!chatForeground())return;
         receive.current?.(incoming);
+        // La primera respuesta establece el historial pendiente, sin hacerlo sonar.
+        const fresh=incoming.some(message=>!received.has(message.id));
+        for(const message of incoming)received.add(message.id);
+        while(received.size>1000)received.delete(received.values().next().value!);
+        if(primed&&fresh)alert.current?.();
+        primed=true;
         const groups=new Map<string,string[]>();
         for(const message of incoming)if(message.thread_id)groups.set(message.thread_id,[...(groups.get(message.thread_id)||[]),message.id]);
         for(const [thread,ids] of groups){if(disposed||currentApi.current!==api||!chatForeground())break;await api.acknowledge(thread,ids);}

@@ -4,7 +4,7 @@
     "slug": "c5i-hidalgo-walkiet",
     "version": "1.0.0",
     "orientation": "portrait",
-    "userInterfaceStyle": "dark",
+    "userInterfaceStyle": "automatic",
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.c5i.hidalgo.walkiet",

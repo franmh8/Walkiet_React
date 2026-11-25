@@ -41,7 +41,13 @@ export function createAccountApi(baseUrl: string, token: string, fetcher: typeof
     return { ...data, settings: { ...defaultAccountSettings, ...data.settings, autoSavePhotos: typeof data.settings.autoSavePhotos === 'boolean' ? data.settings.autoSavePhotos : false } };
   }
   return { get: () => snapshot('get'), update: (fields: Partial<Pick<AccountUser, 'name'|'unit'>>) => snapshot('update', { fields }),
-    settings: (settings: Partial<AccountSettings>) => snapshot('settings', { settings }), avatar: (image: string | null) => snapshot('avatar', { image }),
+    async settings(settings: Partial<AccountSettings>) {
+      const result = await snapshot('settings', { settings });
+      if (Object.entries(settings).some(([key, value]) => result.settings[key as keyof AccountSettings] !== value)) {
+        throw new Error('El servidor no aplicó el ajuste. Vuelve a intentarlo o actualiza el servicio de cuenta.');
+      }
+      return result;
+    }, avatar: (image: string | null) => snapshot('avatar', { image }),
     async avatars(ids: string[], known: Record<string, string> = {}): Promise<PeerAvatar[]> {
       ids = peerIds(ids);
       const data = await request('avatars', { ids, known });

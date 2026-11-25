@@ -42,10 +42,10 @@ try{
   await a.getByText('Foto guardada en tu cuenta.',{exact:true}).waitFor();await a.getByLabel('Entendido',{exact:true}).click();await a.getByLabel('Foto de perfil',{exact:true}).waitFor();
   await a.reload();await a.getByText('Perfil',{exact:true}).click();await a.getByLabel('Foto de perfil',{exact:true}).waitFor();
   await a.getByLabel('Configuración y ajustes',{exact:true}).click();
-  await a.getByText('Tema de la aplicación',{exact:true}).waitFor();
+  await a.getByText('Tema',{exact:true}).waitFor();
   await a.screenshot({path:'/tmp/account-settings-light.png',fullPage:true});
   await a.getByLabel('Tema Oscuro',{exact:true}).click();
-  await a.waitForFunction(()=>getComputedStyle([...document.querySelectorAll('*')].find(e=>e.textContent==='Tema de la aplicación'&&e.childElementCount===0)).color==='rgb(241, 245, 249)');
+  await a.waitForFunction(()=>getComputedStyle([...document.querySelectorAll('*')].find(e=>e.textContent==='Tema'&&e.childElementCount===0)).color==='rgb(241, 245, 249)');
   await a.screenshot({path:'/tmp/account-settings-dark.png',fullPage:true});
   await a.getByLabel('Sonidos de mensajes',{exact:true}).click();
   await a.waitForFunction(()=>document.querySelector('[aria-label="Sonidos de mensajes"]').checked===false);
@@ -55,7 +55,7 @@ try{
   for(let i=0;i<30;i++){if(await a.getByLabel('Activar notificaciones',{exact:true}).isChecked())break;await a.waitForTimeout(100);}
   assert.equal(await a.getByLabel('Activar notificaciones',{exact:true}).isChecked(),true);
   await a.getByLabel('Mostrar ajustes del servidor',{exact:true}).click();await a.getByText('Probar conexión',{exact:true}).click();
-  await a.getByText(/Servidor y base de datos disponibles/).waitFor();
+  await a.getByText(/Conexión disponible/).waitFor();
   await a.getByLabel('Volver al perfil',{exact:true}).click();await a.screenshot({path:'/tmp/account-profile-dark.png',fullPage:true});
   await a.reload();await a.getByLabel('Alternar transmisión al grupo',{exact:true}).waitFor();
   await a.getByText('Perfil',{exact:true}).click();await a.getByLabel('Configuración y ajustes',{exact:true}).click();
