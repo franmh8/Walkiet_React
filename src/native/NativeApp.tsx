@@ -1758,7 +1758,12 @@ const position =
       <StatusBar barStyle={dark ? "light-content" : "dark-content"} />
 
       {/* Main Tab Content */}
-      <View style={styles.cleanMainContent}>
+      
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        style={styles.cleanMainContent}
+      >
+
         {currentTab === 'PTT' && (
           <PttScreen channel={selectedChannel} radio={radio} pttMode={account.settings.pttMode} notifications={{ ...notifications, enable: async () => {
             const enabled = await notifications.enable();
@@ -2256,7 +2261,7 @@ const position =
             onDeleted={async () => { await handleLogout(true); }}
             onServerChange={async url => { await handleLogout(); setServerUrl(url); await safeStorage.setItem('c5i_native_server_url', url); }} />
         )}
-      </View>
+      </KeyboardAvoidingView>
 
       {/* 5-Tab Bottom Navigation Bar (Oculto cuando se está dentro de un chat activo, estilo WhatsApp) */}
       {!(currentTab === 'Chat' && activeConversation) && (
