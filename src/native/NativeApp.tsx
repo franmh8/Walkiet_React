@@ -1753,7 +1753,10 @@ const position =
   }
 
   return (
-    <SafeAreaView style={styles.cleanContainer}>
+    <SafeAreaView
+      style={styles.cleanContainer}
+      edges={currentTab === 'Chat' && activeConversation ? ['top', 'right', 'bottom', 'left'] : ['top', 'right', 'left']}
+    >
       <PhotoViewer photo={viewedPhoto} close={()=>setViewedPhoto(null)} save={photoGallery.saveManually}/>
       <StatusBar barStyle={dark ? "light-content" : "dark-content"} />
 
@@ -2265,7 +2268,7 @@ const position =
 
       {/* 5-Tab Bottom Navigation Bar (Oculto cuando se está dentro de un chat activo, estilo WhatsApp) */}
       {!(currentTab === 'Chat' && activeConversation) && (
-        <View style={styles.cleanNavBar}>
+        <SafeAreaView edges={['bottom']} style={styles.cleanNavBar} testID="bottom-navigation">
           <TouchableOpacity
             style={styles.cleanNavItem}
             onPress={() => setCurrentTab('PTT')}
@@ -2347,7 +2350,7 @@ const position =
               Perfil
             </Text>
           </TouchableOpacity>
-        </View>
+        </SafeAreaView>
       )}
 
       <ChannelMembersModal key={channelsDirectory.scope} visible={isMembersModalOpen}
