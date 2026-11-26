@@ -12,6 +12,8 @@
     "start:expo": "expo start",
     "android": "expo start --android",
     "ios": "expo start --ios",
+    "branding:assets": "node scripts/generate-branding.cjs",
+    "branding:sync": "node scripts/sync-native-branding.cjs",
     "postinstall": "node scripts/patch-expo-compat.cjs"
   },
   "dependencies": {
