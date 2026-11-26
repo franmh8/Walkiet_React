@@ -1,6 +1,7 @@
 {
   "expo": {
-    "name": "C5i Hidalgo Walkie-Talkie",
+    "name": "C5i Walkiet",
+    "icon": "./assets/icon.png",
     "slug": "c5i-hidalgo-walkiet",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -15,7 +16,8 @@
     },
     "android": {
       "adaptiveIcon": {
-        "backgroundColor": "#090d16"
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#FFFFFF"
       },
       "package": "com.c5i.hidalgo.walkiet",
       "permissions": [
@@ -29,7 +31,10 @@
       ]
     },
     "web": {
-      "bundler": "metro"
+      "bundler": "metro",
+      "name": "C5i Walkiet",
+      "shortName": "C5i Walkiet",
+      "favicon": "./public/assets/favicon.png"
     },
     "plugins": [
       [
