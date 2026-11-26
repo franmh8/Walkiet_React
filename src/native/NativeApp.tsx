@@ -1213,10 +1213,12 @@ const position =
     return (
       <SafeAreaView style={styles.loginContainer}>
         <StatusBar barStyle={dark ? "light-content" : "dark-content"} />
-        <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-          style={styles.loginKeyboardWrapper}
-        >
+      
+<KeyboardAvoidingView
+  behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+  style={styles.loginKeyboardWrapper}
+>
+
           <ScrollView
             contentContainerStyle={styles.loginScrollContent}
             keyboardShouldPersistTaps="handled"
@@ -3233,14 +3235,13 @@ const baseStyles = StyleSheet.create({
   loginKeyboardWrapper: {
     flex: 1,
   },
-  loginScrollContent: {
-    flexGrow: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingVertical: 24,
-    paddingHorizontal: 16,
-  },
-
+loginScrollContent: {
+  flexGrow: 1,
+  justifyContent: 'flex-start',
+  alignItems: 'center',
+  paddingVertical: 24,
+  paddingHorizontal: 16,
+},
   loginCard: {
     backgroundColor: '#ffffff',
     borderRadius: 28,
