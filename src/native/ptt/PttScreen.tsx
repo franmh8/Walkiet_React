@@ -40,7 +40,7 @@ export function PttScreen({ channel, radio, notifications, onGroups, onMembers, 
       </TouchableOpacity>
     </View>
     <View style={styles.center}>
-      {(groupsError || radio.error || notifications.error) && <Text accessibilityRole="alert" style={styles.error}>{groupsError || radio.error || notifications.error}</Text>}
+      {(groupsError || radio.error) && <Text accessibilityRole="alert" style={styles.error}>{groupsError || radio.error}</Text>}
       <Text style={[styles.prompt, radio.transmitting && styles.promptOn]} accessibilityLiveRegion="polite">{channel ? prompt : groupsLoading ? 'Consultando tus grupos y restaurando la selección…' : groupsError ? 'Reintenta la consulta para recuperar tu canal.' : hasGroups ? 'Tus grupos están disponibles en la sección Grupos.' : 'Crea un grupo o únete a uno para comunicarte'}</Text>
       <View style={[styles.circle, radio.transmitting && styles.circleOn]}>
         <TouchableOpacity style={[styles.button, radio.transmitting && styles.buttonOn]}
@@ -57,6 +57,7 @@ export function PttScreen({ channel, radio, notifications, onGroups, onMembers, 
       {notifications.available && <TouchableOpacity style={styles.noticeButton} disabled={notifications.enabled || notifications.busy} onPress={() => { void notifications.enable(); }}>
         <Text style={styles.noticeText}>{notifications.busy ? 'Activando avisos...' : notifications.enabled ? 'Avisos activados en este teléfono' : 'Activar avisos de los grupos'}</Text>
       </TouchableOpacity>}
+      {notifications.error && <Text accessibilityRole="alert" style={styles.noticeText}>{notifications.error}</Text>}
     </View>
   </View>;
 }

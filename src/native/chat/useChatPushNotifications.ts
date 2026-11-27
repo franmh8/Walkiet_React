@@ -7,6 +7,7 @@ import {useCallback, useEffect, useRef} from 'react';
 import {Platform} from 'react-native';
 import Constants from 'expo-constants';
 import type {NotificationResponse} from 'expo-notifications';
+import {IOS_PUSH_UNAVAILABLE, isMissingIosPushEntitlement} from '../notifications/pushAvailability';
 
 type NotificationsModule = typeof import('expo-notifications');
 
@@ -22,6 +23,7 @@ export function useChatPushNotifications(
   const registration=useRef<SavedRegistration|null>(null);
   const pending=useRef<Promise<void>|null>(null);
   const lastResponseId=useRef<string|null>(null);
+  const pushUnavailable=useRef(false);
 
   const handleResponse=useCallback((response:NotificationResponse|null)=>{
     if(!response) return;
@@ -53,7 +55,7 @@ export function useChatPushNotifications(
   },[userId,authToken,handleResponse]);
 
   useEffect(()=>{
-    if(Platform.OS==='web'||!userId||!authToken||Constants.appOwnership==='expo')return;
+    if(Platform.OS==='web'||!userId||!authToken||Constants.appOwnership==='expo'||pushUnavailable.current)return;
     let disposed=false;
     const register=async()=>{
       try {
@@ -87,7 +89,12 @@ export function useChatPushNotifications(
         if(!response.ok||data?.success!==true)throw new Error(data?.message||`HTTP ${response.status}`);
         registration.current={token,userId};
         console.info('[push] Dispositivo registrado correctamente (sin mostrar el token).');
-      }catch(error){console.warn('[push] No fue posible registrar este dispositivo:',error);}
+      }catch(error){
+        if(isMissingIosPushEntitlement(error,Platform.OS)){
+          pushUnavailable.current=true;
+          console.info('[push] '+IOS_PUSH_UNAVAILABLE);
+        }else console.warn('[push] No fue posible registrar este dispositivo:',error);
+      }
     };
     pending.current=register();
     return()=>{disposed=true;};
