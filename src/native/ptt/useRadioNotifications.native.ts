@@ -2,10 +2,12 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Platform } from 'react-native';
 import Constants from 'expo-constants';
 import { createPttApi } from '../../services/pttApi';
+import { IOS_PUSH_UNAVAILABLE, isMissingIosPushEntitlement } from '../notifications/pushAvailability';
 
 export function useRadioNotifications(server: string, token: string, userId: string, onOpen: (channelId: string) => void, allowed = false, sounds = true) {
   const [enabled, setEnabled] = useState(false); const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [pushUnavailable, setPushUnavailable] = useState(false);
   const scope = JSON.stringify([server, userId, token]);
   const active = useRef(scope); active.current = scope;
   const registered = useRef<{ token: string; api: ReturnType<typeof createPttApi> } | null>(null);
@@ -14,8 +16,8 @@ export function useRadioNotifications(server: string, token: string, userId: str
   const pending = useRef(false);
   const supported = Constants.executionEnvironment !== 'storeClient';
   const projectId = Constants.easConfig?.projectId || Constants.expoConfig?.extra?.eas?.projectId;
-  const available = supported && !!projectId;
-  const unavailableReason = !supported ? 'Requiere la app instalada.' : !projectId ? 'Avisos push sin configurar.' : null;
+  const available = supported && !!projectId && !pushUnavailable;
+  const unavailableReason = !supported ? 'Requiere la app instalada.' : !projectId ? 'Avisos push sin configurar.' : pushUnavailable ? IOS_PUSH_UNAVAILABLE : null;
   useEffect(() => {
     pending.current = false; setEnabled(false); setError(null); setBusy(false);
     if (!token || !supported) return;
@@ -41,6 +43,7 @@ export function useRadioNotifications(server: string, token: string, userId: str
     };
   }, [scope, token, supported]);
   const enable = useCallback(async () => {
+    if (pushUnavailable) return false;
     if (registered.current) return true;
     if (pending.current) return false;
     pending.current = true;
@@ -64,9 +67,15 @@ export function useRadioNotifications(server: string, token: string, userId: str
       await api.registerDevice(result.data, Platform.OS);
       if (active.current !== scope) { void api.unregisterDevice(result.data).catch(() => {}); return false; }
       registered.current = { token: result.data, api }; setEnabled(true); return true;
-    } catch (cause) { if (active.current === scope) setError(cause instanceof Error ? cause.message : 'No se pudieron activar los avisos.'); return false; }
+    } catch (cause) {
+      if (isMissingIosPushEntitlement(cause, Platform.OS)) {
+        setPushUnavailable(true);
+        if (active.current === scope) setError(null);
+      } else if (active.current === scope) setError(cause instanceof Error ? cause.message : 'No se pudieron activar los avisos.');
+      return false;
+    }
     finally { if (active.current === scope) { setBusy(false); pending.current = false; } }
-  }, [server, token, scope, supported, projectId]);
+  }, [server, token, scope, supported, projectId, pushUnavailable]);
   const disable = useCallback(async () => {
     const previous = registered.current;
     setError(null); setBusy(true);
