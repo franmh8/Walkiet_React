@@ -12,12 +12,12 @@ import {
   Image,
   Modal,
   KeyboardAvoidingView,
-  Keyboard,
   TouchableWithoutFeedback,
   Linking,
 } from 'react-native';
 import { SafeAreaView, SafeAreaProvider } from 'react-native-safe-area-context';
 import { safeStorage } from './storage';
+import { LoginFormLayout } from './components/LoginFormLayout';
 import { resolveBackendUrl } from '../services/apiService';
 import {createRegistrationApi, RegistrationApiError} from '../services/registrationApi';
 import {VerificationCodeInput} from './profile/VerificationCodeInput';
@@ -1213,19 +1213,7 @@ const position =
     return (
       <SafeAreaView style={styles.loginContainer}>
         <StatusBar barStyle={dark ? "light-content" : "dark-content"} />
-      
-<KeyboardAvoidingView
-  behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-  style={styles.loginKeyboardWrapper}
->
-
-          <ScrollView
-            contentContainerStyle={styles.loginScrollContent}
-            keyboardShouldPersistTaps="handled"
-            showsVerticalScrollIndicator={false}
-          >
-
-
+        <LoginFormLayout contentContainerStyle={styles.loginScrollContent}>
             <View style={styles.loginCard}>
               {/* C5i Emblem Logo */}
               <Image
@@ -1372,8 +1360,7 @@ const position =
                 </TouchableOpacity>
               </View>
             </View>
-          </ScrollView>
-        </KeyboardAvoidingView>
+        </LoginFormLayout>
 
         {/* Modal: Registro (Diseño idéntico a Imagen 1 y código proporcionado) */}
         <Modal
@@ -3240,16 +3227,13 @@ const baseStyles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#f1f5f9',
   },
-  loginKeyboardWrapper: {
-    flex: 1,
+  loginScrollContent: {
+    flexGrow: 1,
+    justifyContent: 'flex-start',
+    alignItems: 'center',
+    paddingVertical: 24,
+    paddingHorizontal: 16,
   },
-loginScrollContent: {
-  flexGrow: 1,
-  justifyContent: 'flex-start',
-  alignItems: 'center',
-  paddingVertical: 24,
-  paddingHorizontal: 16,
-},
   loginCard: {
     backgroundColor: '#ffffff',
     borderRadius: 28,
